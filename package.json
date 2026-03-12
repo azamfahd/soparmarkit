@@ -1,0 +1,48 @@
+{
+  "name": "بقالة-بلس---نظام-محاسبي",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && npx esbuild server.ts --bundle --platform=node --outfile=dist/server.js --format=esm --external:better-sqlite3 --external:vite",
+    "start": "NODE_ENV=production npx tsx server.ts",
+    "build:server": "npx esbuild server.ts --bundle --platform=node --outfile=dist/server.js --format=esm --external:better-sqlite3 --external:vite",
+    "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.2.1",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "autoprefixer": "^10.4.27",
+    "better-sqlite3": "^12.6.2",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+
+    "express": "^5.2.1",
+    "framer-motion": "^12.35.0",
+    "lucide-react": "^0.577.0",
+    "motion": "^12.35.0",
+    "postcss": "^8.5.8",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "recharts": "^3.8.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.1",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
+    "vite-plugin-pwa": "^1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
