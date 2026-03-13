@@ -513,25 +513,23 @@ process.on('SIGINT', () => {
 // تقديم الملفات الثابتة في بيئة الإنتاج (يجب أن يكون بعد تعريف جميع مسارات الـ API)
 if (process.env.NODE_ENV === "production") {
   const distPath = path.join(process.cwd(), "dist");
-  app.use(express.static(distPath));
   
   // التعامل مع SPA (Single Page Application)
   app.get("*", (req, res, next) => {
     if (req.path.startsWith("/api")) {
       return next();
     }
-    // التأكد من عدم محاولة إرسال ملف غير موجود (مثل favicon أو manifest)
-    if (req.path.includes('.')) {
-      return res.status(404).end();
+    // إذا كان الطلب لملف موجود في dist، اتركه لـ express.static
+    const filePath = path.join(distPath, req.path);
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      return next();
     }
+    // غير ذلك، أرسل index.html لـ SPA
     res.sendFile(path.join(distPath, "index.html"));
   });
 }
 
-// تشغيل الخادم
-app.listen(PORT, () => {
-  console.log(`الخادم يعمل على المنفذ: ${PORT}`);
-});
+
 
 // Settings endpoints for PWA
 app.get("/api/settings", (req, res) => {

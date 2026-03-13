@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && npx esbuild server.ts --bundle --platform=node --outfile=dist/server.js --format=esm --external:better-sqlite3 --external:vite",
-    "start": "NODE_ENV=production node dist/server.js",
-    "build:server": "npx esbuild server.ts --bundle --platform=node --outfile=dist/server.js --format=esm --external:better-sqlite3 --external:vite",
+    "build": "vite build",
+    "start": "NODE_ENV=production npx tsx server.ts",
+    "build:server": "echo 'Server build handled by tsx at runtime'",
     "preview": "vite preview"
   },
   "engines": {
