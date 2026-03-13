@@ -1,9 +1,12 @@
-const express = require("express");
-const Database = require("better-sqlite3");
-const path = require("path");
+import express from "express";
+import Database from "better-sqlite3";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
-// استخدام المنفذ الذي توفره منصة Railway أو 3000 كافتراضي
 const PORT = process.env.PORT || 3000;
 const DATABASE_PATH = process.env.DATABASE_PATH || "grocery.db";
 
@@ -92,7 +95,6 @@ app.use(express.json());
 const distPath = path.join(process.cwd(), "dist");
 app.use(express.static(distPath));
 
-
 // Middleware لتسجيل الطلبات
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
@@ -114,7 +116,6 @@ app.post("/api/products", (req, res) => {
   try {
     const { name, cost_price, sale_price, stock_quantity, category } = req.body;
     
-    // التحقق من البيانات
     if (!name || cost_price === undefined || sale_price === undefined || stock_quantity === undefined) {
       return res.status(400).json({ error: "بيانات غير كاملة" });
     }
@@ -312,165 +313,6 @@ app.get("/api/sales", (req, res) => {
   }
 });
 
-app.delete("/api/products/:id", (req, res) => {
-  try {
-    const { id } = req.params;
-    db.prepare("DELETE FROM products WHERE id = ?").run(id);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("خطأ في حذف منتج:", err);
-    res.status(500).json({ error: "فشل حذف المنتج" });
-  }
-});
-
-app.put("/api/products/:id", (req, res) => {
-  try {
-    const { id } = req.params;
-    const { name, cost_price, sale_price, stock_quantity, category } = req.body;
-    
-    const oldProduct = db.prepare("SELECT stock_quantity FROM products WHERE id = ?").get(id);
-    if (!oldProduct) {
-      return res.status(404).json({ error: "المنتج غير موجود" });
-    }
-    
-    const diff = stock_quantity - (oldProduct as any).stock_quantity;
-
-    db.prepare(`
-      UPDATE products 
-      SET name = ?, cost_price = ?, sale_price = ?, stock_quantity = ?, category = ? 
-      WHERE id = ?
-    `).run(name, cost_price, sale_price, stock_quantity, category, id);
-
-    if (diff !== 0) {
-      db.prepare("INSERT INTO inventory_logs (product_id, change_amount, reason) VALUES (?, ?, ?)")
-        .run(id, diff, 'manual_update');
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error("خطأ في تحديث منتج:", err);
-    res.status(500).json({ error: "فشل تحديث المنتج" });
-  }
-});
-
-app.delete("/api/customers/:id", (req, res) => {
-  try {
-    const { id } = req.params;
-    db.prepare("DELETE FROM customers WHERE id = ?").run(id);
-    res.json({ success: true });
-  } catch (err) {
-    console.error("خطأ في حذف زبون:", err);
-    res.status(500).json({ error: "فشل حذف الزبون" });
-  }
-});
-
-app.delete("/api/sales/:id", (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const transaction = db.transaction(() => {
-      const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(id);
-      if (!sale) throw new Error("البيع غير موجود");
-
-      // Restore stock
-      const items = db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(id);
-      for (const item of items) {
-        db.prepare("UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?")
-          .run((item as any).quantity, (item as any).product_id);
-        
-        db.prepare("INSERT INTO inventory_logs (product_id, change_amount, reason) VALUES (?, ?, ?)")
-          .run((item as any).product_id, (item as any).quantity, 'refund');
-      }
-
-      // If debt, reverse it
-      if ((sale as any).payment_type === 'debt' && (sale as any).customer_id) {
-        db.prepare("UPDATE customers SET balance = balance - ? WHERE id = ?")
-          .run((sale as any).total_amount, (sale as any).customer_id);
-        db.prepare("DELETE FROM debts WHERE sale_id = ?")
-          .run(id);
-      }
-
-      db.prepare("DELETE FROM sale_items WHERE sale_id = ?").run(id);
-      db.prepare("DELETE FROM sales WHERE id = ?").run(id);
-    });
-
-    try {
-      transaction();
-      res.json({ success: true });
-    } catch (err) {
-      console.error("خطأ في معاملة حذف البيع:", err);
-      res.status(500).json({ error: err.message });
-    }
-  } catch (err) {
-    console.error("خطأ في حذف بيع:", err);
-    res.status(500).json({ error: "فشل حذف البيع" });
-  }
-});
-
-app.get("/api/products/:id/history", (req, res) => {
-  try {
-    const { id } = req.params;
-    const history = db.prepare("SELECT * FROM inventory_logs WHERE product_id = ? ORDER BY created_at DESC LIMIT 50").all(id);
-    res.json(history);
-  } catch (err) {
-    console.error("خطأ في جلب سجل المنتج:", err);
-    res.status(500).json({ error: "فشل جلب السجل" });
-  }
-});
-
-app.get("/api/reports/daily-sales", (req, res) => {
-  try {
-    const data = db.prepare(`
-      SELECT date(created_at) as date, SUM(total_amount) as total
-      FROM sales
-      WHERE created_at >= date('now', '-7 days')
-      GROUP BY date(created_at)
-      ORDER BY date ASC
-    `).all();
-    res.json(data);
-  } catch (err) {
-    console.error("خطأ في جلب تقرير المبيعات اليومية:", err);
-    res.status(500).json({ error: "فشل جلب التقرير" });
-  }
-});
-
-app.get("/api/reports/summary", (req, res) => {
-  try {
-    const totalSales = db.prepare("SELECT SUM(total_amount) as total FROM sales").get();
-    const totalDebts = db.prepare("SELECT SUM(balance) as total FROM customers").get();
-    const lowStock = db.prepare("SELECT COUNT(*) as count FROM products WHERE stock_quantity < 5").get();
-    
-    const profit = db.prepare(`
-      SELECT SUM((si.price_at_sale - p.cost_price) * si.quantity) as total_profit
-      FROM sale_items si
-      JOIN products p ON si.product_id = p.id
-    `).get();
-    
-    res.json({
-      totalSales: (totalSales as any)?.total || 0,
-      totalDebts: (totalDebts as any)?.total || 0,
-      lowStock: (lowStock as any)?.count || 0,
-      totalProfit: (profit as any)?.total_profit || 0
-    });
-  } catch (err) {
-    console.error("خطأ في جلب ملخص التقرير:", err);
-    res.status(500).json({ error: "فشل جلب التقرير" });
-  }
-});
-
-app.get("/api/export", (req, res) => {
-  try {
-    const products = db.prepare("SELECT * FROM products").all();
-    const customers = db.prepare("SELECT * FROM customers").all();
-    const sales = db.prepare("SELECT * FROM sales").all();
-    const debts = db.prepare("SELECT * FROM debts").all();
-    res.json({ products, customers, sales, debts, exportedAt: new Date().toISOString() });
-  } catch (err) {
-    console.error("خطأ في تصدير البيانات:", err);
-    res.status(500).json({ error: "فشل تصدير البيانات" });
-  }
-});
-
 // Health check endpoint
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -479,7 +321,7 @@ app.get("/api/health", (req, res) => {
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = require("vite");
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -493,6 +335,11 @@ async function startServer() {
   app.use((err, req, res, next) => {
     console.error("خطأ غير متوقع:", err);
     res.status(500).json({ error: "حدث خطأ غير متوقع" });
+  });
+
+  // توجيه جميع الطلبات الأخرى إلى index.html لدعم SPA
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
   });
 
   // Start server
@@ -511,63 +358,3 @@ process.on('SIGINT', () => {
   db.close();
   process.exit(0);
 });
-
-// Settings endpoints for PWA
-app.get("/api/settings", (req, res) => {
-  try {
-    const settings = db.prepare("SELECT * FROM settings").all();
-    res.json(settings);
-  } catch (err) {
-    console.error("خطأ في جلب الإعدادات:", err);
-    res.status(500).json({ error: "فشل جلب الإعدادات" });
-  }
-});
-
-app.post("/api/settings", (req, res) => {
-  try {
-    const { key, value } = req.body;
-    if (!key) {
-      return res.status(400).json({ error: "المفتاح مطلوب" });
-    }
-    
-    const existing = db.prepare("SELECT * FROM settings WHERE key = ?").get(key);
-    if (existing) {
-      db.prepare("UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?").run(JSON.stringify(value), key);
-    } else {
-      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, JSON.stringify(value));
-    }
-    res.json({ success: true });
-  } catch (err) {
-    console.error("خطأ في حفظ الإعدادات:", err);
-    res.status(500).json({ error: "فشل حفظ الإعدادات" });
-  }
-});
-
-// Reset database endpoint
-app.post("/api/reset", (req, res) => {
-  try {
-    const transaction = db.transaction(() => {
-      db.prepare("DELETE FROM sale_items").run();
-      db.prepare("DELETE FROM debts").run();
-      db.prepare("DELETE FROM inventory_logs").run();
-      db.prepare("DELETE FROM sales").run();
-      db.prepare("DELETE FROM customers").run();
-      db.prepare("DELETE FROM products").run();
-    });
-    transaction();
-    res.json({ success: true, message: "تم إعادة تعيين قاعدة البيانات" });
-  } catch (err) {
-    console.error("خطأ في إعادة تعيين قاعدة البيانات:", err);
-    res.status(500).json({ error: "فشل إعادة التعيين" });
-  }
-});
-
-// توجيه جميع الطلبات الأخرى إلى index.html لدعم SPA
-app.get("*", (req, res) => {
-  res.sendFile(path.join(distPath, "index.html"));
-});
-
-app.listen(PORT, () => {
-  console.log(`الخادم يعمل على المنفذ: ${PORT}`);
-});
-
