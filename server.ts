@@ -2,18 +2,11 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
-import fs from "fs";
 
 const app = express();
 // استخدام المنفذ الذي توفره منصة Railway أو 3000 كافتراضي
-const PORT = Number(process.env.PORT) || 3000;
-const DATABASE_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "grocery.db");
-
-// التأكد من وجود مجلد البيانات
-const dataDir = path.dirname(DATABASE_PATH);
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
+const PORT = process.env.PORT || 3000;
+const DATABASE_PATH = process.env.DATABASE_PATH || "grocery.db";
 
 // إنشاء قاعدة البيانات مع معالجة الأخطاء
 let db: Database.Database;
@@ -95,6 +88,11 @@ db.exec(`
 `);
 
 app.use(express.json());
+
+// تقديم الملفات الثابتة من مجلد dist
+const distPath = path.join(process.cwd(), "dist");
+app.use(express.static(distPath));
+
 
 // Middleware لتسجيل الطلبات
 app.use((req, res, next) => {
@@ -510,24 +508,6 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-// تقديم الملفات الثابتة في بيئة الإنتاج
-if (process.env.NODE_ENV === "production") {
-  const distPath = path.join(process.cwd(), "dist");
-  
-  // تقديم الملفات الثابتة أولاً
-  app.use(express.static(distPath));
-  
-  // معالج الطلبات الأخرى للعودة بـ index.html للـ SPA
-  app.use((req, res, next) => {
-    if (req.path.startsWith("/api")) {
-      return next();
-    }
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-}
-
-
-
 // Settings endpoints for PWA
 app.get("/api/settings", (req, res) => {
   try {
@@ -577,3 +557,13 @@ app.post("/api/reset", (req, res) => {
     res.status(500).json({ error: "فشل إعادة التعيين" });
   }
 });
+
+// توجيه جميع الطلبات الأخرى إلى index.html لدعم SPA
+app.get("*", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`الخادم يعمل على المنفذ: ${PORT}`);
+});
+
