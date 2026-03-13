@@ -314,10 +314,6 @@ app.get("/api/sales", (req, res) => {
 });
 
 // Health check endpoint
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -331,6 +327,10 @@ async function startServer() {
     app.use(express.static("dist"));
   }
 
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // Error handling middleware
   app.use((err, req, res, next) => {
     console.error("خطأ غير متوقع:", err);
@@ -338,7 +338,8 @@ async function startServer() {
   });
 
   // توجيه جميع الطلبات الأخرى إلى index.html لدعم SPA
-  app.get("*", (req, res) => {
+  // في Express 5، نستخدم التعبير النمطي (RegExp) لضمان التوافق مع مسار "catch-all"
+  app.get(/^(?!\/api).+/, (req, res) => {
     res.sendFile(path.join(distPath, "index.html"));
   });
 
