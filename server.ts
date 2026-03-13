@@ -1,7 +1,6 @@
-import express from "express";
-import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
-import path from "path";
+const express = require("express");
+const Database = require("better-sqlite3");
+const path = require("path");
 
 const app = express();
 // استخدام المنفذ الذي توفره منصة Railway أو 3000 كافتراضي
@@ -9,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 const DATABASE_PATH = process.env.DATABASE_PATH || "grocery.db";
 
 // إنشاء قاعدة البيانات مع معالجة الأخطاء
-let db: Database.Database;
+let db;
 try {
   db = new Database(DATABASE_PATH);
   console.log(`تم الاتصال بقاعدة البيانات: ${DATABASE_PATH}`);
@@ -211,7 +210,7 @@ app.post("/api/sales", (req, res) => {
 
 // Seed Initial Data if empty
 const productCount = db.prepare("SELECT COUNT(*) as count FROM products").get();
-if ((productCount as any).count === 0) {
+if (productCount && productCount.count === 0) {
   console.log("إضافة بيانات أولية...");
   const seedProducts = [
     ["أرز بسمتي 5كج", 30, 45, 20, "مواد غذائية"],
@@ -477,29 +476,34 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Vite middleware for development
-if (process.env.NODE_ENV !== "production") {
-  const vite = await createViteServer({
-    server: { middlewareMode: true },
-    appType: "spa",
+async function startServer() {
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = require("vite");
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static("dist"));
+  }
+
+  // Error handling middleware
+  app.use((err, req, res, next) => {
+    console.error("خطأ غير متوقع:", err);
+    res.status(500).json({ error: "حدث خطأ غير متوقع" });
   });
-  app.use(vite.middlewares);
-} else {
-  app.use(express.static("dist"));
+
+  // Start server
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
+    console.log(`📊 قاعدة البيانات: ${DATABASE_PATH}`);
+    console.log(`🌍 البيئة: ${process.env.NODE_ENV || 'production'}`);
+  });
 }
 
-// Error handling middleware
-app.use((err: any, req: any, res: any, next: any) => {
-  console.error("خطأ غير متوقع:", err);
-  res.status(500).json({ error: "حدث خطأ غير متوقع" });
-});
-
-// Start server
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 الخادم يعمل على المنفذ ${PORT}`);
-  console.log(`📊 قاعدة البيانات: ${DATABASE_PATH}`);
-  console.log(`🌍 البيئة: ${process.env.NODE_ENV || 'development'}`);
-});
+startServer();
 
 // Graceful shutdown
 process.on('SIGINT', () => {
