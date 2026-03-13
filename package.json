@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "start": "NODE_ENV=production npx tsx server.ts",
-    "build:server": "echo 'Server build handled by tsx at runtime'",
+    "build": "vite build && npx tsc server.ts --outDir dist --module esnext --target esnext --moduleResolution node --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck",
+    "start": "NODE_ENV=production node dist/server.js",
+    "build:server": "npx tsc server.ts --outDir dist --module esnext --target esnext --moduleResolution node --esModuleInterop --allowSyntheticDefaultImports --skipLibCheck",
     "preview": "vite preview"
   },
   "engines": {
@@ -25,7 +25,6 @@
     "better-sqlite3": "^12.6.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
-
     "express": "^5.2.1",
     "framer-motion": "^12.35.0",
     "lucide-react": "^0.577.0",
@@ -42,6 +41,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "esbuild": "^0.27.4",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

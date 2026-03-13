@@ -6,7 +6,7 @@ import fs from "fs";
 
 const app = express();
 // استخدام المنفذ الذي توفره منصة Railway أو 3000 كافتراضي
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const DATABASE_PATH = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "grocery.db");
 
 // التأكد من وجود مجلد البيانات
