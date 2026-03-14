@@ -43,7 +43,8 @@ import {
   ResponsiveContainer,
   CartesianGrid
 } from 'recharts';
-import { remoteApi as api } from './services/supabaseService';
+import { remoteApi as api } from './services/apiService';
+import { syncService } from './services/syncService';
 import { db, seedDatabase } from './db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -171,6 +172,16 @@ export default function App() {
       e.preventDefault();
       setDeferredPrompt(e);
     });
+    
+    const handleOnline = () => {
+      syncService.processQueue();
+      showNotification('تم استعادة الاتصال، جاري مزامنة البيانات...');
+    };
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
   }, []);
 
   const handleInstall = async () => {

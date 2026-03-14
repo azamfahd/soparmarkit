@@ -55,6 +55,14 @@ export interface AppSettings {
   value: any;
 }
 
+export interface SyncQueueItem {
+  id?: number;
+  action: 'create' | 'update' | 'delete';
+  table: string;
+  data: any;
+  timestamp: number;
+}
+
 export class GroceryDatabase extends Dexie {
   products!: Table<Product>;
   customers!: Table<Customer>;
@@ -63,17 +71,19 @@ export class GroceryDatabase extends Dexie {
   debts!: Table<Debt>;
   inventoryLogs!: Table<InventoryLog>;
   settings!: Table<AppSettings>;
+  sync_queue!: Table<SyncQueueItem>;
 
   constructor() {
     super('GroceryDB');
-    this.version(3).stores({
+    this.version(4).stores({
       products: '++id, name, category, stock_quantity',
       customers: '++id, name, phone',
       sales: '++id, customer_id, created_at',
       saleItems: '++id, sale_id, product_id',
       debts: '++id, customer_id, sale_id, created_at',
       inventoryLogs: '++id, product_id, created_at',
-      settings: '++id, key'
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp'
     });
   }
 }

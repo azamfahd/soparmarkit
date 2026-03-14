@@ -1,7 +1,7 @@
 {
-  "name": "Grocery Manager",
-  "short_name": "Grocery",
-  "description": "A professional grocery management system.",
+  "name": "سوبر ماركت المستقبل",
+  "short_name": "سوبر ماركت",
+  "description": "نظام إدارة سوبر ماركت المستقبل.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
