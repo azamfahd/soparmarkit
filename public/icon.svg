@@ -1,6 +1,55 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="512" height="512" rx="100" fill="#059669"/>
-  <path d="M128 128H160L192 320H384L416 160H192" stroke="white" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="224" cy="416" r="32" fill="white"/>
-  <circle cx="352" cy="416" r="32" fill="white"/>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <radialGradient id="bgGradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+            <stop offset="0%" style="stop-color:#1a1a4a;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#0d0d2a;stop-opacity:1" />
+        </radialGradient>
+        
+        <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="3"/>
+            <feOffset dx="2" dy="4" result="offsetblur"/>
+            <feMerge>
+                <feMergeNode in="offsetblur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </defs>
+
+    <rect width="512" height="512" fill="url(#bgGradient)"/>
+
+    <g fill="#f1c40f" stroke="#f1c40f" stroke-width="1" filter="url(#dropShadow)">
+        
+        <path d="M110,240 h292 l-30,120 h-232 z" fill="none" stroke-width="8"/>
+        <path d="M135,260 v80 M175,260 v80 M215,260 v80 M255,260 v80 M295,260 v80 M335,260 v80 M375,260 v80" stroke-width="3"/>
+
+        <circle cx="210" cy="220" r="30" fill="#f1c40f"/>
+        <text x="210" y="232" font-family="Arial" font-size="36" fill="#1a1a4a" text-anchor="middle" font-weight="bold">$</text>
+
+        <rect x="250" y="195" width="25" height="45" rx="3"/>
+        <rect x="278" y="185" width="25" height="55" rx="3"/>
+        <rect x="306" y="175" width="25" height="65" rx="3"/>
+
+        <rect x="135" y="150" width="60" height="45" rx="3" fill="#f1c40f"/>
+        <line x1="165" y1="150" x2="165" y2="120" stroke-width="3"/>
+        <path d="M150,120 h30 l-15,-20 z" fill="#f1c40f"/> <path d="M350,220 c0,0 -20,-50 -60,-80 c-10,-8 -10,-8 10,-10 l10,10 c30,15 45,45 40,80 z" fill="#f1c40f"/>
+        <polygon points="280,110 305,130 280,150" fill="#f1c40f"/>
+
+        <rect x="310" y="90" width="12" height="12" rx="2"/>
+        <rect x="330" y="105" width="12" height="12" rx="2"/>
+        <rect x="350" y="125" width="12" height="12" rx="2"/>
+
+        <g font-family="Monospace" font-size="6" fill="#f1c40f" stroke="none">
+            <text x="310" y="60">1011</text>
+            <text x="310" y="70">01010</text>
+            <text x="330" y="80">110</text>
+        </g>
+
+        <circle cx="380" y="60" r="40" fill="none" stroke-width="4"/>
+        <circle cx="380" y="60" r="3" fill="#f1c40f"/> <path d="M340,60 a40,40 0 1,1 80,0 a40,40 0 1,1 -80,0" fill="none" stroke-width="2" stroke-dasharray="8,8"/>
+        
+        <rect x="373" y="45" width="14" height="30" rx="7" fill="none" stroke-width="3"/>
+        <rect x="373" y="55" width="14" height="30" rx="7" fill="none" stroke-width="3"/>
+        
+        <polygon points="450,450 455,465 470,470 455,475 450,490 445,475 430,470 445,465" fill="#f1c40f" stroke="none"/>
+    </g>
 </svg>

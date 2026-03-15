@@ -6,6 +6,27 @@
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#059669" />
     <title>سوبر ماركت المستقبل - نظام محاسبي</title>
+    <script>
+      (function() {
+        const pngIcon = '/icon.png';
+        const svgIcon = '/icon.svg';
+        const link = document.createElement('link');
+        link.rel = 'icon';
+        
+        const img = new Image();
+        img.onload = () => {
+          link.type = 'image/png';
+          link.href = pngIcon;
+          document.head.appendChild(link);
+        };
+        img.onerror = () => {
+          link.type = 'image/svg+xml';
+          link.href = svgIcon;
+          document.head.appendChild(link);
+        };
+        img.src = pngIcon;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
