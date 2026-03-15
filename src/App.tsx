@@ -627,7 +627,7 @@ export default function App() {
           await db.saleItems.clear();
           await db.debts.clear();
           await db.inventoryLogs.clear();
-          await db.settings.clear();
+          await db.settings.filter(s => s.key !== 'isFirstRun').delete();
         });
         showNotification('تم تصفير البرنامج بنجاح');
         setTimeout(() => window.location.reload(), 1000);

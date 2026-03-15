@@ -92,8 +92,8 @@ export const db = new GroceryDatabase();
 
 // Seed initial data if empty
 export async function seedDatabase() {
-  const productCount = await db.products.count();
-  if (productCount === 0) {
+  const isFirstRun = await db.settings.where('key').equals('isFirstRun').first();
+  if (!isFirstRun) {
     await db.products.bulkAdd([
       { name: "أرز بسمتي 5كج", cost_price: 30, sale_price: 45, stock_quantity: 20, category: "مواد غذائية" },
       { name: "زيت طبخ 1.5لتر", cost_price: 12, sale_price: 18, stock_quantity: 15, category: "زيوت" },
@@ -112,5 +112,7 @@ export async function seedDatabase() {
       { name: "سارة علي", phone: "0557654321", balance: 0 },
       { name: "خالد عبدالله", phone: "0561112223", balance: 45 }
     ]);
+    
+    await db.settings.add({ key: 'isFirstRun', value: false });
   }
 }
