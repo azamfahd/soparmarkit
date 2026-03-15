@@ -1263,115 +1263,92 @@ export default function App() {
 
               <AnimatePresence>
                 {isCartExpanded && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                  <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm">
                     <motion.div 
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+                      initial={{ opacity: 0, y: 100 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: 100 }}
+                      className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
                     >
-                      <div className="p-6 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white space-y-4">
-                        <div className="flex justify-between items-center">
-                          <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">السلة</h2>
-                          <button onClick={() => setIsCartExpanded(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                            <X className="w-6 h-6 text-slate-500" />
-                          </button>
+                      <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
+                        <h2 className="text-xl font-extrabold text-slate-900">السلة</h2>
+                        <button onClick={() => setIsCartExpanded(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                          <X className="w-5 h-5 text-slate-500" />
+                        </button>
+                      </div>
+                      
+                      <div className="p-4 bg-slate-50 border-b border-slate-100 grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الزبون</label>
+                          <select 
+                            className="w-full p-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none"
+                            value={selectedCustomer || ''}
+                            onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
+                          >
+                            <option value="">زبون نقدي</option>
+                            {customers.map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الزبون</label>
-                            <select 
-                              className="w-full p-3 rounded-xl border border-slate-200 bg-white shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
-                              value={selectedCustomer || ''}
-                              onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الدفع</label>
+                          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+                            <button 
+                              onClick={() => setPaymentType('cash')}
+                              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${paymentType === 'cash' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500'}`}
                             >
-                              <option value="">زبون نقدي</option>
-                              {customers.map(c => (
-                                <option key={c.id} value={c.id}>{c.name}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">طريقة الدفع</label>
-                            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-                              <button 
-                                onClick={() => setPaymentType('cash')}
-                                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${paymentType === 'cash' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                              >
-                                كاش
-                              </button>
-                              <button 
-                                onClick={() => setPaymentType('debt')}
-                                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${paymentType === 'debt' ? 'bg-red-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                              >
-                                دين
-                              </button>
-                            </div>
+                              نقداً
+                            </button>
+                            <button 
+                              onClick={() => setPaymentType('debt')}
+                              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${paymentType === 'debt' ? 'bg-red-500 text-white shadow-sm' : 'text-slate-500'}`}
+                            >
+                              دين
+                            </button>
                           </div>
                         </div>
                       </div>
                       
-                      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 bg-slate-50/50">
-                        {cart.map(item => (
-                          <div key={item.product_id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center transition-all hover:border-emerald-100">
-                            <div className="flex-1">
-                              <p className="font-bold text-slate-800 text-lg">{item.name}</p>
-                              <div className="flex items-center gap-6 mt-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-emerald-600 font-extrabold text-lg">{formatPrice(item.price)}</span>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  <div className="flex items-center border border-slate-200 rounded-xl overflow-hidden bg-slate-50">
-                                    <button 
-                                      onClick={() => {
-                                        const val = Math.max(0, item.quantity - 0.25);
-                                        setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
-                                      }}
-                                      className="px-4 py-2 hover:bg-slate-200 text-slate-600 font-bold transition-colors"
-                                    >-</button>
-                                    <input 
-                                      type="number"
-                                      step="0.25"
-                                      value={item.quantity}
-                                      onChange={(e) => {
-                                        const val = parseFloat(e.target.value);
-                                        if (!isNaN(val) && val >= 0) {
-                                          setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
-                                        }
-                                      }}
-                                      className="w-16 p-2 text-center text-slate-700 font-bold outline-none bg-transparent"
-                                    />
-                                    <button 
-                                      onClick={() => {
-                                        const val = item.quantity + 0.25;
-                                        setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
-                                      }}
-                                      className="px-4 py-2 hover:bg-slate-200 text-slate-600 font-bold transition-colors"
-                                    >+</button>
-                                  </div>
-                                </div>
+                      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        {cart.length === 0 ? (
+                          <div className="text-center py-10 text-slate-400">السلة فارغة</div>
+                        ) : (
+                          cart.map(item => (
+                            <div key={item.product_id} className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
+                              <div>
+                                <p className="font-bold text-slate-800 text-sm">{item.name}</p>
+                                <p className="text-emerald-600 font-bold text-xs">{formatPrice(item.price)}</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button 
+                                  onClick={() => {
+                                    const val = Math.max(0, item.quantity - 0.25);
+                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
+                                  }}
+                                  className="p-1.5 rounded-lg bg-slate-100 text-slate-600"
+                                >-</button>
+                                <span className="font-bold text-sm w-8 text-center">{item.quantity}</span>
+                                <button 
+                                  onClick={() => {
+                                    const val = item.quantity + 0.25;
+                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
+                                  }}
+                                  className="p-1.5 rounded-lg bg-slate-100 text-slate-600"
+                                >+</button>
                               </div>
                             </div>
-                            <div className="flex flex-col items-end gap-2">
-                              <span className="font-extrabold text-slate-900">{formatPrice(item.price * item.quantity)}</span>
-                              <button 
-                                onClick={() => removeFromCart(item.product_id)}
-                                className="p-2 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-full transition-colors"
-                              >
-                                <Trash2 size={18} />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
+                          ))
+                        )}
                       </div>
 
-                      <div className="p-6 bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+                      <div className="p-4 bg-white border-t border-slate-100">
                         <Button 
-                          className="w-full py-5 text-lg rounded-2xl font-extrabold shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 transition-all" 
+                          className="w-full py-4 text-lg rounded-2xl font-extrabold shadow-lg shadow-emerald-500/20" 
                           onClick={() => { handleCheckout(); setIsCartExpanded(false); }}
-                          disabled={paymentType === 'debt' && !selectedCustomer}
+                          disabled={cart.length === 0 || (paymentType === 'debt' && !selectedCustomer)}
                         >
-                          تأكيد العملية ({formatPrice(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0))})
+                          إتمام العملية ({formatPrice(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0))})
                         </Button>
                       </div>
                     </motion.div>
