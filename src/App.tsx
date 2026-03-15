@@ -156,6 +156,8 @@ export default function App() {
 
   const appSettings = useLiveQuery(() => db.settings.toArray()) || [];
 
+  const [lastBackupDate, setLastBackupDate] = useState<string | null>(null);
+
   useEffect(() => {
     const nameSetting = appSettings.find(s => s.key === 'storeName');
     if (nameSetting) {
@@ -164,6 +166,18 @@ export default function App() {
     const currencySetting = appSettings.find(s => s.key === 'currency');
     if (currencySetting) {
       setCurrency(currencySetting.value);
+    }
+    const backupSetting = appSettings.find(s => s.key === 'lastBackupDate');
+    if (backupSetting) {
+      setLastBackupDate(backupSetting.value);
+      
+      // Check if backup is older than 7 days
+      const lastBackup = new Date(backupSetting.value);
+      const now = new Date();
+      const diffDays = Math.floor((now.getTime() - lastBackup.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays >= 7) {
+        showNotification('تنبيه: لم تقم بأخذ نسخة احتياطية منذ أكثر من أسبوع!', 'error');
+      }
     }
   }, [appSettings]);
 
@@ -223,7 +237,7 @@ export default function App() {
       fetchDailySales();
     };
     init();
-  }, [products, customers, sales]);
+  }, []); // Empty dependency array ensures this runs only once on mount
 
   const categories: string[] = ['الكل', ...Array.from(new Set(products.map(p => p.category).filter(Boolean) as string[]))];
 
@@ -604,6 +618,17 @@ export default function App() {
     a.href = url;
     a.download = `${storeName}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
+    
+    // Update last backup date
+    const now = new Date().toISOString();
+    const existing = await db.settings.where('key').equals('lastBackupDate').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: now });
+    } else {
+      await db.settings.add({ key: 'lastBackupDate', value: now });
+    }
+    setLastBackupDate(now);
+    
     showNotification('تم تصدير نسخة احتياطية بنجاح');
   };
 
@@ -989,7 +1014,12 @@ export default function App() {
           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">النظام</p>
           <button onClick={exportData} className="w-full flex items-center gap-3 p-3 text-slate-600 hover:bg-slate-50 rounded-2xl transition-all">
             <Download className="w-5 h-5" />
-            <span className="text-sm font-bold">نسخة احتياطية</span>
+            <div className="flex flex-col items-start">
+              <span className="text-sm font-bold">نسخة احتياطية</span>
+              <span className="text-[10px] text-slate-400">
+                {lastBackupDate ? `آخر نسخة: ${new Date(lastBackupDate).toLocaleDateString('ar-SA')}` : 'لم يتم أخذ نسخة بعد'}
+              </span>
+            </div>
           </button>
           
           {deferredPrompt && (
