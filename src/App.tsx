@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { 
   LayoutDashboard, 
@@ -688,6 +689,68 @@ export default function App() {
       </html>
     `);
     printWindow.document.close();
+  };
+
+  const handleDownloadPDF = (customer: Customer) => {
+    const element = document.createElement('div');
+    element.innerHTML = `
+      <div dir="rtl" style="font-family: Arial, sans-serif; padding: 30px;">
+        <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
+          <h1>${storeName} - كشف حساب</h1>
+          <p>تاريخ الإصدار: ${new Date().toLocaleString('ar-SA')}</p>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+          <div><strong>الزبون:</strong> ${customer.name}</div>
+          <div><strong>الهاتف:</strong> ${customer.phone}</div>
+        </div>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #f2f2f2;">
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">التاريخ</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">البيان</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">مدين (+)</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">دائن (-)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ledgerEntries.map(entry => `
+              <tr>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'sale' ? 'فاتورة مشتريات #' + entry.id : 'تسديد مبلغ'}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'sale' ? entry.total_amount : '-'}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'payment' ? entry.amount : '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top: 30px; float: left; width: 250px;">
+          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المشتريات:</span> <span>${customerStats.totalPurchased} ${currency}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المدفوعات:</span> <span>${customerStats.totalPaid} ${currency}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee; font-weight: bold; font-size: 1.2em; border-top: 2px solid #000; margin-top: 10px; padding-top: 10px;"><span>الرصيد المتبقي:</span> <span>${customer.balance} ${currency}</span></div>
+        </div>
+      </div>
+    `;
+    
+    const opt = {
+      margin: 0.5,
+      filename: `كشف_حساب_${customer.name}.pdf`,
+      image: { type: 'jpeg' as 'jpeg', quality: 0.98 },
+      html2canvas: { 
+        scale: 2,
+        ignoreElements: (element: HTMLElement) => {
+          return element.tagName === 'STYLE' || element.tagName === 'LINK';
+        }
+      },
+      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' as 'portrait' }
+    };
+    
+    html2pdf().set(opt).from(element).save();
+  };
+
+  const handleShareWhatsApp = (customer: Customer) => {
+    const message = `مرحباً ${customer.name}، هذا كشف حسابك من ${storeName}:\nالرصيد المتبقي: ${customer.balance} ${currency}\nللمزيد من التفاصيل يرجى مراجعة المحل.`;
+    const whatsappUrl = `https://wa.me/${customer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
   };
 
   const printStatement = (customer: Customer) => {
@@ -1860,12 +1923,26 @@ export default function App() {
                     <h4 className="font-bold text-slate-700 flex items-center gap-2">
                       <FileText className="w-4 h-4 text-emerald-600" /> كشف الحساب التفصيلي
                     </h4>
-                    <button 
-                      onClick={() => printStatement(showCustomerDetails)}
-                      className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2 hover:bg-slate-50 shadow-sm transition-all"
-                    >
-                      <Printer className="w-3 h-3" /> طباعة/حفظ كـ PDF
-                    </button>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => printStatement(showCustomerDetails)}
+                        className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2 hover:bg-slate-50 shadow-sm transition-all"
+                      >
+                        <Printer className="w-3 h-3" /> طباعة
+                      </button>
+                      <button 
+                        onClick={() => handleDownloadPDF(showCustomerDetails)}
+                        className="text-xs bg-white border border-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-2 hover:bg-slate-50 shadow-sm transition-all"
+                      >
+                        <Download className="w-3 h-3" /> PDF
+                      </button>
+                      <button 
+                        onClick={() => handleShareWhatsApp(showCustomerDetails)}
+                        className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-1.5 rounded-lg flex items-center gap-2 hover:bg-emerald-100 shadow-sm transition-all"
+                      >
+                        <Upload className="w-3 h-3" /> واتساب
+                      </button>
+                    </div>
                   </div>
 
                   <div className="space-y-3">
