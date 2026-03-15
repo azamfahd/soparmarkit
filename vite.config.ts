@@ -14,8 +14,8 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
         manifest: {
-          name: 'بقالة بلس - نظام محاسبي',
-          short_name: 'بقالة بلس',
+          name: 'سوبر ماركت المستقبل - نظام محاسبي',
+          short_name: 'سوبر ماركت',
           description: 'نظام محاسبي متكامل لإدارة البقالات والمخزون والديون',
           theme_color: '#059669',
           icons: [
