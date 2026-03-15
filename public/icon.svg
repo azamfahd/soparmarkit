@@ -1,35 +1,53 @@
-<svg width="420" height="420" viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg">
+<svg width="600" height="600" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <pattern id="basketGrid" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-      <line x1="0" y1="0" x2="0" y2="20" stroke="gold" stroke-width="2" opacity="0.4"/>
-      <line x1="0" y1="0" x2="20" y2="0" stroke="gold" stroke-width="2" opacity="0.4"/>
-    </pattern>
-    <filter id="glow">
-      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fff3b0"/>
+      <stop offset="40%" stop-color="#ffd700"/>
+      <stop offset="70%" stop-color="#caa300"/>
+      <stop offset="100%" stop-color="#fff3b0"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0%" stop-color="#ffd700"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000"/>
     </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="5" refY="5" orient="auto">
+      <polygon points="0,0 10,5 0,10" fill="#ffd700"/>
+    </marker>
   </defs>
 
-  <!-- Frame -->
-  <rect x="6" y="6" width="408" height="408" rx="40" fill="#0f2148" stroke="gold" stroke-width="12"/>
+  <!-- الإطار -->
+  <rect x="50" y="50" width="500" height="500" rx="70" fill="none" stroke="url(#gold)" stroke-width="20"/>
 
-  <!-- Basket -->
-  <rect x="100" y="220" width="220" height="120" rx="10" fill="none" stroke="gold" stroke-width="6"/>
-  <rect x="100" y="220" width="220" height="120" rx="10" fill="url(#basketGrid)" opacity="0.4"/>
+  <!-- السلة -->
+  <path d="M170 330 L430 330 L410 420 L190 420 Z" fill="none" stroke="url(#gold)" stroke-width="12" filter="url(#shadow)"/>
 
-  <!-- Arrow -->
-  <path d="M160 170 L280 85 L290 95 L170 180 Z" fill="gold" filter="url(#glow)"/>
-
-  <!-- Blockchain -->
-  <circle cx="345" cy="70" r="35" fill="none" stroke="gold" stroke-width="4" filter="url(#glow)"/>
-
-  <!-- Coins -->
-  <g fill="gold" font-family="Arial" font-size="28" filter="url(#glow)">
-    <text x="280" y="260">$</text>
-    <text x="310" y="260">€</text>
-    <text x="340" y="260">¥</text>
+  <!-- شبكة السلة -->
+  <g stroke="url(#gold)" stroke-width="3">
+    <line x1="200" y1="330" x2="200" y2="420"/>
+    <line x1="230" y1="330" x2="230" y2="420"/>
+    <line x1="260" y1="330" x2="260" y2="420"/>
+    <line x1="290" y1="330" x2="290" y2="420"/>
+    <line x1="320" y1="330" x2="320" y2="420"/>
+    <line x1="350" y1="330" x2="350" y2="420"/>
+    <line x1="380" y1="330" x2="380" y2="420"/>
   </g>
+
+  <!-- عملات -->
+  <circle cx="260" cy="300" r="18" fill="url(#gold)"/>
+  <circle cx="300" cy="285" r="18" fill="url(#gold)"/>
+  <circle cx="340" cy="300" r="18" fill="url(#gold)"/>
+
+  <!-- مخطط الأعمدة -->
+  <rect x="360" y="260" width="15" height="60" fill="url(#gold)"/>
+  <rect x="380" y="240" width="15" height="80" fill="url(#gold)"/>
+  <rect x="400" y="220" width="15" height="100" fill="url(#gold)"/>
+
+  <!-- سهم النمو -->
+  <path d="M230 280 Q310 210 400 230" fill="none" stroke="url(#gold)" stroke-width="10" marker-end="url(#arrow)"/>
+
+  <!-- توهج أعلى -->
+  <circle cx="430" cy="210" r="40" fill="url(#glow)" />
 </svg>
