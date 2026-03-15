@@ -998,6 +998,10 @@ export default function App() {
               <span className="text-sm font-bold">تثبيت التطبيق</span>
             </button>
           )}
+          
+          <p className="text-xs text-slate-500 mt-4 px-2 text-center">
+            إذا لم يظهر زر التثبيت، يمكنك تثبيت التطبيق يدوياً من قائمة المتصفح (إضافة إلى الشاشة الرئيسية).
+          </p>
         </div>
       </motion.aside>
 
