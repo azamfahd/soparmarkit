@@ -43,8 +43,6 @@ import {
   ResponsiveContainer,
   CartesianGrid
 } from 'recharts';
-import { remoteApi as api } from './services/apiService';
-import { syncService } from './services/syncService';
 import { db, seedDatabase } from './db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -188,8 +186,7 @@ export default function App() {
     });
     
     const handleOnline = () => {
-      syncService.processQueue();
-      showNotification('تم استعادة الاتصال، جاري مزامنة البيانات...');
+      showNotification('تم استعادة الاتصال');
     };
     window.addEventListener('online', handleOnline);
 
@@ -255,125 +252,95 @@ export default function App() {
   };
 
   const fetchSummary = async () => {
-    try {
-      const summary = await api.reports.getSummary();
-      setSummary(summary);
-    } catch (err) {
-      if (err instanceof Error && err.message !== "Supabase is not configured.") {
-        console.error("Failed to fetch summary:", err);
+    // Local DB logic
+    const allSales = await db.sales.toArray();
+    const allCustomers = await db.customers.toArray();
+    const lowStockCount = await db.products.where('stock_quantity').below(5).count();
+    
+    const totalSales = allSales.reduce((sum, s) => sum + s.total_amount, 0);
+    const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
+
+    // Profit calculation
+    const allSaleItems = await db.saleItems.toArray();
+    const allProducts = await db.products.toArray();
+    const productMap = new Map(allProducts.map(p => [p.id, p]));
+    
+    const totalProfit = allSaleItems.reduce((sum, item) => {
+      const product = productMap.get(item.product_id);
+      if (product) {
+        return sum + (item.price_at_sale - product.cost_price) * item.quantity;
       }
-      // Fallback to local DB if API fails
-      const allSales = await db.sales.toArray();
-      const allCustomers = await db.customers.toArray();
-      const lowStockCount = await db.products.where('stock_quantity').below(5).count();
-      
-      const totalSales = allSales.reduce((sum, s) => sum + s.total_amount, 0);
-      const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
+      return sum;
+    }, 0);
 
-      // Profit calculation
-      const allSaleItems = await db.saleItems.toArray();
-      const allProducts = await db.products.toArray();
-      const productMap = new Map(allProducts.map(p => [p.id, p]));
-      
-      const totalProfit = allSaleItems.reduce((sum, item) => {
-        const product = productMap.get(item.product_id);
-        if (product) {
-          return sum + (item.price_at_sale - product.cost_price) * item.quantity;
-        }
-        return sum;
-      }, 0);
-
-      setSummary({
-        totalSales,
-        totalDebts,
-        lowStock: lowStockCount,
-        totalProfit
-      });
-    }
+    setSummary({
+      totalSales,
+      totalDebts,
+      lowStock: lowStockCount,
+      totalProfit
+    });
   };
 
   const fetchDailySales = async () => {
-    try {
-      const data = await api.reports.getDailySales();
-      setDailySales(data);
-    } catch (err) {
-      if (err instanceof Error && err.message !== "Supabase is not configured.") {
-        console.error("Failed to fetch daily sales:", err);
-      }
-      // Fallback to local DB if API fails
-      const allSales = await db.sales.toArray();
-      const last7Days = Array.from({ length: 7 }, (_, i) => {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        return d.toISOString().split('T')[0];
-      }).reverse();
+    // Local DB logic
+    const allSales = await db.sales.toArray();
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      return d.toISOString().split('T')[0];
+    }).reverse();
 
-      const dailyData = last7Days.map(date => {
-        const dayTotal = allSales
-          .filter(s => s.created_at.startsWith(date))
-          .reduce((sum, s) => sum + s.total_amount, 0);
-        return { date, total: dayTotal };
-      });
+    const dailyData = last7Days.map(date => {
+      const dayTotal = allSales
+        .filter(s => s.created_at.startsWith(date))
+        .reduce((sum, s) => sum + s.total_amount, 0);
+      return { date, total: dayTotal };
+    });
 
-      setDailySales(dailyData);
-    }
+    setDailySales(dailyData);
   };
 
   const fetchProductHistory = async (product: Product) => {
-    try {
-      const history = await api.products.getHistory(product.id!);
-      setProductHistory(history);
-    } catch (err) {
-      console.error("Failed to fetch product history:", err);
-      // Fallback to local DB if API fails
-      const history = await db.inventoryLogs
-        .where('product_id')
-        .equals(product.id!)
-        .reverse()
-        .limit(50)
-        .toArray();
-      setProductHistory(history);
-    }
+    const history = await db.inventoryLogs
+      .where('product_id')
+      .equals(product.id!)
+      .reverse()
+      .limit(50)
+      .toArray();
+    setProductHistory(history);
     setShowProductDetails(product);
   };
 
   const fetchCustomerHistory = async (customer: Customer) => {
-    try {
-      const data = await api.customers.getHistory(customer.id!);
-      setCustomerHistory(data);
-    } catch (err) {
-      console.error("Failed to fetch customer history:", err);
-      // Fallback to local DB if API fails
-      const customerSales = await db.sales
-        .where('customer_id')
-        .equals(customer.id!)
-        .reverse()
-        .toArray();
-      
-      const saleIds = customerSales.map(s => s.id!);
-      const allItems = await db.saleItems.where('sale_id').anyOf(saleIds).toArray();
-      const allProducts = await db.products.toArray();
-      const productMap = new Map(allProducts.map(p => [p.id, p]));
+    const customerSales = await db.sales
+      .where('customer_id')
+      .equals(customer.id!)
+      .reverse()
+      .toArray();
+    
+    const saleIds = customerSales.map(s => s.id!);
+    const allItems = await db.saleItems.where('sale_id').anyOf(saleIds).toArray();
+    const allProducts = await db.products.toArray();
+    const productMap = new Map(allProducts.map(p => [p.id, p]));
 
-      const salesWithItems = customerSales.map(s => ({
-        ...s,
-        items: JSON.stringify(allItems
-          .filter(si => si.sale_id === s.id)
-          .map(si => ({
-            name: productMap.get(si.product_id)?.name || 'منتج محذوف',
-            quantity: si.quantity,
-            price: si.price_at_sale
-          })))
-      }));
+    const salesWithItems = customerSales.map(s => ({
+      ...s,
+      items: JSON.stringify(allItems
+        .filter(si => si.sale_id === s.id)
+        .map(si => ({
+          name: productMap.get(si.product_id)?.name || 'منتج محذوف',
+          quantity: si.quantity,
+          price: si.price_at_sale
+        })))
+    }));
 
-      const debts = await db.debts
-        .where('customer_id')
-        .equals(customer.id!)
-        .reverse()
-        .toArray();
+    const debts = await db.debts
+      .where('customer_id')
+      .equals(customer.id!)
+      .reverse()
+      .toArray();
 
-      setCustomerHistory({ sales: salesWithItems, debts });
-    }
+    setCustomerHistory({ sales: salesWithItems, debts });
     setShowCustomerDetails(customer);
   };
 
@@ -382,7 +349,7 @@ export default function App() {
     const amount = Number(paymentAmount);
     
     try {
-      // 1. Update local DB
+      // Update local DB
       await db.transaction('rw', [db.customers, db.debts], async () => {
         await db.customers.update(showPaymentModal.id!, {
           balance: showPaymentModal.balance - amount
@@ -394,9 +361,6 @@ export default function App() {
           created_at: new Date().toISOString()
         });
       });
-      
-      // 2. Sync to Supabase
-      await api.customers.pay(showPaymentModal.id, amount);
       
       showNotification('تم تسجيل الدفعة بنجاح');
     } catch (err) {
@@ -419,7 +383,7 @@ export default function App() {
     };
 
     try {
-      // 1. Add to local DB
+      // Add to local DB
       const productId = await db.products.add(productData);
       await db.inventoryLogs.add({
         product_id: productId as number,
@@ -427,9 +391,6 @@ export default function App() {
         reason: 'initial',
         created_at: new Date().toISOString()
       });
-      
-      // 2. Sync to Supabase
-      await api.products.add({ ...productData, id: productId });
       
       showNotification('تم إضافة المنتج بنجاح');
     } catch (err) {
@@ -445,7 +406,7 @@ export default function App() {
     if (!editingProduct || !editingProduct.id) return;
     
     try {
-      // 1. Update local DB
+      // Update local DB
       const oldProduct = await db.products.get(editingProduct.id);
       if (oldProduct) {
         const diff = editingProduct.stock_quantity - oldProduct.stock_quantity;
@@ -460,9 +421,6 @@ export default function App() {
         }
       }
 
-      // 2. Sync to Supabase
-      await api.products.update(editingProduct.id, editingProduct);
-      
       showNotification('تم تحديث المنتج بنجاح');
     } catch (err) {
       console.error("Failed to update product:", err);
@@ -478,11 +436,8 @@ export default function App() {
       message: 'هل أنت متأكد من حذف هذا المنتج؟',
       onConfirm: async () => {
         try {
-          // 1. Delete from local DB
+          // Delete from local DB
           await db.products.delete(id);
-          
-          // 2. Sync to Supabase
-          await api.products.delete(id);
           
           showNotification('تم حذف المنتج');
         } catch (err) {
@@ -500,11 +455,8 @@ export default function App() {
       message: 'هل أنت متأكد من حذف هذا الزبون؟',
       onConfirm: async () => {
         try {
-          // 1. Delete from local DB
+          // Delete from local DB
           await db.customers.delete(id);
-          
-          // 2. Sync to Supabase
-          await api.customers.delete(id);
           
           showNotification('تم حذف الزبون');
         } catch (err) {
@@ -522,7 +474,7 @@ export default function App() {
       message: 'هل أنت متأكد من إلغاء هذه العملية؟ سيتم استعادة المخزون وعكس الديون.',
       onConfirm: async () => {
         try {
-          // 1. Update local DB
+          // Update local DB
           await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts], async () => {
             const sale = await db.sales.get(id);
             if (!sale) return;
@@ -556,9 +508,6 @@ export default function App() {
             await db.saleItems.where('sale_id').equals(id).delete();
             await db.sales.delete(id);
           });
-          
-          // 2. Sync to Supabase
-          await api.sales.delete(id);
           
           showNotification('تم إلغاء العملية واستعادة المخزون');
         } catch (err) {
@@ -810,11 +759,8 @@ export default function App() {
     };
     
     try {
-      // 1. Add to local DB
+      // Add to local DB
       const customerId = await db.customers.add(customerData);
-      
-      // 2. Sync to Supabase
-      await api.customers.add({ ...customerData, id: customerId });
       
       setShowAddCustomer(false);
       setNewCustomer({ name: '', phone: '' });
@@ -878,11 +824,6 @@ export default function App() {
     };
 
     try {
-      await api.sales.add(saleData);
-      showNotification('تمت العملية بنجاح');
-    } catch (err) {
-      console.error("Failed to checkout:", err);
-      // Fallback to local DB
       await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts], async () => {
         const saleId = await db.sales.add({
           customer_id: selectedCustomer,
@@ -929,7 +870,10 @@ export default function App() {
           }
         }
       });
-      showNotification('تمت العملية بنجاح (محلياً)');
+      showNotification('تمت العملية بنجاح');
+    } catch (err) {
+      console.error("Failed to checkout:", err);
+      showNotification('خطأ في إتمام العملية', 'error');
     }
 
     setCart([]);
