@@ -1018,6 +1018,24 @@ export default function App() {
       </header>
 
       <main className="p-4 max-w-lg mx-auto pb-10">
+        {deferredPrompt && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 bg-emerald-600 p-4 rounded-3xl text-white flex items-center justify-between shadow-lg shadow-emerald-200"
+          >
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 p-2 rounded-xl">
+                <Plus className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="font-bold">تثبيت التطبيق</p>
+                <p className="text-xs opacity-90">احصل على وصول أسرع من شاشتك الرئيسية</p>
+              </div>
+            </div>
+            <Button onClick={handleInstall} className="bg-white text-emerald-700 hover:bg-emerald-50">تثبيت</Button>
+          </motion.div>
+        )}
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <motion.div 
