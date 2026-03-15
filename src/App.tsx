@@ -713,14 +713,30 @@ export default function App() {
             </tr>
           </thead>
           <tbody>
-            ${ledgerEntries.map(entry => `
-              <tr>
-                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
-                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'sale' ? 'فاتورة مشتريات #' + entry.id : 'تسديد مبلغ'}</td>
-                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'sale' ? entry.total_amount : '-'}</td>
-                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'payment' ? entry.amount : '-'}</td>
-              </tr>
-            `).join('')}
+            ${ledgerEntries.map(entry => {
+              let itemsHtml = '';
+              if (entry.entryType === 'sale' && entry.items) {
+                try {
+                  const items = JSON.parse(entry.items);
+                  itemsHtml = `<div style="font-size: 0.85em; color: #555; margin-top: 5px; border-top: 1px solid #eee; padding-top: 5px;">
+                    ${items.map((item: any) => `${item.name} (${item.quantity} × ${item.price})`).join('<br/>')}
+                  </div>`;
+                } catch (e) {
+                  itemsHtml = '<div style="font-size: 0.8em; color: red;">خطأ في عرض المنتجات</div>';
+                }
+              }
+              
+              return `
+                <tr>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">
+                    ${entry.entryType === 'sale' ? 'فاتورة مشتريات #' + entry.id + itemsHtml : 'تسديد مبلغ'}
+                  </td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'sale' ? entry.total_amount : '-'}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'payment' ? entry.amount : '-'}</td>
+                </tr>
+              `;
+            }).join('')}
           </tbody>
         </table>
         <div style="margin-top: 30px; float: left; width: 250px;">
@@ -734,6 +750,56 @@ export default function App() {
     const opt = {
       margin: 0.5,
       filename: `كشف_حساب_${customer.name}.pdf`,
+      image: { type: 'jpeg' as 'jpeg', quality: 0.98 },
+      html2canvas: { 
+        scale: 2,
+        ignoreElements: (element: HTMLElement) => {
+          return element.tagName === 'STYLE' || element.tagName === 'LINK';
+        }
+      },
+      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' as 'portrait' }
+    };
+    
+    html2pdf().set(opt).from(element).save();
+  };
+
+  const handleDownloadInventoryPDF = async () => {
+    const allProducts = await db.products.toArray();
+    const element = document.createElement('div');
+    element.innerHTML = `
+      <div dir="rtl" style="font-family: Arial, sans-serif; padding: 30px;">
+        <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
+          <h1>${storeName} - تقرير المخزون</h1>
+          <p>تاريخ الإصدار: ${new Date().toLocaleString('ar-SA')}</p>
+        </div>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #f2f2f2;">
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">المنتج</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">التصنيف</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">سعر التكلفة</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">سعر البيع</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right;">الكمية</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${allProducts.map(p => `
+              <tr>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${p.name}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${p.category}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${p.cost_price} ${currency}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${p.sale_price} ${currency}</td>
+                <td style="border: 1px solid #000; padding: 8px; text-align: right;">${p.stock_quantity}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    
+    const opt = {
+      margin: 0.5,
+      filename: `تقرير_المخزون_${new Date().toISOString().split('T')[0]}.pdf`,
       image: { type: 'jpeg' as 'jpeg', quality: 0.98 },
       html2canvas: { 
         scale: 2,
@@ -1421,9 +1487,14 @@ export default function App() {
             <motion.div key="products" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
                <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-bold">إدارة الأصناف</h2>
-                <Button variant="outline" className="flex items-center gap-2" onClick={() => setShowAddProduct(true)}>
-                  <Plus className="w-4 h-4" /> إضافة صنف
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex items-center gap-2" onClick={handleDownloadInventoryPDF}>
+                    <Printer className="w-4 h-4" /> تقرير PDF
+                  </Button>
+                  <Button variant="outline" className="flex items-center gap-2" onClick={() => setShowAddProduct(true)}>
+                    <Plus className="w-4 h-4" /> إضافة صنف
+                  </Button>
+                </div>
               </div>
 
               <div className="relative mb-4">
