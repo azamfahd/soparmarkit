@@ -22,6 +22,7 @@ export interface Sale {
   total_amount: number;
   payment_type: 'cash' | 'debt';
   created_at: string;
+  notes?: string;
 }
 
 export interface SaleItem {
