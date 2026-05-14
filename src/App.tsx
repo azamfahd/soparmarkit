@@ -1718,15 +1718,19 @@ export default function App() {
                         <div className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
                           <div className="text-center w-full border-l border-slate-200 last:border-0 pl-1">
                             <p className="text-[9px] text-slate-400 font-bold mb-0.5">التكلفة</p>
-                            <p className="text-xs font-bold text-slate-700">{p.cost_price}</p>
+                            <p className="text-[11px] font-bold text-slate-700">{p.cost_price}</p>
+                          </div>
+                          <div className="text-center w-full border-l border-slate-200 last:border-0 px-1">
+                            <p className="text-[9px] text-slate-500 font-bold mb-0.5">إج.التكلفة</p>
+                            <p className="text-[11px] font-bold text-slate-800">{formatPrice(p.cost_price * p.stock_quantity)}</p>
                           </div>
                           <div className="text-center w-full border-l border-slate-200 last:border-0 px-1">
                             <p className="text-[9px] text-emerald-600 font-bold mb-0.5">البيع</p>
-                            <p className="text-xs font-bold text-emerald-700">{p.sale_price}</p>
+                            <p className="text-[11px] font-bold text-emerald-700">{p.sale_price}</p>
                           </div>
                           <div className="text-center w-full pr-1">
                             <p className="text-[9px] text-indigo-400 font-bold mb-0.5">تصنيف</p>
-                            <p className="text-[10px] font-bold text-indigo-700 truncate w-14 mx-auto" title={p.category}>{p.category}</p>
+                            <p className="text-[10px] font-bold text-indigo-700 truncate w-12 mx-auto" title={p.category}>{p.category}</p>
                           </div>
                         </div>
                       </div>
