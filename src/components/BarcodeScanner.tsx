@@ -54,41 +54,54 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
   useEffect(() => {
     let isMounted = true;
     
-    // Give DOM a split second to paint, then seek cameras
-    const initTimer = setTimeout(() => {
-      Html5Qrcode.getCameras()
-        .then((devices) => {
-          if (!isMounted) return;
-          if (devices && devices.length > 0) {
-            setCameras(devices);
-            // Prefer back/rear camera ("environment" or contains "back" in label)
-            const backCam = devices.find(d => 
-              d.label.toLowerCase().includes('back') || 
-              d.label.toLowerCase().includes('environment') ||
-              d.label.toLowerCase().includes('rear')
-            );
-            const chosenCam = backCam || devices[0];
-            setSelectedCameraId(chosenCam.id);
-            startScanning(chosenCam.id).catch(err => {
-              console.error("Initial camera start failed:", err);
-            });
-          } else {
-            // Fallback to environment facingMode directly if no cameras listed
-            console.warn("No devices found, trying general facingMode fallback.");
-            startScanning({ facingMode: "environment" }).catch(err => {
-              console.error("Fallback general start failed:", err);
-            });
+    const initializeScanner = async () => {
+      try {
+        // Try to explicitly request permission first for mobile Safari/Chrome
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        } catch (e) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          } catch (err) {
+            console.warn("Direct getUserMedia fallback error:", err);
           }
-        })
-        .catch((err) => {
-          if (!isMounted) return;
-          console.error("Camera detection error, trying environment fallback", err);
-          // Direct media session fallback when enumeration is restricted or blockaded (like in sandboxed iframes)
-          startScanning({ facingMode: "environment" }).catch(err => {
-            console.error("Direct fallback failed:", err);
-          });
-        });
-    }, 150);
+        }
+        
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+      } catch (err) {
+         console.warn(err);
+      }
+
+      if (!isMounted) return;
+
+      try {
+        const devices = await Html5Qrcode.getCameras();
+        if (!isMounted) return;
+        
+        if (devices && devices.length > 0) {
+          setCameras(devices);
+          const backCam = devices.find(d => 
+            d.label.toLowerCase().includes('back') || 
+            d.label.toLowerCase().includes('environment') ||
+            d.label.toLowerCase().includes('rear')
+          );
+          const chosenCam = backCam || devices[0];
+          setSelectedCameraId(chosenCam.id);
+          startScanning(chosenCam.id).catch(err => console.error("Initial camera start failed:", err));
+        } else {
+          startScanning({ facingMode: "environment" }).catch(err => console.error("General fallback start failed:", err));
+        }
+      } catch (err) {
+        if (!isMounted) return;
+        console.error("Camera detection error, trying environment fallback", err);
+        startScanning({ facingMode: "environment" }).catch(e => console.error("Direct fallback failed:", e));
+      }
+    };
+
+    const initTimer = setTimeout(initializeScanner, 150);
 
     return () => {
       isMounted = false;
@@ -97,15 +110,13 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
     };
   }, []);
 
-  const startScanning = async (cameraIdOrConfig: string | { facingMode: string }) => {
+  const startScanning = async (cameraIdOrConfig: string | { facingMode: string } | { facingMode: { exact: string } }) => {
     setErrorMsg("");
     setTorchOn(false);
     setHasTorch(false);
 
-    // Dynamic safety: Ensure target container element indeed exists in DOM
     const element = document.getElementById(scanContainerId);
     if (!element) {
-      console.warn("Scanner element is not fully available in DOM, delaying initialization...");
       setTimeout(() => {
         startScanning(cameraIdOrConfig);
       }, 100);
@@ -113,70 +124,46 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
     }
 
     try {
-      // Clean up previous scanner if exists
       if (html5QrcodeRef.current) {
         await stopScanning();
       }
 
-      // Create a fresh instance
       const scanner = new Html5Qrcode(scanContainerId);
       html5QrcodeRef.current = scanner;
 
-      const formats = [
-        Html5QrcodeSupportedFormats.EAN_13,
-        Html5QrcodeSupportedFormats.EAN_8,
-        Html5QrcodeSupportedFormats.CODE_128,
-        Html5QrcodeSupportedFormats.CODE_39,
-        Html5QrcodeSupportedFormats.UPC_A,
-        Html5QrcodeSupportedFormats.UPC_E,
-        Html5QrcodeSupportedFormats.QR_CODE
-      ];
-
-      // Optimized visual scanning size for high-speed detection
+      // Safe config with reasonable defaults for broad compatibility
       const config = {
-        fps: 30, // Elevated sampling rate to 30 frames/sec for instantaneous capture
+        fps: 10,
         qrbox: (viewFinderWidth: number, viewFinderHeight: number) => {
-          // Dynamic and much more generous viewfinder window to easily grab barcodes
           const scannerWidth = Math.max(Math.min(viewFinderWidth * 0.9, 440), 220);
           const scannerHeight = Math.max(Math.min(viewFinderHeight * 0.55, 200), 90);
-          return {
-            width: scannerWidth,
-            height: scannerHeight
-          };
+          return { width: scannerWidth, height: scannerHeight };
         },
         aspectRatio: 1.333333,
-        formatsToSupport: formats
       };
 
       await scanner.start(
         cameraIdOrConfig as any,
         config,
         (decodedText) => {
-          // Cooldown logic: ignore duplicates within 1.2 seconds
           const now = Date.now();
           if (decodedText === lastScannedCode.current && (now - lastScannedTime.current) < 1200) {
             return;
           }
-
           lastScannedCode.current = decodedText;
           lastScannedTime.current = now;
-
           playBeep();
           onScan(decodedText);
-
           if (autoClose) {
             stopScanning();
             onClose();
           }
         },
-        (errorMessage) => {
-          // Quiet logs during seek frames
-        }
+        () => {} // ignore scan frame errors
       );
 
       setScannerActive(true);
 
-      // Check flashlight/torch support after a brief launch latency
       setTimeout(() => {
         try {
           if (html5QrcodeRef.current && html5QrcodeRef.current.isScanning) {
@@ -191,25 +178,33 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
             }
           }
         } catch (e) {
-          console.warn("Could not check torch support on scan start:", e);
+          console.warn("Could not check torch support:", e);
         }
       }, 1000);
 
     } catch (err: any) {
-      console.error("Failed to start scanning:", err);
+      console.error("Failed to start scanning with config:", cameraIdOrConfig, err);
       
-      // Automatic fallback to general active environment facing lens
+      // Intelligent fallback chain
       if (typeof cameraIdOrConfig === 'string') {
-        console.log("Attempting automatic fallback to general environment facingMode...");
+        console.log("Attempting fallback to generic environment camera...");
         try {
           await startScanning({ facingMode: "environment" });
           return;
         } catch (fallbackErr) {
-          console.error("Environment facingMode fallback also failed:", fallbackErr);
+          console.error("Environment fallback failed:", fallbackErr);
         }
+      } else if (typeof cameraIdOrConfig === 'object' && cameraIdOrConfig.facingMode === 'environment') {
+         console.log("Attempting fallback to any available camera...");
+         try {
+           await startScanning({ facingMode: "user" }); // Try front camera if back fails
+           return;
+         } catch (e2) {
+            console.error("User facing fallback failed", e2);
+         }
       }
       
-      setErrorMsg("عذراً، لم نتمكن من تشغيل الكاميرا. قد تكون الكاميرا مستخدمة في تطبيق آخر (مثل زووم أو تيمز)، أو بحاجة لصلاحية الوصول للمتصفح. يرجى كتابة رمز الباركود يدوياً بالأسفل، أو فتح التطبيق في علامة تبويب جديدة ومستقلة لتفادي حظر الكاميرا من داخل المعاينة.");
+      setErrorMsg("عذراً، لم نتمكن من تشغيل الكاميرا. يرجى التأكد من إعطاء صلاحية الكاميرا للمتصفح. قد تحتاج لإغلاق أي تطبيق آخر يستخدم الكاميرا، أو تحديث الصفحة والموافقة على الصلاحيات.");
     }
   };
 
