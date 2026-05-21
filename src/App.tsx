@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
+import BarcodeScanner from './components/BarcodeScanner';
+import { Scan, QrCode } from 'lucide-react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -56,6 +58,8 @@ interface Product {
   sale_price: number;
   stock_quantity: number;
   category: string;
+  barcode?: string;
+  unit?: string;
 }
 
 interface Customer {
@@ -141,8 +145,15 @@ export default function App() {
     }
     const items = await db.saleItems.where('sale_id').equals(saleId).toArray();
     const allProducts = await db.products.toArray();
-    const productMap = new Map(allProducts.map(p => [p.id, p.name]));
-    setExpandedSaleItems(items.map(item => ({...item, product_name: productMap.get(item.product_id) || 'منتج محذوف'})));
+    const productMap = new Map(allProducts.map(p => [p.id, p]));
+    setExpandedSaleItems(items.map(item => {
+      const prod = productMap.get(item.product_id);
+      return {
+        ...item,
+        product_name: prod ? prod.name : 'منتج محذوف',
+        product_unit: prod ? (prod.unit || '') : ''
+      };
+    }));
     setExpandedSaleId(saleId);
   };
 
@@ -152,7 +163,10 @@ export default function App() {
   const [saleNotes, setSaleNotes] = useState('');
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
-  const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '' });
+  const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '' });
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product'>('pos');
+  const [scannedProductInfo, setScannedProductInfo] = useState<Product | null>(null);
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [inventorySearchTerm, setInventorySearchTerm] = useState('');
@@ -425,7 +439,8 @@ export default function App() {
         .map(si => ({
           name: productMap.get(si.product_id)?.name || 'منتج محذوف',
           quantity: si.quantity,
-          price: si.price_at_sale
+          price: si.price_at_sale,
+          unit: productMap.get(si.product_id)?.unit || ''
         })))
     }));
 
@@ -474,7 +489,9 @@ export default function App() {
       cost_price: Number(newProduct.cost),
       sale_price: Number(newProduct.sale),
       stock_quantity: stock,
-      category: newProduct.category
+      category: newProduct.category,
+      barcode: newProduct.barcode.trim() || undefined,
+      unit: newProduct.unit.trim() || undefined
     };
 
     try {
@@ -494,7 +511,7 @@ export default function App() {
     }
 
     setShowAddProduct(false);
-    setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '' });
+    setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '' });
   };
 
   const handleEditProduct = async () => {
@@ -814,7 +831,7 @@ export default function App() {
                 try {
                   const items = JSON.parse(entry.items);
                   itemsHtml = `<div style="font-size: 0.85em; color: #555; margin-top: 5px; border-top: 1px solid #eee; padding-top: 5px;">
-                    ${items.map((item: any) => `${item.name} (${item.quantity} × ${item.price})`).join('<br/>')}
+                    ${items.map((item: any) => `${item.name} (${item.quantity} ${item.unit || ''} × ${item.price})`).join('<br/>')}
                   </div>`;
                 } catch (e) {
                   itemsHtml = '<div style="font-size: 0.8em; color: red;">خطأ في عرض المنتجات</div>';
@@ -988,10 +1005,73 @@ export default function App() {
       
       setShowAddCustomer(false);
       setNewCustomer({ name: '', phone: '' });
+      setSelectedCustomer(customerId as number);
+      // Re-trigger cart preview if it was closed
+      setIsCartExpanded(true);
       showNotification('تم إضافة الزبون بنجاح');
     } catch (err) {
       console.error("Failed to add customer:", err);
       showNotification('خطأ في إضافة الزبون', 'error');
+    }
+  };
+
+  const handleBarcodeScan = (code: string) => {
+    if (confirmAction) {
+      return; // Ignore any background camera scans while a dialog is active
+    }
+    if (scannerMode === 'add-product') {
+      setNewProduct(prev => ({ ...prev, barcode: code }));
+      showNotification(`تم قراءة الباركود: ${code}`);
+    } else if (scannerMode === 'edit-product') {
+      if (editingProduct) {
+        setEditingProduct(prev => prev ? { ...prev, barcode: code } : null);
+        showNotification(`تم تسجيل الباركود: ${code}`);
+      }
+    } else if (scannerMode === 'pos') {
+      const trimmedCode = code.trim();
+      const product = products.find(p => p.barcode && p.barcode.trim() === trimmedCode);
+      if (product) {
+        if (product.stock_quantity <= 0) {
+          setIsScannerOpen(false); // Close the scanner to stop background feed and focus user guidance
+          showNotification(`تنبيه: المنتج "${product.name}" غير متوفر في المخزون`, 'error');
+          setScannedProductInfo(product);
+          setConfirmAction({
+            title: 'تعبئة المخزون تلقائياً؟',
+            message: `المنتج "${product.name}" غير متوفر حالياً في المخزون. هل ترغب في إضافة 5 قطع للمخزون وإدخاله في سلة المشتريات تلقائياً؟`,
+            onConfirm: async () => {
+              try {
+                await db.products.update(product.id!, { stock_quantity: 5 });
+                const updated = await db.products.get(product.id!);
+                if (updated) {
+                  setScannedProductInfo(updated);
+                  addToCart(updated);
+                  showNotification(`تم زيادة مخزون "${updated.name}" بـ 5 قطع وإضافته للسلة بنجاح!`, 'success');
+                }
+              } catch (err) {
+                console.error("Failed auto stock addition via scanner dialog:", err);
+                showNotification('خطأ في معالجة الإضافة التلقائية للمخزون', 'error');
+              }
+              setConfirmAction(null);
+            }
+          });
+        } else {
+          addToCart(product);
+          setScannedProductInfo(product);
+          showNotification(`تمت إضافة "${product.name}" إلى السلة`);
+        }
+      } else {
+        setIsScannerOpen(false); // Close the scanner to stop background feed and focus product creation
+        showNotification(`الرمز ${code} غير مرتبط بأي منتج`, 'error');
+        setConfirmAction({
+          title: 'منتج غير مسجل',
+          message: `لم يتم العثور على الباركود (${code}) في المخزون. هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
+          onConfirm: () => {
+            setConfirmAction(null);
+            setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '' });
+            setShowAddProduct(true);
+          }
+        });
+      }
     }
   };
 
@@ -1015,7 +1095,7 @@ export default function App() {
         showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
         return;
       }
-      setCart([...cart, { product_id: product.id, name: product.name, price: product.sale_price, quantity: quantity, max_stock: product.stock_quantity }]);
+      setCart([...cart, { product_id: product.id, name: product.name, price: product.sale_price, quantity: quantity, max_stock: product.stock_quantity, unit: product.unit }]);
     }
   };
 
@@ -1395,7 +1475,7 @@ export default function App() {
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {topProducts.map((item, index) => (
-                      <div key={item.product.id} className="group flex items-center justify-between p-2.5 rounded-2xl hover:bg-slate-50 border border-transparent hover:border-slate-100 transition-all">
+                      <div key={`top-product-${item.product?.id ?? 'no-id'}-${index}`} className="group flex items-center justify-between p-2.5 rounded-2xl hover:bg-slate-50 border border-transparent hover:border-slate-100 transition-all">
                         <div className="flex items-center gap-3">
                           <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shadow-sm bg-white border ${index === 0 ? 'border-amber-200 text-amber-500' : index === 1 ? 'border-slate-200 text-slate-500' : index === 2 ? 'border-orange-200 text-orange-500' : 'border-slate-100 text-slate-400'}`}>
                             {index + 1}
@@ -1478,21 +1558,100 @@ export default function App() {
                 <h2 className="text-xl font-bold">نقطة البيع</h2>
               </div>
 
-              <div className="relative mb-4">
-                <Search className="absolute right-3 top-3 text-slate-400 w-5 h-5" />
-                <input 
-                  type="text" 
-                  placeholder="ابحث عن منتج..." 
-                  className="w-full p-3 pr-10 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+              <div className="flex gap-2 mb-4">
+                <div className="relative flex-1">
+                  <Search className="absolute right-3 top-3 text-slate-400 w-5 h-5" />
+                  <input 
+                    type="text" 
+                    placeholder="ابحث بالاسم أو السعر..." 
+                    className="w-full p-3 pr-10 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => { setScannerMode('pos'); setIsScannerOpen(true); }}
+                  className="px-4 bg-emerald-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all shadow-md shadow-emerald-500/10 active:scale-95"
+                  title="مسح باركود المنتج بالكاميرا"
+                >
+                  <Scan className="w-5 h-5" />
+                  <span className="hidden sm:inline">قارئ الباركود</span>
+                </button>
               </div>
 
+              <AnimatePresence>
+                {scannedProductInfo && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="bg-emerald-50/70 border border-emerald-100 rounded-3xl p-4 mb-4 relative"
+                  >
+                    <button 
+                      onClick={() => setScannedProductInfo(null)}
+                      className="absolute left-3 top-3 p-1 hover:bg-emerald-100 text-emerald-600 rounded-full transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                    <div className="flex items-start gap-3">
+                      <div className="w-10 h-10 bg-emerald-500 text-white rounded-2xl flex items-center justify-center font-bold flex-shrink-0 animate-pulse">
+                        <Scan className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[10px] uppercase font-bold text-emerald-600 tracking-wider">تم العثور وعرض المواصفات</p>
+                        <h4 className="font-extrabold text-slate-800 text-normal mt-0.5">{scannedProductInfo.name}</h4>
+                        <div className="grid grid-cols-3 gap-2 mt-2 bg-white/60 p-2 rounded-2xl border border-emerald-100/50">
+                          <div>
+                            <p className="text-[9px] text-slate-400 font-bold">سعر البيع</p>
+                            <p className="text-xs font-extrabold text-emerald-600">{formatPrice(scannedProductInfo.sale_price)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-slate-400 font-bold">المخزون المتوفر</p>
+                            <p className={`text-xs font-extrabold ${scannedProductInfo.stock_quantity <= 5 ? 'text-red-500' : 'text-slate-700'}`}>
+                              {scannedProductInfo.stock_quantity} سلع
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-slate-400 font-bold">الفئة</p>
+                            <p className="text-xs font-bold text-slate-600 truncate">{scannedProductInfo.category}</p>
+                          </div>
+                        </div>
+
+                        {scannedProductInfo.stock_quantity <= 0 && (
+                          <div className="mt-3 pt-2 border-t border-emerald-100/40">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await db.products.update(scannedProductInfo.id!, { stock_quantity: 5 });
+                                  const updated = await db.products.get(scannedProductInfo.id!);
+                                  if (updated) {
+                                    setScannedProductInfo(updated);
+                                    addToCart(updated);
+                                    showNotification(`تم زيادة مخزون "${updated.name}" بـ 5 قطع تلقائياً وإضافته للسلة!`, 'success');
+                                  }
+                                } catch (err) {
+                                  console.error("Failed auto stock addition:", err);
+                                  showNotification('خطأ في معالجة الإضافة التلقائية للمخزون', 'error');
+                                }
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              السلعة نافذة! هل ترغب بإضافة 5 قطع للمخزون وإضافتها للسلة تلقائياً؟
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div className="flex gap-2 overflow-x-auto pb-2 mb-4 no-scrollbar">
-                {categories.map(cat => (
+                {categories.map((cat, idx) => (
                   <button
-                    key={cat}
+                    key={`pos-cat-${cat}-${idx}`}
                     onClick={() => setSelectedCategory(cat)}
                     className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm whitespace-nowrap transition-all ${selectedCategory === cat ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100 scale-105' : 'bg-white text-slate-600 border border-slate-100'}`}
                   >
@@ -1506,12 +1665,12 @@ export default function App() {
                 {products
                   .filter(p => p.name.includes(searchTerm))
                   .filter(p => selectedCategory === 'الكل' || p.category === selectedCategory)
-                  .map(p => (
+                  .map((p, idx) => (
                   <motion.div
                     layout
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    key={p.id} 
+                    key={`pos-product-${p.id ?? 'no-id'}-${idx}`} 
                     className={`relative p-3 rounded-3xl border-2 transition-all cursor-pointer active:scale-95 ${p.stock_quantity <= 0 ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-100 hover:border-emerald-200 shadow-sm hover:shadow-md'}`}
                     onClick={() => p.stock_quantity > 0 && addToCart(p)}
                   >
@@ -1524,7 +1683,7 @@ export default function App() {
                       <div className="flex justify-between items-center">
                         <p className="text-emerald-600 font-bold">{formatPrice(p.sale_price)}</p>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded-lg font-bold ${p.stock_quantity <= 0 ? 'bg-red-100 text-red-600' : p.stock_quantity < 5 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                          {p.stock_quantity <= 0 ? 'نفذ' : p.stock_quantity}
+                          {p.stock_quantity <= 0 ? 'نفذ' : `${p.stock_quantity} ${p.unit || ''}`}
                         </span>
                       </div>
                     </div>
@@ -1577,16 +1736,25 @@ export default function App() {
                       <div className="p-4 bg-slate-50 border-b border-slate-100 grid grid-cols-2 gap-3">
                         <div className="space-y-1">
                           <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الزبون</label>
-                          <select 
-                            className="w-full p-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none"
-                            value={selectedCustomer || ''}
-                            onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
-                          >
-                            <option value="">زبون نقدي</option>
-                            {customers.map(c => (
-                              <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                          </select>
+                          <div className="flex gap-2">
+                            <select 
+                              className="flex-1 w-full p-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none"
+                              value={selectedCustomer || ''}
+                              onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
+                            >
+                              <option value="">زبون نقدي</option>
+                              {customers.map((c, idx) => (
+                                <option key={`customer-option-${c.id ?? 'no-id'}-${idx}`} value={c.id}>{c.name}</option>
+                              ))}
+                            </select>
+                            <button 
+                              onClick={() => { setIsCartExpanded(false); setShowAddCustomer(true); }}
+                              className="w-10 flex items-center justify-center bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-colors shrink-0"
+                              title="إضافة زبون جديد"
+                            >
+                              <UserPlus className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الدفع</label>
@@ -1620,8 +1788,8 @@ export default function App() {
                         {cart.length === 0 ? (
                           <div className="text-center py-10 text-slate-400">السلة فارغة</div>
                         ) : (
-                          cart.map(item => (
-                            <div key={item.product_id} className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
+                          cart.map((item, idx) => (
+                            <div key={`cart-item-${item.product_id ?? 'no-id'}-${idx}`} className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
                               <div>
                                 <p className="font-bold text-slate-800 text-sm">{item.name}</p>
                                 <p className="text-emerald-600 font-bold text-xs">{formatPrice(item.price)}</p>
@@ -1634,7 +1802,7 @@ export default function App() {
                                   }}
                                   className="p-1.5 rounded-lg bg-slate-100 text-slate-600"
                                 >-</button>
-                                <span className="font-bold text-sm w-8 text-center">{item.quantity}</span>
+                                <span className="font-bold text-sm min-w-[3rem] text-center">{item.quantity} {item.unit || ''}</span>
                                 <button 
                                   onClick={() => {
                                     const val = item.quantity + 0.25;
@@ -1690,9 +1858,9 @@ export default function App() {
               </div>
 
               <div className="flex gap-2 overflow-x-auto pb-2 mb-2 no-scrollbar">
-                {categories.map(cat => (
+                {categories.map((cat, idx) => (
                   <button
-                    key={cat}
+                    key={`inv-cat-${cat}-${idx}`}
                     onClick={() => setInventoryCategory(cat)}
                     className={`px-4 py-1.5 rounded-full text-sm whitespace-nowrap transition-all ${inventoryCategory === cat ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200'}`}
                   >
@@ -1704,15 +1872,15 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {products
                   .filter(p => (inventoryCategory === 'الكل' || p.category === inventoryCategory) && p.name.includes(inventorySearchTerm))
-                  .map(p => (
-                  <Card key={p.id} className="group hover:border-emerald-200 transition-all cursor-pointer relative overflow-hidden p-0" onClick={() => fetchProductHistory(p)}>
+                  .map((p, idx) => (
+                  <Card key={`inv-product-${p.id ?? 'no-id'}-${idx}`} className="group hover:border-emerald-200 transition-all cursor-pointer relative overflow-hidden p-0" onClick={() => fetchProductHistory(p)}>
                     <div className={`absolute top-0 right-0 w-1 h-full ${p.stock_quantity <= 5 ? 'bg-red-500' : p.stock_quantity <= 20 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                     <div className="p-3 pl-4 pr-4 flex justify-between items-start">
                       <div className="flex-1">
                         <div className="flex justify-between items-start mb-2">
                           <p className="font-bold text-slate-800 text-sm group-hover:text-emerald-700 transition-colors line-clamp-1">{p.name}</p>
                           <div className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${p.stock_quantity <= 5 ? 'bg-red-50 text-red-600' : p.stock_quantity <= 20 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                            {p.stock_quantity}
+                            {p.stock_quantity} {p.unit || ''}
                           </div>
                         </div>
                         <div className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
@@ -1772,9 +1940,9 @@ export default function App() {
               <div className="space-y-2">
                 {customers
                   .filter(c => c.name.includes(customerSearchTerm))
-                  .map(c => (
+                  .map((c, idx) => (
                   <Card 
-                    key={c.id} 
+                    key={`customer-card-${c.id ?? 'no-id'}-${idx}`} 
                     className="flex justify-between items-center cursor-pointer active:bg-slate-50"
                     onClick={() => fetchCustomerHistory(c)}
                   >
@@ -1954,8 +2122,8 @@ export default function App() {
                     const matchesFilter = historyFilter === 'all' || s.payment_type === historyFilter;
                     return matchesSearch && matchesFilter;
                   })
-                  .map(s => (
-                  <div key={s.id} className="relative group">
+                  .map((s, idx) => (
+                  <div key={`sale-card-${s.id ?? 'no-id'}-${idx}`} className="relative group">
                     <div className="absolute left-6 top-6 bottom-[-1.5rem] w-0.5 bg-slate-100 -z-10 group-last:hidden" />
                     <Card className="overflow-hidden border border-slate-100/60 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] transition-all hover:border-emerald-200">
                       <div 
@@ -2034,9 +2202,9 @@ export default function App() {
                                     <div className="text-left">الإجمالي</div>
                                   </div>
                                   {expandedSaleItems.map((item, idx) => (
-                                    <div key={idx} className="grid grid-cols-4 gap-3 px-3 py-1.5 border-b border-slate-200/50 last:border-0 text-xs items-center hover:bg-white rounded-lg transition-colors">
+                                    <div key={`expanded-sale-item-${item.product_id}-${idx}`} className="grid grid-cols-4 gap-3 px-3 py-1.5 border-b border-slate-200/50 last:border-0 text-xs items-center hover:bg-white rounded-lg transition-colors">
                                       <div className="col-span-2 font-bold text-slate-700">{item.product_name}</div>
-                                      <div className="text-center font-bold bg-white w-6 h-6 mx-auto rounded-md flex items-center justify-center border border-slate-100">{item.quantity}</div>
+                                      <div className="text-center font-bold bg-white px-2 py-0.5 mx-auto rounded-md flex items-center justify-center border border-slate-100 min-w-[1.75rem] text-[11px] whitespace-nowrap">{item.quantity} {item.product_unit || ''}</div>
                                       <div className="text-left font-bold text-emerald-600">{formatPrice(item.price_at_sale * item.quantity)}</div>
                                     </div>
                                   ))}
@@ -2063,6 +2231,7 @@ export default function App() {
         <AnimatePresence>
           {notification && (
             <motion.div 
+              key="modal-notification"
               initial={{ opacity: 0, y: -50 }}
               animate={{ opacity: 1, y: 20 }}
               exit={{ opacity: 0, y: -50 }}
@@ -2074,7 +2243,7 @@ export default function App() {
           )}
 
           {confirmAction && (
-            <div className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4">
+            <div key="modal-confirm" className="fixed inset-0 bg-black/50 z-[90] flex items-center justify-center p-4">
               <motion.div 
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -2091,13 +2260,30 @@ export default function App() {
           )}
 
           {showAddProduct && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+            <div key="modal-add-product" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
               >
                 <h3 className="text-xl font-bold">إضافة صنف جديد</h3>
                 <input placeholder="اسم المنتج" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
+                <div className="flex gap-2">
+                  <input 
+                    placeholder="رقم الباركود (اختياري)" 
+                    className="flex-1 p-3 bg-slate-100 rounded-xl text-left font-mono" 
+                    value={newProduct.barcode || ''} 
+                    onChange={e => setNewProduct({...newProduct, barcode: e.target.value})} 
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => { setScannerMode('add-product'); setIsScannerOpen(true); }}
+                    className="p-3 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-all flex items-center justify-center gap-1.5 font-bold text-xs"
+                    title="مسح من الكاميرا"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>مسح</span>
+                  </button>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <input type="number" placeholder="سعر التكلفة" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.cost} onChange={e => setNewProduct({...newProduct, cost: e.target.value})} />
                   <input type="number" placeholder="سعر البيع" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.sale} onChange={e => setNewProduct({...newProduct, sale: e.target.value})} />
@@ -2111,7 +2297,24 @@ export default function App() {
                   onChange={e => setNewProduct({...newProduct, category: e.target.value})} 
                 />
                 <datalist id="categories-list">
-                  {categories.filter(c => c !== 'الكل').map(c => <option key={c} value={c} />)}
+                  {categories.filter(c => c !== 'الكل').map((c, idx) => <option key={`cat-opt-${c}-${idx}`} value={c} />)}
+                </datalist>
+                <input 
+                  list="units-list"
+                  placeholder="الوحدة (مثال: حبة، كرتون، كيلو) - اختياري" 
+                  className="w-full p-3 bg-slate-100 rounded-xl" 
+                  value={newProduct.unit} 
+                  onChange={e => setNewProduct({...newProduct, unit: e.target.value})} 
+                />
+                <datalist id="units-list">
+                  <option value="حبة" />
+                  <option value="كرتون" />
+                  <option value="كيلو" />
+                  <option value="كيس" />
+                  <option value="شد" />
+                  <option value="علبة" />
+                  <option value="جرام" />
+                  <option value="متر" />
                 </datalist>
                 <div className="flex gap-2 pt-4">
                   <Button className="flex-1" onClick={handleAddProduct}>حفظ</Button>
@@ -2122,7 +2325,7 @@ export default function App() {
           )}
 
           {showProductDetails && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div key="modal-product-details" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-slate-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl flex flex-col max-h-[90vh] overflow-hidden"
@@ -2131,7 +2334,15 @@ export default function App() {
                   <div className="flex justify-between items-start mb-4">
                     <div>
                       <h3 className="text-2xl font-bold text-slate-800">{showProductDetails.name}</h3>
-                      <p className="text-slate-500 text-sm">{showProductDetails.category}</p>
+                      <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                        <span className="text-slate-500 text-xs bg-slate-100 px-2.5 py-0.5 rounded-lg font-bold">{showProductDetails.category}</span>
+                        {showProductDetails.barcode && (
+                          <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-100/50 font-mono px-2 py-0.5 rounded-lg flex items-center gap-1.5 font-bold">
+                            <QrCode className="w-3 h-3" />
+                            <span>{showProductDetails.barcode}</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <button onClick={() => setShowProductDetails(null)} className="p-2 hover:bg-slate-100 rounded-full">
                       <ChevronLeft className="w-6 h-6 rotate-180 text-slate-400" />
@@ -2161,7 +2372,7 @@ export default function App() {
                     <div className="absolute top-0 bottom-0 right-10 w-0.5 bg-slate-200" />
                     <div className="space-y-6">
                       {productHistory.length > 0 ? productHistory.map((log, idx) => (
-                        <div key={idx} className="relative flex items-start gap-4 group">
+                        <div key={`product-log-${log.id ?? 'no-id'}-${idx}`} className="relative flex items-start gap-4 group">
                           <div className={`w-10 h-10 rounded-2xl flex-shrink-0 flex items-center justify-center z-10 shadow-sm border-[3px] border-slate-50 transition-transform group-hover:scale-110
                             ${log.reason === 'sale' ? 'bg-red-100 text-red-600' : 
                               log.reason === 'refund' ? 'bg-indigo-100 text-indigo-600' : 
@@ -2213,13 +2424,30 @@ export default function App() {
           )}
 
           {editingProduct && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+            <div key="modal-editing-product" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
               >
                 <h3 className="text-xl font-bold">تعديل صنف: {editingProduct.name}</h3>
                 <input placeholder="اسم المنتج" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value})} />
+                <div className="flex gap-2">
+                  <input 
+                    placeholder="رقم الباركود (اختياري)" 
+                    className="flex-1 p-3 bg-slate-100 rounded-xl text-left font-mono" 
+                    value={editingProduct.barcode || ''} 
+                    onChange={e => setEditingProduct({...editingProduct, barcode: e.target.value})} 
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => { setScannerMode('edit-product'); setIsScannerOpen(true); }}
+                    className="p-3 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-all flex items-center justify-center gap-1.5 font-bold text-xs"
+                    title="مسح من الكاميرا"
+                  >
+                    <QrCode className="w-4 h-4" />
+                    <span>مسح</span>
+                  </button>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <input type="number" placeholder="سعر التكلفة" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.cost_price} onChange={e => setEditingProduct({...editingProduct, cost_price: Number(e.target.value)})} />
                   <input type="number" placeholder="سعر البيع" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.sale_price} onChange={e => setEditingProduct({...editingProduct, sale_price: Number(e.target.value)})} />
@@ -2232,6 +2460,13 @@ export default function App() {
                   value={editingProduct.category} 
                   onChange={e => setEditingProduct({...editingProduct, category: e.target.value})} 
                 />
+                <input 
+                  list="units-list"
+                  placeholder="الوحدة (مثال: حبة، كرتون، كيلو) - اختياري" 
+                  className="w-full p-3 bg-slate-100 rounded-xl" 
+                  value={editingProduct.unit || ''} 
+                  onChange={e => setEditingProduct({...editingProduct, unit: e.target.value})} 
+                />
                 <div className="flex gap-2 pt-4">
                   <Button className="flex-1" onClick={handleEditProduct}>تحديث</Button>
                   <Button variant="secondary" onClick={() => setEditingProduct(null)}>إلغاء</Button>
@@ -2241,7 +2476,7 @@ export default function App() {
           )}
 
           {showAddCustomer && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+            <div key="modal-add-customer" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
@@ -2258,7 +2493,7 @@ export default function App() {
           )}
 
           {showPaymentModal && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+            <div key="modal-payment" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
@@ -2281,7 +2516,7 @@ export default function App() {
           )}
 
           {showCustomerDetails && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div key="modal-customer-details" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-slate-50 w-full max-w-2xl rounded-t-3xl sm:rounded-3xl flex flex-col h-[95vh] sm:h-[85vh] overflow-hidden"
@@ -2365,7 +2600,7 @@ export default function App() {
                     
                     {ledgerEntries.map((entry, idx) => (
                       <div 
-                        key={idx} 
+                        key={`ledger-${entry.entryType}-${entry.id ?? 'no-id'}-${idx}`} 
                         className={`bg-white p-4 rounded-2xl border-r-4 shadow-sm transition-all hover:shadow-md ${entry.entryType === 'sale' ? 'border-r-red-400' : 'border-r-emerald-400'}`}
                       >
                         <div className="flex justify-between items-start mb-2">
@@ -2383,8 +2618,8 @@ export default function App() {
                         {entry.entryType === 'sale' && (
                           <div className="mt-3 pt-3 border-t border-slate-50">
                             <div className="space-y-1">
-                              {JSON.parse(entry.items).map((item: any, i: number) => (
-                                <div key={i} className="flex justify-between text-xs text-slate-600">
+                              {JSON.parse(entry.items || '[]').map((item: any, i: number) => (
+                                <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-xs text-slate-600">
                                   <span>{item.name} <span className="text-slate-400">× {item.quantity}</span></span>
                                   <span>{formatPrice(item.price * item.quantity)}</span>
                                 </div>
@@ -2420,6 +2655,19 @@ export default function App() {
                 </div>
               </motion.div>
             </div>
+          )}
+
+          {isScannerOpen && (
+            <BarcodeScanner 
+              key="modal-barcode-scanner"
+              onScan={handleBarcodeScan}
+              onClose={() => setIsScannerOpen(false)}
+              title={
+                scannerMode === 'pos' ? "قراءة باركود السلعة للمبيعات" : 
+                scannerMode === 'add-product' ? "مسح باركود لمنتج جديد" : "تحديث باركود المنتج"
+              }
+              autoClose={scannerMode !== 'pos'}
+            />
           )}
         </AnimatePresence>
       </main>

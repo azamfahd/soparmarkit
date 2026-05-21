@@ -1,5 +1,6 @@
 {
   "name": "سوبر ماركت المستقبل - نظام محاسبي",
   "description": "نظام محاسبي متكامل للبقالات الصغيرة يعمل بدون إنترنت، يدير المخزون، المبيعات، وديون الزبائن.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

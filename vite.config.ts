@@ -13,6 +13,9 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+        workbox: {
+          maximumFileSizeToCacheInBytes: 4000000
+        },
         manifest: {
           name: 'سوبر ماركت المستقبل - نظام محاسبي',
           short_name: 'سوبر ماركت',

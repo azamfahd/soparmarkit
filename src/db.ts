@@ -7,6 +7,8 @@ export interface Product {
   sale_price: number;
   stock_quantity: number;
   category: string;
+  barcode?: string;
+  unit?: string;
 }
 
 export interface Customer {
@@ -78,6 +80,16 @@ export class GroceryDatabase extends Dexie {
     super('GroceryDB');
     this.version(4).stores({
       products: '++id, name, category, stock_quantity',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp'
+    });
+    this.version(5).stores({
+      products: '++id, name, category, stock_quantity, barcode',
       customers: '++id, name, phone',
       sales: '++id, customer_id, created_at',
       saleItems: '++id, sale_id, product_id',

@@ -1,0 +1,470 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import { X, Camera, RefreshCw, Sparkles, Volume2, VolumeX, Zap, ZapOff } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+interface BarcodeScannerProps {
+  onScan: (barcode: string) => void;
+  onClose: () => void;
+  title?: string;
+  autoClose?: boolean;
+}
+
+export default function BarcodeScanner({ onScan, onClose, title = "ماسح الباركود", autoClose = true }: BarcodeScannerProps) {
+  const [cameras, setCameras] = useState<any[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
+  const [scannerActive, setScannerActive] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [manualBarcode, setManualBarcode] = useState('');
+  const [torchOn, setTorchOn] = useState(false);
+  const [hasTorch, setHasTorch] = useState(false);
+  const html5QrcodeRef = useRef<Html5Qrcode | null>(null);
+  const lastScannedCode = useRef<string>('');
+  const lastScannedTime = useRef<number>(0);
+
+  const scanContainerId = "barcode-scanner-reader";
+
+  // Web Audio API Beep Sound Effect
+  const playBeep = () => {
+    if (!soundEnabled) return;
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(1200, ctx.currentTime); // 1200Hz cleaner crisp chirp
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1); // quick 100ms fade
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.start();
+      osc.stop(ctx.currentTime + 0.1);
+    } catch (e) {
+      console.warn("Could not play scan beep:", e);
+    }
+  };
+
+  // Set up and start scanner on mount
+  useEffect(() => {
+    let isMounted = true;
+    
+    // Give DOM a split second to paint, then seek cameras
+    const initTimer = setTimeout(() => {
+      Html5Qrcode.getCameras()
+        .then((devices) => {
+          if (!isMounted) return;
+          if (devices && devices.length > 0) {
+            setCameras(devices);
+            // Prefer back/rear camera ("environment" or contains "back" in label)
+            const backCam = devices.find(d => 
+              d.label.toLowerCase().includes('back') || 
+              d.label.toLowerCase().includes('environment') ||
+              d.label.toLowerCase().includes('rear')
+            );
+            const chosenCam = backCam || devices[0];
+            setSelectedCameraId(chosenCam.id);
+            startScanning(chosenCam.id).catch(err => {
+              console.error("Initial camera start failed:", err);
+            });
+          } else {
+            // Fallback to environment facingMode directly if no cameras listed
+            console.warn("No devices found, trying general facingMode fallback.");
+            startScanning({ facingMode: "environment" }).catch(err => {
+              console.error("Fallback general start failed:", err);
+            });
+          }
+        })
+        .catch((err) => {
+          if (!isMounted) return;
+          console.error("Camera detection error, trying environment fallback", err);
+          // Direct media session fallback when enumeration is restricted or blockaded (like in sandboxed iframes)
+          startScanning({ facingMode: "environment" }).catch(err => {
+            console.error("Direct fallback failed:", err);
+          });
+        });
+    }, 150);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(initTimer);
+      stopScanning();
+    };
+  }, []);
+
+  const startScanning = async (cameraIdOrConfig: string | { facingMode: string }) => {
+    setErrorMsg("");
+    setTorchOn(false);
+    setHasTorch(false);
+
+    // Dynamic safety: Ensure target container element indeed exists in DOM
+    const element = document.getElementById(scanContainerId);
+    if (!element) {
+      console.warn("Scanner element is not fully available in DOM, delaying initialization...");
+      setTimeout(() => {
+        startScanning(cameraIdOrConfig);
+      }, 100);
+      return;
+    }
+
+    try {
+      // Clean up previous scanner if exists
+      if (html5QrcodeRef.current) {
+        await stopScanning();
+      }
+
+      // Create a fresh instance
+      const scanner = new Html5Qrcode(scanContainerId);
+      html5QrcodeRef.current = scanner;
+
+      const formats = [
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.QR_CODE
+      ];
+
+      // Optimized visual scanning size for high-speed detection
+      const config = {
+        fps: 30, // Elevated sampling rate to 30 frames/sec for instantaneous capture
+        qrbox: (viewFinderWidth: number, viewFinderHeight: number) => {
+          // Dynamic and much more generous viewfinder window to easily grab barcodes
+          const scannerWidth = Math.max(Math.min(viewFinderWidth * 0.9, 440), 220);
+          const scannerHeight = Math.max(Math.min(viewFinderHeight * 0.55, 200), 90);
+          return {
+            width: scannerWidth,
+            height: scannerHeight
+          };
+        },
+        aspectRatio: 1.333333,
+        formatsToSupport: formats
+      };
+
+      await scanner.start(
+        cameraIdOrConfig as any,
+        config,
+        (decodedText) => {
+          // Cooldown logic: ignore duplicates within 1.2 seconds
+          const now = Date.now();
+          if (decodedText === lastScannedCode.current && (now - lastScannedTime.current) < 1200) {
+            return;
+          }
+
+          lastScannedCode.current = decodedText;
+          lastScannedTime.current = now;
+
+          playBeep();
+          onScan(decodedText);
+
+          if (autoClose) {
+            stopScanning();
+            onClose();
+          }
+        },
+        (errorMessage) => {
+          // Quiet logs during seek frames
+        }
+      );
+
+      setScannerActive(true);
+
+      // Check flashlight/torch support after a brief launch latency
+      setTimeout(() => {
+        try {
+          if (html5QrcodeRef.current && html5QrcodeRef.current.isScanning) {
+            // @ts-ignore
+            const activeTrack = html5QrcodeRef.current.getActiveTrack();
+            if (activeTrack) {
+              const capabilities = activeTrack.getCapabilities();
+              // @ts-ignore
+              if (capabilities && (capabilities.torch !== undefined || 'torch' in capabilities)) {
+                setHasTorch(true);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Could not check torch support on scan start:", e);
+        }
+      }, 1000);
+
+    } catch (err: any) {
+      console.error("Failed to start scanning:", err);
+      
+      // Automatic fallback to general active environment facing lens
+      if (typeof cameraIdOrConfig === 'string') {
+        console.log("Attempting automatic fallback to general environment facingMode...");
+        try {
+          await startScanning({ facingMode: "environment" });
+          return;
+        } catch (fallbackErr) {
+          console.error("Environment facingMode fallback also failed:", fallbackErr);
+        }
+      }
+      
+      setErrorMsg("عذراً، لم نتمكن من تشغيل الكاميرا. قد تكون الكاميرا مستخدمة في تطبيق آخر (مثل زووم أو تيمز)، أو بحاجة لصلاحية الوصول للمتصفح. يرجى كتابة رمز الباركود يدوياً بالأسفل، أو فتح التطبيق في علامة تبويب جديدة ومستقلة لتفادي حظر الكاميرا من داخل المعاينة.");
+    }
+  };
+
+  const stopScanning = async () => {
+    if (html5QrcodeRef.current) {
+      if (html5QrcodeRef.current.isScanning) {
+        try {
+          await html5QrcodeRef.current.stop();
+        } catch (err) {
+          console.error("Failed to stop scanner cleanly", err);
+        }
+      }
+      try {
+        await html5QrcodeRef.current.clear();
+      } catch (err) {
+        // ignore
+      }
+      html5QrcodeRef.current = null;
+    }
+    setScannerActive(false);
+    setTorchOn(false);
+    setHasTorch(false);
+  };
+
+  const toggleTorch = async () => {
+    if (!html5QrcodeRef.current || !html5QrcodeRef.current.isScanning) return;
+    try {
+      const nextState = !torchOn;
+      // @ts-ignore
+      await html5QrcodeRef.current.applyVideoConstraints({
+        advanced: [{ torch: nextState }]
+      } as any);
+      setTorchOn(nextState);
+    } catch (err) {
+      console.error("Failed to toggle torch:", err);
+    }
+  };
+
+  const handleCameraChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newId = e.target.value;
+    setSelectedCameraId(newId);
+    if (newId) {
+      startScanning(newId);
+    }
+  };
+
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (manualBarcode.trim()) {
+      playBeep();
+      onScan(manualBarcode.trim());
+      setManualBarcode('');
+      if (autoClose) {
+        stopScanning();
+        onClose();
+      }
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 select-none dir-rtl">
+      {/* Dynamic continuous precision scanline styles */}
+      <style>{`
+        @keyframes precisionScan {
+          0% { top: 6%; }
+          50% { top: 94%; }
+          100% { top: 6%; }
+        }
+        .animate-precision-laser {
+          animation: precisionScan 2.4s ease-in-out infinite;
+        }
+      `}</style>
+      
+      <motion.div 
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        className="bg-slate-900 border border-slate-700/80 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl relative"
+      >
+        {/* Header */}
+        <div className="bg-slate-900 border-b border-slate-800 p-4 flex justify-between items-center text-white">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+            </span>
+            <h3 className="font-extrabold text-white text-base mr-1">{title}</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Intelligent Flashlight (Torch) Control */}
+            {hasTorch && (
+              <button 
+                onClick={toggleTorch} 
+                className={`p-2 rounded-xl transition-all ${torchOn ? 'text-amber-400 bg-amber-500/15 border border-amber-500/20' : 'text-slate-400 bg-slate-800 hover:bg-slate-700'}`}
+                title={torchOn ? "إيقاف الفلاش" : "تشغيل الفلاش للإضاءة"}
+              >
+                {torchOn ? <Zap className="w-5 h-5 fill-amber-400" /> : <ZapOff className="w-5 h-5" />}
+              </button>
+            )}
+            
+            {/* Audio Feedback control */}
+            <button 
+              onClick={() => setSoundEnabled(!soundEnabled)} 
+              className={`p-2 rounded-xl transition-all ${soundEnabled ? 'text-emerald-400 bg-emerald-500/15 border border-emerald-500/20' : 'text-slate-400 bg-slate-800 hover:bg-slate-700'}`}
+              title={soundEnabled ? "كتم صوت المسح" : "تشغيل صوت المسح"}
+            >
+              {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+            </button>
+            <button 
+              onClick={() => { stopScanning().then(onClose); }} 
+              className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-all"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Camera Feed Context */}
+        <div className="p-5 space-y-4 bg-slate-900/40">
+          <div className="relative aspect-[4/3] w-full rounded-3xl bg-black border border-slate-800 overflow-hidden flex items-center justify-center shadow-[inset_0_4px_25px_rgba(0,0,0,0.85)]">
+            
+            {/* The Scanner Reader Target Element */}
+            <div id={scanContainerId} className="w-full h-full object-cover"></div>
+
+            {/* Glowing Laser Scan Reticle Overlay */}
+            {scannerActive && !errorMsg && (
+              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                {/* Visual Target Area Frame */}
+                <div className="w-[90%] h-[55%] max-w-[440px] max-h-[200px] border-2 border-dashed border-emerald-400/40 rounded-3xl relative flex items-center justify-center shadow-[0_0_0_9999px_rgba(9,15,29,0.70)] animate-pulse-subtle">
+                  
+                  {/* High Quality Tech Corner brackets */}
+                  <div className="absolute -top-1 -right-1 w-6 h-6 border-t-[4px] border-r-[4px] border-emerald-400 rounded-tr-lg" />
+                  <div className="absolute -top-1 -left-1 w-6 h-6 border-t-[4px] border-l-[4px] border-emerald-400 rounded-tl-lg" />
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-[4px] border-r-[4px] border-emerald-400 rounded-br-lg" />
+                  <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-[4px] border-l-[4px] border-emerald-400 rounded-bl-lg" />
+                  
+                  {/* Glowing Laser line */}
+                  <div className="absolute left-1 right-1 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_12px_3px_rgba(52,211,153,0.9)] animate-precision-laser" />
+                  
+                  {/* Status Indicator inside Viewfinder */}
+                  <div className="absolute top-2 right-3 flex items-center gap-1.5 bg-black/60 px-2 py-0.5 rounded-md border border-slate-800">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-[8px] font-bold text-slate-300 font-mono tracking-wider uppercase">AF ON</span>
+                  </div>
+
+                  <span className="absolute bottom-2 text-[9px] font-bold text-emerald-400 bg-slate-950/90 px-3 py-1.5 rounded-full border border-emerald-500/20 backdrop-blur-sm shadow-md">
+                    ضع الباركود في هذا الإطار
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Error or Loading State */}
+            {!scannerActive && !errorMsg && (
+              <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 text-slate-400">
+                <SpinnerLoading />
+                <p className="text-xs font-bold text-slate-400">جاري تفعيل مستشعر الكاميرات فائقة الاستجابة...</p>
+              </div>
+            )}
+
+            {errorMsg && (
+              <div className="absolute inset-0 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center gap-3">
+                <div className="p-3 rounded-full bg-red-500/10 text-red-500">
+                  <X className="w-8 h-8" />
+                </div>
+                <p className="text-xs font-bold text-red-400 max-w-[280px] leading-relaxed">
+                  {errorMsg}
+                </p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  <button 
+                    onClick={() => cameras.length > 0 ? startScanning(selectedCameraId) : startScanning({ facingMode: "environment" })}
+                    className="text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-4 py-2 rounded-xl border border-emerald-500/20 transition-all"
+                  >
+                    إعادة محاولة الاتصال
+                  </button>
+                  <a 
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl border border-blue-500/20 transition-all flex items-center justify-center"
+                  >
+                    فتح في علامة تبويب جديدة 🚀
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Manual Barcode Input Backup */}
+          <form onSubmit={handleManualSubmit} className="flex gap-2 p-1.5 bg-slate-950/60 rounded-2xl border border-slate-800">
+            <input 
+              type="text" 
+              placeholder="أو اكتب رقم الباركود يدوياً هنا..." 
+              className="flex-1 p-2.5 bg-transparent text-white text-sm font-bold placeholder-slate-500 outline-none pr-3 text-left font-mono"
+              value={manualBarcode}
+              onChange={e => setManualBarcode(e.target.value)}
+            />
+            <button 
+              type="submit"
+              disabled={!manualBarcode.trim()}
+              className="px-4 py-2 bg-emerald-600 disabled:opacity-40 disabled:bg-slate-800 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all"
+            >
+              إدخال
+            </button>
+          </form>
+
+          {/* Active Helper Guidance Text */}
+          {scannerActive && !errorMsg && (
+            <div className="text-center bg-slate-950/30 p-3 rounded-2xl border border-slate-800/60">
+              <p className="text-xs text-slate-400 font-bold leading-relaxed">
+                🚀 التبويب المطور: يتميز الماسح بقدرة قراءة سريعة واكتشاف ذكي مدعوم بمعدل تحديث <span className="text-emerald-400">30 إطار/ثانية</span>. قرب الباركود تدريجياً لسرعة مذهلة في التعرف.
+              </p>
+            </div>
+          )}
+
+          {/* Device Selecting Controls */}
+          {cameras.length > 1 && (
+            <div className="flex items-center gap-3 bg-slate-950/20 p-3 rounded-2xl border border-slate-800/40">
+              <span className="text-xs font-extrabold text-slate-400 whitespace-nowrap">الكاميرا النشطة:</span>
+              <div className="relative flex-1">
+                <select 
+                  value={selectedCameraId} 
+                  onChange={handleCameraChange}
+                  className="w-full p-2 bg-slate-800 border border-slate-700/80 rounded-xl text-white text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-500 appearance-none pr-8 cursor-pointer text-right"
+                >
+                  {cameras.map((device, index) => (
+                    <option key={`camera-dev-opt-${device.id || 'no-id'}-${index}`} value={device.id}>
+                      {device.label || `كاميرا خلفية رقم ${index + 1}`}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer info branding */}
+        <div className="bg-slate-950/40 px-6 py-4 border-t border-slate-800/60 text-center flex items-center justify-center gap-1.5 text-slate-500">
+          <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+          <span className="text-[10px] font-bold tracking-wider uppercase text-slate-400">الماسح الضوئي المطور فائق السرعة v2.1</span>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function SpinnerLoading() {
+  return (
+    <div className="flex items-center justify-center space-x-2 space-x-reverse">
+      <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+      <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+      <div className="w-2.5 h-2.5 bg-emerald-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+    </div>
+  );
+}
