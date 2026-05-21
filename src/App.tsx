@@ -35,7 +35,8 @@ import {
   Croissant,
   Menu,
   X,
-  PieChart
+  PieChart,
+  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -1187,6 +1188,23 @@ export default function App() {
     setSaleNotes('');
   };
 
+  const requestGlobalCameraPermission = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        showNotification('تم منح صلاحية الكاميرا بنجاح!');
+      }
+    } catch (err: any) {
+      console.error("Camera permission error:", err);
+      if (err.name === 'NotAllowedError') {
+        showNotification('تم رفض الصلاحية مسبقاً. يرجى تفعيلها من إعدادات المتصفح أو التطبيق (App Permissions).', 'error');
+      } else {
+        showNotification('تعذر الوصول للكاميرا أو الجهاز لا يدعم ذلك.', 'error');
+      }
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Sidebar Overlay */}
@@ -2082,6 +2100,19 @@ export default function App() {
                   {deferredPrompt && (
                     <Button className="w-full" onClick={handleInstall}>تثبيت التطبيق الآن</Button>
                   )}
+                </Card>
+
+                <Card className="space-y-4 border-emerald-100">
+                  <div className="flex items-center gap-2 text-emerald-700 mb-2">
+                    <Camera className="w-5 h-5" />
+                    <h3 className="font-bold">الصلاحيات والكاميرا</h3>
+                  </div>
+                  <p className="text-sm text-slate-500">
+                    استخدم هذا الزر لطلب صلاحية الوصول إلى الكاميرا إذا كنت تواجه مشكلة في تشغيل الماسح الضوئي.
+                  </p>
+                  <Button variant="outline" className="w-full text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={requestGlobalCameraPermission}>
+                    السماح بالوصول للكاميرا
+                  </Button>
                 </Card>
               </div>
             </motion.div>

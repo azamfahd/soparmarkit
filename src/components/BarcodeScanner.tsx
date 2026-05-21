@@ -55,29 +55,32 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
     let isMounted = true;
     
     const initializeScanner = async () => {
-      try {
-        // Try to explicitly request permission first for mobile Safari/Chrome
-        let stream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        } catch (e) {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          } catch (err) {
-            console.warn("Direct getUserMedia fallback error:", err);
-          }
-        }
-        
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-        }
-      } catch (err) {
-         console.warn(err);
-      }
-
       if (!isMounted) return;
 
+      // Check for HTTPS (with exception for localhost)
+      const isHttps = window.location.protocol === 'https:';
+      const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      
+      if (!isHttps && !isLocalhost) {
+        setErrorMsg("عذراً، استخدام الكاميرا يتطلب اتصالاً آمناً (HTTPS). يرجى التأكد من رابط الموقع في المتصفح.");
+        return;
+      }
+
+      // Check Permissions API if supported
       try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const permissionStatus = await navigator.permissions.query({ name: 'camera' as any });
+          if (permissionStatus.state === 'denied') {
+            setErrorMsg("تم رفض صلاحية استخدام الكاميرا مسبقاً. يرجى النقر على أيقونة القفل (🔒) بجوار عنوان الموقع في المتصفح أو الذهاب لإعدادات المتصفح، وتغيير صلاحية الكاميرا إلى \"سماح\" (Allow)، ثم تحديث الصفحة.");
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Permissions API check skipped or unsupported:", err);
+      }
+
+      try {
+        // First get cameras using Html5Qrcode capabilities
         const devices = await Html5Qrcode.getCameras();
         if (!isMounted) return;
         
@@ -90,14 +93,18 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
           );
           const chosenCam = backCam || devices[0];
           setSelectedCameraId(chosenCam.id);
-          startScanning(chosenCam.id).catch(err => console.error("Initial camera start failed:", err));
+          
+          await startScanning(chosenCam.id);
         } else {
-          startScanning({ facingMode: "environment" }).catch(err => console.error("General fallback start failed:", err));
+          // No listed cameras but permission given? Try environment via direct constraints
+          await startScanning({ facingMode: "environment" });
         }
-      } catch (err) {
+      } catch (err: any) {
         if (!isMounted) return;
-        console.error("Camera detection error, trying environment fallback", err);
-        startScanning({ facingMode: "environment" }).catch(e => console.error("Direct fallback failed:", e));
+        console.error("Camera detection error, might need explicit permission prompt", err);
+        // Error from getCameras often means permission denied or not requested yet.
+        // We will show a special error asking them to grant the permission directly.
+        setErrorMsg("يجب إعطاء صلاحية الكاميرا للمتصفح حتى يتمكن الماسح من العمل. إذا رفضت الصلاحية سابقاً، يرجى تحديث الصفحة والسماح بها.");
       }
     };
 
@@ -109,6 +116,37 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       stopScanning();
     };
   }, []);
+
+  const requestPermissionDirectly = async () => {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          setErrorMsg(""); // Clear error to allow standard init
+          
+          // Re-init
+          const devices = await Html5Qrcode.getCameras();
+          if (devices && devices.length > 0) {
+            setCameras(devices);
+            const backCam = devices.find(d => 
+              d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('environment') || d.label.toLowerCase().includes('rear')
+            );
+            const chosenCam = backCam || devices[0];
+            setSelectedCameraId(chosenCam.id);
+            await startScanning(chosenCam.id);
+          } else {
+            await startScanning({ facingMode: "environment" });
+          }
+        }
+      } else {
+         setErrorMsg("يبدو أن المتصفح الخاص بك لا يدعم استخدام الكاميرا (ربما بسبب عدم استخدام اتصال آمن HTTPS).");
+      }
+    } catch (err: any) {
+      console.error("Direct permission request failed", err);
+      setErrorMsg("ما زال لا يمكن الوصول للكاميرا. يرجى التأكد من عدم استخدام الكاميرا في تطبيق آخر ومنح الصلاحية بشكل صحيح، أو استخدام متصفح مختلف.");
+    }
+  };
 
   const startScanning = async (cameraIdOrConfig: string | { facingMode: string } | { facingMode: { exact: string } }) => {
     setErrorMsg("");
@@ -368,26 +406,24 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
             {errorMsg && (
               <div className="absolute inset-0 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center gap-3">
                 <div className="p-3 rounded-full bg-red-500/10 text-red-500">
-                  <X className="w-8 h-8" />
+                  <Camera className="w-8 h-8" />
                 </div>
                 <p className="text-xs font-bold text-red-400 max-w-[280px] leading-relaxed">
                   {errorMsg}
                 </p>
-                <div className="flex flex-wrap gap-2 justify-center">
+                <div className="flex flex-col gap-2 mt-2 w-full max-w-[240px]">
+                  <button 
+                    onClick={requestPermissionDirectly}
+                    className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-3 rounded-xl transition-all"
+                  >
+                    السماح باستخدام الكاميرا
+                  </button>
                   <button 
                     onClick={() => cameras.length > 0 ? startScanning(selectedCameraId) : startScanning({ facingMode: "environment" })}
-                    className="text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-4 py-2 rounded-xl border border-emerald-500/20 transition-all"
+                    className="text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-4 py-2.5 rounded-xl border border-emerald-500/20 transition-all"
                   >
                     إعادة محاولة الاتصال
                   </button>
-                  <a 
-                    href={window.location.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl border border-blue-500/20 transition-all flex items-center justify-center"
-                  >
-                    فتح في علامة تبويب جديدة 🚀
-                  </a>
                 </div>
               </div>
             )}
