@@ -71,7 +71,7 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
         if (navigator.permissions && navigator.permissions.query) {
           const permissionStatus = await navigator.permissions.query({ name: 'camera' as any });
           if (permissionStatus.state === 'denied') {
-            setErrorMsg("تم رفض صلاحية استخدام الكاميرا مسبقاً. يرجى النقر على أيقونة القفل (🔒) بجوار عنوان الموقع في المتصفح أو الذهاب لإعدادات المتصفح، وتغيير صلاحية الكاميرا إلى \"سماح\" (Allow)، ثم تحديث الصفحة.");
+            setErrorMsg("تم رفض الصلاحية مسبقاً. إذا كنت تستخدم التطبيق (PWA) أو المتصفح، يرجى الذهاب إلى: إعدادات الهاتف > التطبيقات > التطبيق الخاص بك (أو المتصفح Chrome) > الأذونات > الكاميرا، وقم باختيار 'السماح'. ثم أعد فتح التطبيق.");
             return;
           }
         }
@@ -144,7 +144,7 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       }
     } catch (err: any) {
       console.error("Direct permission request failed", err);
-      setErrorMsg("ما زال لا يمكن الوصول للكاميرا. يرجى التأكد من عدم استخدام الكاميرا في تطبيق آخر ومنح الصلاحية بشكل صحيح، أو استخدام متصفح مختلف.");
+      setErrorMsg("الوصول مرفوض. إذا كنت قد ثبت البرنامج كتطبيق، اذهب إلى: إعدادات الهاتف (Settings) > التطبيقات (Apps) > اسم تطبيقك أو المتصفح > الأذونات (Permissions) > الكاميرا، واختر 'سماح' (Allow).");
     }
   };
 

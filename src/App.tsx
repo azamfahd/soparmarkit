@@ -1198,7 +1198,7 @@ export default function App() {
     } catch (err: any) {
       console.error("Camera permission error:", err);
       if (err.name === 'NotAllowedError') {
-        showNotification('تم رفض الصلاحية مسبقاً. يرجى تفعيلها من إعدادات المتصفح أو التطبيق (App Permissions).', 'error');
+        showNotification('تم رفض الصلاحية مسبقاً. للحل: اذهب لإعدادات الهاتف -> التطبيقات -> تطبيقك (أو المتصفح) -> الأذونات، وفعل الكاميرا.', 'error');
       } else {
         showNotification('تعذر الوصول للكاميرا أو الجهاز لا يدعم ذلك.', 'error');
       }
