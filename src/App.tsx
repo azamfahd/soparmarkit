@@ -212,15 +212,6 @@ export default function App() {
   const [autoBackupFileStatus, setAutoBackupFileStatus] = useState<{ exists: boolean, lastModified?: string, size?: number, path?: string } | null>(null);
   const [isBackupSyncing, setIsBackupSyncing] = useState(false);
 
-  // Google Sign-In & Optional Cloud Sync Status
-  const [googleUser, setGoogleUser] = useState<{ name: string, email: string, connectedAt: string } | null>(() => {
-    const saved = localStorage.getItem('google_auth_sync_user');
-    return saved ? JSON.parse(saved) : null;
-  });
-  const [isCloudSyncEnabled, setIsCloudSyncEnabled] = useState(() => {
-    return localStorage.getItem('google_cloud_sync_enabled') === 'true';
-  });
-
   const fetchBackupStatus = async () => {
     try {
       const res = await fetch('/api/backup/status');
@@ -915,32 +906,6 @@ export default function App() {
     }
   };
 
-  const handleGoogleConnect = () => {
-    const mockUser = {
-      name: "خالد المحاسب (رائد أعمال)",
-      email: "khaled.business@gmail.com",
-      connectedAt: new Date().toLocaleString('ar-SA')
-    };
-    setGoogleUser(mockUser);
-    localStorage.setItem('google_auth_sync_user', JSON.stringify(mockUser));
-    setIsCloudSyncEnabled(true);
-    localStorage.setItem('google_cloud_sync_enabled', 'true');
-    showNotification('تم ربط حساب Google الخاص بك وتفعيل المزامنة السحابية بنجاح!');
-  };
-
-  const handleGoogleDisconnect = () => {
-    setGoogleUser(null);
-    localStorage.removeItem('google_auth_sync_user');
-    setIsCloudSyncEnabled(false);
-    localStorage.setItem('google_cloud_sync_enabled', 'false');
-    showNotification('تم فصل حساب Google وإيقاف المزامنة السحابية.');
-  };
-
-  const handleToggleCloudSync = (checked: boolean) => {
-    setIsCloudSyncEnabled(checked);
-    localStorage.setItem('google_cloud_sync_enabled', String(checked));
-    showNotification(checked ? 'تم تفعيل المزامنة السحابية التلقائية عبر Google' : 'تم إيقاف المزامنة السحابية');
-  };
 
   const resetDatabase = async () => {
     setConfirmAction({
@@ -2450,80 +2415,6 @@ export default function App() {
                   </Button>
                 </Card>
 
-                <Card className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-blue-700">
-                      <Cloud className="w-5 h-5" />
-                      <h3 className="font-bold font-black">المزامنة مع حساب Google (اختياري)</h3>
-                    </div>
-                    {googleUser && (
-                      <span className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-black rounded-full bg-blue-50 text-blue-600">
-                        <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
-                        رابط سحابي نشط
-                      </span>
-                    )}
-                  </div>
-
-                  <p className="text-xs text-slate-500 leading-relaxed">
-                    من خلال ربط حساب Google الخاص بمؤسستك، يمكنك إرسال ومزاوجة قاعدة البيانات السحابية لحمايتها من التلف والوصول إليها بأي بيئة بطرق سريعة وآمنة.
-                  </p>
-
-                  {googleUser ? (
-                    <div className="space-y-4">
-                      <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100/60 space-y-2 text-xs">
-                        <div className="flex justify-between text-slate-700">
-                          <span>المسؤول المتصل:</span>
-                          <span className="font-bold text-slate-900">{googleUser.name}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-700">
-                          <span>البريد الإلكتروني للشركة:</span>
-                          <span className="font-mono text-slate-900 font-bold">{googleUser.email}</span>
-                        </div>
-                        <div className="flex justify-between text-slate-700">
-                          <span>وقت المزامنة الأخيرة:</span>
-                          <span className="text-slate-900 font-bold font-mono">
-                            {isBackupSyncing ? 'مستمر حياً...' : googleUser.connectedAt}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs border border-slate-100">
-                        <span className="text-slate-600 font-bold">المزامنة السحابية المتواصلة:</span>
-                        <label className="relative inline-flex items-center cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={isCloudSyncEnabled} 
-                            onChange={(e) => handleToggleCloudSync(e.target.checked)} 
-                            className="sr-only peer" 
-                          />
-                          <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                        </label>
-                      </div>
-
-                      <Button 
-                        variant="danger" 
-                        onClick={handleGoogleDisconnect}
-                        className="w-full flex items-center justify-center gap-2"
-                      >
-                        فصل وإيقاف الربط السحابي لـ Google
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="p-3 bg-amber-50 rounded-xl text-xs text-amber-800 border border-amber-100">
-                        النظام يعمل حالياً بوضع <strong>الأوفلاين التام والآمن</strong> على جهازك الحالي. المتابعة عبر حساب Google لتشغيل الربط السحابي للشركات.
-                      </div>
-                      
-                      <button 
-                        onClick={handleGoogleConnect}
-                        className="w-full flex items-center justify-center gap-2.5 p-3 bg-white border border-slate-200 hover:border-blue-300 hover:bg-slate-50 rounded-xl transition-all shadow-sm font-bold text-sm text-slate-700 cursor-pointer"
-                      >
-                        <div className="w-5 h-5 flex items-center justify-center font-black text-rose-500 border border-slate-100 rounded bg-slate-50 shadow-sm text-xs">G</div>
-                        المتابعة والربط عبر حساب Google للشركات
-                      </button>
-                    </div>
-                  )}
-                </Card>
 
                 <Card className="space-y-4 border-red-100">
                   <div className="flex items-center gap-2 text-red-600 mb-2">
