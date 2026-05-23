@@ -66,6 +66,15 @@ export interface SyncQueueItem {
   timestamp: number;
 }
 
+export interface Note {
+  id?: number;
+  title: string;
+  content: string;
+  created_at: string;
+  reminder_date?: string | null;
+  is_completed?: boolean;
+}
+
 export class GroceryDatabase extends Dexie {
   products!: Table<Product>;
   customers!: Table<Customer>;
@@ -75,6 +84,7 @@ export class GroceryDatabase extends Dexie {
   inventoryLogs!: Table<InventoryLog>;
   settings!: Table<AppSettings>;
   sync_queue!: Table<SyncQueueItem>;
+  notes!: Table<Note>;
 
   constructor() {
     super('GroceryDB');
@@ -97,6 +107,17 @@ export class GroceryDatabase extends Dexie {
       inventoryLogs: '++id, product_id, created_at',
       settings: '++id, key',
       sync_queue: '++id, table, timestamp'
+    });
+    this.version(6).stores({
+      products: '++id, name, category, stock_quantity, barcode',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed'
     });
   }
 }

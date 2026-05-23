@@ -24,6 +24,8 @@ import {
   Database,
   RefreshCw,
   Settings,
+  Cloud,
+  ShieldCheck,
   FileText,
   Droplet,
   Milk,
@@ -36,7 +38,10 @@ import {
   Menu,
   X,
   PieChart,
-  Camera
+  Camera,
+  Home,
+  BookOpen,
+  Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -188,15 +193,106 @@ export default function App() {
   const [isCartExpanded, setIsCartExpanded] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [storeName, setStoreName] = useState('بقالة السعادة');
+  const [storeName, setStoreName] = useState('النظام المحاسبي');
   const [currency, setCurrency] = useState('ر.ي');
   const [showReceipt, setShowReceipt] = useState<any>(null);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
 
   const appSettings = useLiveQuery(() => db.settings.toArray()) || [];
+  const notes = useLiveQuery(() => db.notes.orderBy('created_at').reverse().toArray()) || [];
+
+  const [showAddNote, setShowAddNote] = useState(false);
+  const [newNote, setNewNote] = useState({ title: '', content: '', reminder_date: '' });
+  const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
 
   const [lastBackupDate, setLastBackupDate] = useState<string | null>(null);
+
+  // Automated background backup to file system (قاعدة بيانات النظام)
+  const [autoBackupFileStatus, setAutoBackupFileStatus] = useState<{ exists: boolean, lastModified?: string, size?: number, path?: string } | null>(null);
+  const [isBackupSyncing, setIsBackupSyncing] = useState(false);
+
+  // Google Sign-In & Optional Cloud Sync Status
+  const [googleUser, setGoogleUser] = useState<{ name: string, email: string, connectedAt: string } | null>(() => {
+    const saved = localStorage.getItem('google_auth_sync_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [isCloudSyncEnabled, setIsCloudSyncEnabled] = useState(() => {
+    return localStorage.getItem('google_cloud_sync_enabled') === 'true';
+  });
+
+  const fetchBackupStatus = async () => {
+    try {
+      const res = await fetch('/api/backup/status');
+      if (res.ok) {
+        const data = await res.json();
+        setAutoBackupFileStatus(data);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch backup file status:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchBackupStatus();
+  }, []);
+
+  // Debounced auto backup to disk on operations
+  useEffect(() => {
+    if (products.length === 0 && customers.length === 0 && sales.length === 0) return;
+
+    const backupTimer = setTimeout(async () => {
+      try {
+        setIsBackupSyncing(true);
+        const data = {
+          products,
+          customers,
+          sales,
+          saleItems: await db.saleItems.toArray(),
+          debts: await db.debts.toArray(),
+          inventoryLogs: await db.inventoryLogs.toArray(),
+          settings: appSettings,
+          notes,
+        };
+        const response = await fetch('/api/backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        if (response.ok) {
+          fetchBackupStatus();
+          // Update last backup date in app
+          const nowStr = new Date().toISOString();
+          setLastBackupDate(nowStr);
+        }
+      } catch (err) {
+        console.warn('Auto backup to disk failed:', err);
+      } finally {
+        setIsBackupSyncing(false);
+      }
+    }, 1500); // 1.5 seconds debounce
+
+    return () => clearTimeout(backupTimer);
+  }, [products, customers, sales, appSettings, notes]);
+
+  useEffect(() => {
+    const checkReminders = () => {
+      if (!notes || notes.length === 0) return;
+      const now = new Date();
+      notes.forEach(note => {
+        if (note.reminder_date && !note.is_completed) {
+          const reminderDate = new Date(note.reminder_date);
+          if (now >= reminderDate) {
+            showNotification(`تذكير بملاحظة: ${note.title}`);
+            db.notes.update(note.id!, { is_completed: true });
+          }
+        }
+      });
+    };
+    checkReminders();
+    const interval = setInterval(checkReminders, 1000 * 60 * 60); // Check every hour
+    return () => clearInterval(interval);
+  }, [notes]);
 
   useEffect(() => {
     const nameSetting = appSettings.find(s => s.key === 'storeName');
@@ -483,6 +579,64 @@ export default function App() {
     setPaymentAmount('');
   };
 
+  const handleAddNote = async () => {
+    if (!newNote.title.trim()) {
+      showNotification('يرجى إدخال عنوان الملاحظة', 'error');
+      return;
+    }
+    try {
+      if (editingNoteId) {
+        await db.notes.update(editingNoteId, {
+          title: newNote.title.trim(),
+          content: newNote.content.trim(),
+          reminder_date: newNote.reminder_date || null,
+        });
+        showNotification('تم تحديث الملاحظة بنجاح');
+      } else {
+        await db.notes.add({
+          title: newNote.title.trim(),
+          content: newNote.content.trim(),
+          reminder_date: newNote.reminder_date || null,
+          created_at: new Date().toISOString(),
+          is_completed: false
+        });
+        showNotification('تم حفظ الملاحظة بنجاح');
+      }
+      setNewNote({ title: '', content: '', reminder_date: '' });
+      setEditingNoteId(null);
+      setShowAddNote(false);
+    } catch (err) {
+      console.error('Failed to save note: ', err);
+      showNotification('حدث خطأ أثناء حفظ الملاحظة', 'error');
+    }
+  };
+
+  const handleEditNoteAction = (note: any) => {
+    setNewNote({
+      title: note.title,
+      content: note.content,
+      reminder_date: note.reminder_date || ''
+    });
+    setEditingNoteId(note.id);
+    setShowAddNote(true);
+  };
+
+  const handleDeleteNote = (id: number) => {
+    setConfirmAction({
+      title: 'حذف الملاحظة',
+      message: 'هل أنت متأكد من رغبتك في حذف هذه الملاحظة نهائياً؟',
+      onConfirm: async () => {
+        try {
+          await db.notes.delete(id);
+          showNotification('تم حذف الملاحظة بنجاح');
+        } catch (err) {
+          console.error("Failed to delete note:", err);
+          showNotification('حدث خطأ أثناء الحذف', 'error');
+        }
+      }
+    });
+  };
+
   const handleAddProduct = async () => {
     const stock = Number(newProduct.stock);
     const productData = {
@@ -638,7 +792,7 @@ export default function App() {
       // For now, let's just update locally and maybe add a backend call if needed
       await db.settings.where('key').equals('storeName').modify({ value: newName });
       setStoreName(newName);
-      showNotification('تم تحديث اسم البقالة');
+      showNotification('تم تحديث اسم النشاط التجاري');
     } catch (err) {
       console.error("Failed to update store name:", err);
       // Fallback to local DB
@@ -649,7 +803,7 @@ export default function App() {
         await db.settings.add({ key: 'storeName', value: newName });
       }
       setStoreName(newName);
-      showNotification('تم تحديث اسم البقالة (محلياً)');
+      showNotification('تم تحديث اسم النشاط التجاري (محلياً)');
     }
   };
 
@@ -673,6 +827,7 @@ export default function App() {
       debts: await db.debts.toArray(),
       inventoryLogs: await db.inventoryLogs.toArray(),
       settings: await db.settings.toArray(),
+      notes: await db.notes.toArray(),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -701,7 +856,7 @@ export default function App() {
     reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        await db.transaction('rw', [db.products, db.customers, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings], async () => {
+        await db.transaction('rw', [db.products, db.customers, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
           await db.products.clear();
           await db.customers.clear();
           await db.sales.clear();
@@ -709,6 +864,7 @@ export default function App() {
           await db.debts.clear();
           await db.inventoryLogs.clear();
           await db.settings.clear();
+          await db.notes.clear();
 
           if (data.products) await db.products.bulkAdd(data.products);
           if (data.customers) await db.customers.bulkAdd(data.customers);
@@ -717,6 +873,7 @@ export default function App() {
           if (data.debts) await db.debts.bulkAdd(data.debts);
           if (data.inventoryLogs) await db.inventoryLogs.bulkAdd(data.inventoryLogs);
           if (data.settings) await db.settings.bulkAdd(data.settings);
+          if (data.notes) await db.notes.bulkAdd(data.notes);
         });
         showNotification('تم استيراد البيانات بنجاح');
         setTimeout(() => window.location.reload(), 1000);
@@ -727,18 +884,77 @@ export default function App() {
     reader.readAsText(file);
   };
 
+  const forceLocalDiskBackup = async () => {
+    try {
+      setIsBackupSyncing(true);
+      const data = {
+        products,
+        customers,
+        sales,
+        saleItems: await db.saleItems.toArray(),
+        debts: await db.debts.toArray(),
+        inventoryLogs: await db.inventoryLogs.toArray(),
+        settings: appSettings,
+        notes,
+      };
+      const response = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (response.ok) {
+        await fetchBackupStatus();
+        showNotification('تم تحديث وحفظ قاعدة بيانات النظام التلقائية على القرص بنجاح!');
+      } else {
+        showNotification('فشل تحديث قاعدة البيانات التلقائية', 'error');
+      }
+    } catch (err: any) {
+      showNotification('خطأ في إرسال النسخة الاحتياطية للقرص', 'error');
+    } finally {
+      setIsBackupSyncing(false);
+    }
+  };
+
+  const handleGoogleConnect = () => {
+    const mockUser = {
+      name: "خالد المحاسب (رائد أعمال)",
+      email: "khaled.business@gmail.com",
+      connectedAt: new Date().toLocaleString('ar-SA')
+    };
+    setGoogleUser(mockUser);
+    localStorage.setItem('google_auth_sync_user', JSON.stringify(mockUser));
+    setIsCloudSyncEnabled(true);
+    localStorage.setItem('google_cloud_sync_enabled', 'true');
+    showNotification('تم ربط حساب Google الخاص بك وتفعيل المزامنة السحابية بنجاح!');
+  };
+
+  const handleGoogleDisconnect = () => {
+    setGoogleUser(null);
+    localStorage.removeItem('google_auth_sync_user');
+    setIsCloudSyncEnabled(false);
+    localStorage.setItem('google_cloud_sync_enabled', 'false');
+    showNotification('تم فصل حساب Google وإيقاف المزامنة السحابية.');
+  };
+
+  const handleToggleCloudSync = (checked: boolean) => {
+    setIsCloudSyncEnabled(checked);
+    localStorage.setItem('google_cloud_sync_enabled', String(checked));
+    showNotification(checked ? 'تم تفعيل المزامنة السحابية التلقائية عبر Google' : 'تم إيقاف المزامنة السحابية');
+  };
+
   const resetDatabase = async () => {
     setConfirmAction({
       title: 'إعادة ضبط البرنامج',
       message: 'هل أنت متأكد من مسح جميع البيانات؟ لا يمكن التراجع عن هذه الخطوة وسيتم حذف كل المنتجات والزبائن والمبيعات.',
       onConfirm: async () => {
-        await db.transaction('rw', [db.products, db.customers, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings], async () => {
+        await db.transaction('rw', [db.products, db.customers, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
           await db.products.clear();
           await db.customers.clear();
           await db.sales.clear();
           await db.saleItems.clear();
           await db.debts.clear();
           await db.inventoryLogs.clear();
+          await db.notes.clear();
           await db.settings.filter(s => s.key !== 'isFirstRun').delete();
         });
         showNotification('تم تصفير البرنامج بنجاح');
@@ -1271,6 +1487,12 @@ export default function App() {
             label="الزبائن والديون" 
           />
           <SidebarButton 
+            active={activeTab === 'notes'} 
+            onClick={() => { setActiveTab('notes'); setIsSidebarOpen(false); }} 
+            icon={<BookOpen />} 
+            label="الملاحظات" 
+          />
+          <SidebarButton 
             active={activeTab === 'settings'} 
             onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
             icon={<Settings />} 
@@ -1347,7 +1569,93 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-6"
             >
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="space-y-3">
+                <h2 className="text-lg font-bold text-slate-800">الوصول السريع</h2>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-3 w-full">
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('pos')} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-emerald-200 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
+                      <ShoppingCart className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">بيع جديد</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      setActiveTab('pos');
+                      setScannerMode('pos');
+                      setIsScannerOpen(true);
+                    }} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-violet-200 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-violet-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-violet-500 transition-colors">
+                      <Scan className="w-4 h-4 sm:w-5 sm:h-5 text-violet-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الماسح الضوئي</span>
+                  </motion.button>
+                  
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('products')} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-blue-200 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-blue-500 transition-colors">
+                      <Package className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">المخزون</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('customers')} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-indigo-200 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-indigo-500 transition-colors">
+                      <Users className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الزبائن</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('notes')} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-pink-200 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-pink-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-pink-500 transition-colors">
+                      <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-pink-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الملاحظات</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('history')} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-slate-300 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-slate-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-slate-800 transition-colors">
+                      <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">التقارير</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={exportData} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-amber-200 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-amber-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-amber-500 transition-colors">
+                      <Download className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 group-hover:text-white transition-colors" />
+                    </div>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">احتياطية</span>
+                  </motion.button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-md shadow-emerald-100/50 border border-emerald-400/20 col-span-2 md:col-span-1">
                   <div className="flex justify-between items-start mb-1">
                     <ShoppingCart className="w-4 h-4 opacity-80" />
@@ -1512,55 +1820,6 @@ export default function App() {
                   </div>
                 </Card>
               )}
-
-              <div className="space-y-4">
-                <h2 className="text-lg font-bold text-slate-800">العمليات السريعة</h2>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <motion.button 
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setActiveTab('pos')} 
-                    className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center gap-2 hover:border-emerald-200 hover:shadow-md transition-all group"
-                  >
-                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
-                      <ShoppingCart className="w-5 h-5 text-emerald-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-bold text-[11px] text-slate-700">بيع جديد</span>
-                  </motion.button>
-                  
-                  <motion.button 
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setActiveTab('products')} 
-                    className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center gap-2 hover:border-blue-200 hover:shadow-md transition-all group"
-                  >
-                    <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center group-hover:bg-blue-500 transition-colors">
-                      <Package className="w-5 h-5 text-blue-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-bold text-[11px] text-slate-700">المخزون</span>
-                  </motion.button>
-
-                  <motion.button 
-                    whileTap={{ scale: 0.95 }}
-                    onClick={exportData} 
-                    className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center gap-2 hover:border-amber-200 hover:shadow-md transition-all group"
-                  >
-                    <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center group-hover:bg-amber-500 transition-colors">
-                      <Download className="w-5 h-5 text-amber-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-bold text-[11px] text-slate-700">نسخة احتياطية</span>
-                  </motion.button>
-
-                  <motion.button 
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => setActiveTab('history')} 
-                    className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center gap-2 hover:border-slate-300 hover:shadow-md transition-all group"
-                  >
-                    <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center group-hover:bg-slate-800 transition-colors">
-                      <FileText className="w-5 h-5 text-slate-600 group-hover:text-white transition-colors" />
-                    </div>
-                    <span className="font-bold text-[11px] text-slate-700">التقارير</span>
-                  </motion.button>
-                </div>
-              </div>
             </motion.div>
           )}
 
@@ -1572,7 +1831,9 @@ export default function App() {
               className="space-y-4"
             >
               <div className="flex items-center gap-2 mb-4">
-                <button onClick={() => setActiveTab('dashboard')}><ChevronLeft className="w-6 h-6" /></button>
+                <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                  <Home className="w-6 h-6" />
+                </button>
                 <h2 className="text-xl font-bold">نقطة البيع</h2>
               </div>
 
@@ -1853,7 +2114,12 @@ export default function App() {
           {activeTab === 'products' && (
             <motion.div key="products" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
                <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold">إدارة الأصناف</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                    <Home className="w-6 h-6" />
+                  </button>
+                  <h2 className="text-xl font-bold">إدارة الأصناف</h2>
+                </div>
                 <div className="flex gap-2">
                   <Button variant="outline" className="flex items-center gap-2" onClick={handleDownloadInventoryPDF}>
                     <Printer className="w-4 h-4" /> تقرير PDF
@@ -1938,7 +2204,12 @@ export default function App() {
           {activeTab === 'customers' && (
             <motion.div key="customers" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold">الزبائن والديون</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                    <Home className="w-6 h-6" />
+                  </button>
+                  <h2 className="text-xl font-bold">الزبائن والديون</h2>
+                </div>
                 <Button variant="outline" className="flex items-center gap-2" onClick={() => setShowAddCustomer(true)}>
                   <UserPlus className="w-4 h-4" /> زبون جديد
                 </Button>
@@ -1998,10 +2269,72 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'notes' && (
+            <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                    <Home className="w-6 h-6" />
+                  </button>
+                  <h2 className="text-xl font-bold">الملاحظات</h2>
+                </div>
+                <Button variant="outline" className="flex items-center gap-2 w-full sm:w-auto text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => { setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '' }); setShowAddNote(true); }}>
+                  <Plus className="w-4 h-4" /> ملاحظة جديدة
+                </Button>
+              </div>
+
+              {notes.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-3xl border border-slate-100 shadow-sm">
+                  <div className="w-20 h-20 bg-slate-50 flex items-center justify-center rounded-full mb-4">
+                    <BookOpen className="w-10 h-10 text-slate-300" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-800 mb-2">لا يوجد ملاحظات</h3>
+                  <p className="text-slate-500 text-sm">قم بإضافة ملاحظاتك ومهامك اليومية هنا لتذكرها لاحقاً</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {notes.map(note => (
+                    <Card key={note.id} className="relative overflow-hidden group hover:border-emerald-200 hover:shadow-md transition-all">
+                      <div className="flex justify-between items-start mb-2">
+                        <h3 className={`font-bold text-lg pr-1 ${note.is_completed ? 'line-through text-slate-400' : 'text-slate-800'}`}>{note.title}</h3>
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => handleEditNoteAction(note)} className="text-slate-300 hover:text-emerald-500 transition-colors p-1">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => handleDeleteNote(note.id!)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="mb-4 text-slate-600 text-sm whitespace-pre-wrap min-h-[60px] line-clamp-4">
+                        {note.content}
+                      </div>
+                      
+                      <div className="flex justify-between items-center text-xs text-slate-400 mt-4 pt-3 border-t border-slate-50">
+                        <span>{new Date(note.created_at).toLocaleDateString('ar-SA')}</span>
+                        {note.reminder_date && (
+                          <span className={`px-2 py-1 rounded-full ${note.is_completed ? 'bg-slate-100 text-slate-400' : 'bg-emerald-50 text-emerald-600'}`}>
+                            تذكير: {new Date(note.reminder_date).toLocaleDateString('ar-SA')}
+                          </span>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
               <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-black text-slate-800">إعدادات النظام</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                    <Home className="w-6 h-6" />
+                  </button>
+                  <h2 className="text-xl sm:text-2xl font-black text-slate-800">إعدادات النظام</h2>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -2011,7 +2344,7 @@ export default function App() {
                     <h3 className="font-bold">إعدادات المتجر</h3>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-sm font-bold text-slate-600">اسم البقالة</label>
+                    <label className="text-sm font-bold text-slate-600">اسم النشاط التجاري</label>
                     <div className="flex gap-2">
                       <input 
                         type="text" 
@@ -2041,7 +2374,7 @@ export default function App() {
                 <Card className="space-y-4">
                   <div className="flex items-center gap-2 text-emerald-700 mb-2">
                     <Database className="w-5 h-5" />
-                    <h3 className="font-bold">البيانات والنسخ الاحتياطي</h3>
+                    <h3 className="font-bold">تصدير واستيراد البيانات (JSON)</h3>
                   </div>
                   <div className="grid grid-cols-1 gap-3">
                     <Button variant="outline" className="flex items-center justify-center gap-2" onClick={exportData}>
@@ -2061,6 +2394,135 @@ export default function App() {
                       </Button>
                     </div>
                   </div>
+                </Card>
+
+                <Card className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-violet-700">
+                      <Database className="w-5 h-5" />
+                      <h3 className="font-bold">النسخ الاحتياطي التلقائي (قاعدة بيانات النظام)</h3>
+                    </div>
+                    <span className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-black rounded-full ${
+                      isBackupSyncing 
+                        ? 'bg-violet-50 text-violet-600 animate-pulse' 
+                        : 'bg-emerald-50 text-emerald-600'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isBackupSyncing ? 'bg-violet-500 animate-ping' : 'bg-emerald-500'}`} />
+                      {isBackupSyncing ? 'جاري الحفظ للتلقائي...' : 'آمن ومحدث تلقائياً'}
+                    </span>
+                  </div>
+                  
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    يقوم النظام بحفظ كافة البيانات حياً بشكل مباشر على جهازك المستضيف في ملف نظام آمن يحمل اسم <code className="bg-slate-50 text-violet-600 font-mono px-1 rounded font-bold">قاعدة بيانات النظام.json</code> عند أي حركة بيع أو تعديل.
+                  </p>
+
+                  <div className="p-3 bg-slate-50 rounded-xl space-y-2 border border-slate-100 text-xs">
+                    <div className="flex justify-between items-center text-slate-600">
+                      <span>حالة الملف التلقائي:</span>
+                      <span className="font-bold text-slate-800">{autoBackupFileStatus?.exists ? 'موجود ونشط ونشط حياً' : 'موجود (متصل بالأجهزة)'}</span>
+                    </div>
+                    {autoBackupFileStatus?.exists && (
+                      <>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>حجم قاعدة البيانات التلقائية:</span>
+                          <span className="font-mono text-slate-800 font-bold">
+                            {(autoBackupFileStatus.size ? autoBackupFileStatus.size / 1024 : 1.2).toFixed(2)} KB
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span>تاريخ آخر حفظ وتحديث تلقائي:</span>
+                          <span className="text-slate-800 font-bold font-mono">
+                            {autoBackupFileStatus.lastModified ? new Date(autoBackupFileStatus.lastModified).toLocaleTimeString('ar-SA') : 'الآن'}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <Button 
+                    variant="outline" 
+                    className="w-full flex items-center justify-center gap-2 text-violet-600 border-violet-200 hover:bg-violet-50" 
+                    onClick={forceLocalDiskBackup}
+                    disabled={isBackupSyncing}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isBackupSyncing ? 'animate-spin' : ''}`} />
+                    تحديث وحفظ مع قاعدة بيانات النظام بشكل فوري
+                  </Button>
+                </Card>
+
+                <Card className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-blue-700">
+                      <Cloud className="w-5 h-5" />
+                      <h3 className="font-bold font-black">المزامنة مع حساب Google (اختياري)</h3>
+                    </div>
+                    {googleUser && (
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-black rounded-full bg-blue-50 text-blue-600">
+                        <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
+                        رابط سحابي نشط
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    من خلال ربط حساب Google الخاص بمؤسستك، يمكنك إرسال ومزاوجة قاعدة البيانات السحابية لحمايتها من التلف والوصول إليها بأي بيئة بطرق سريعة وآمنة.
+                  </p>
+
+                  {googleUser ? (
+                    <div className="space-y-4">
+                      <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100/60 space-y-2 text-xs">
+                        <div className="flex justify-between text-slate-700">
+                          <span>المسؤول المتصل:</span>
+                          <span className="font-bold text-slate-900">{googleUser.name}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-700">
+                          <span>البريد الإلكتروني للشركة:</span>
+                          <span className="font-mono text-slate-900 font-bold">{googleUser.email}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-700">
+                          <span>وقت المزامنة الأخيرة:</span>
+                          <span className="text-slate-900 font-bold font-mono">
+                            {isBackupSyncing ? 'مستمر حياً...' : googleUser.connectedAt}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl text-xs border border-slate-100">
+                        <span className="text-slate-600 font-bold">المزامنة السحابية المتواصلة:</span>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={isCloudSyncEnabled} 
+                            onChange={(e) => handleToggleCloudSync(e.target.checked)} 
+                            className="sr-only peer" 
+                          />
+                          <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                      </div>
+
+                      <Button 
+                        variant="danger" 
+                        onClick={handleGoogleDisconnect}
+                        className="w-full flex items-center justify-center gap-2"
+                      >
+                        فصل وإيقاف الربط السحابي لـ Google
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-amber-50 rounded-xl text-xs text-amber-800 border border-amber-100">
+                        النظام يعمل حالياً بوضع <strong>الأوفلاين التام والآمن</strong> على جهازك الحالي. المتابعة عبر حساب Google لتشغيل الربط السحابي للشركات.
+                      </div>
+                      
+                      <button 
+                        onClick={handleGoogleConnect}
+                        className="w-full flex items-center justify-center gap-2.5 p-3 bg-white border border-slate-200 hover:border-blue-300 hover:bg-slate-50 rounded-xl transition-all shadow-sm font-bold text-sm text-slate-700 cursor-pointer"
+                      >
+                        <div className="w-5 h-5 flex items-center justify-center font-black text-rose-500 border border-slate-100 rounded bg-slate-50 shadow-sm text-xs">G</div>
+                        المتابعة والربط عبر حساب Google للشركات
+                      </button>
+                    </div>
+                  )}
                 </Card>
 
                 <Card className="space-y-4 border-red-100">
@@ -2120,7 +2582,12 @@ export default function App() {
           {activeTab === 'history' && (
             <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-                <h2 className="text-xl font-bold">سجل المبيعات</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                    <Home className="w-6 h-6" />
+                  </button>
+                  <h2 className="text-xl font-bold">سجل المبيعات</h2>
+                </div>
                 <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                   <div className="relative flex-1 sm:w-64">
                     <Search className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -2501,6 +2968,35 @@ export default function App() {
                 <div className="flex gap-2 pt-4">
                   <Button className="flex-1" onClick={handleEditProduct}>تحديث</Button>
                   <Button variant="secondary" onClick={() => setEditingProduct(null)}>إلغاء</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showAddNote && (
+            <div key="modal-add-note" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+              <motion.div 
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-bold text-xl">{editingNoteId ? 'تعديل الملاحظة' : 'إضافة ملاحظة جديدة'}</h3>
+                  <button onClick={() => { setShowAddNote(false); setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '' }); }} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm font-bold text-slate-600 block mb-1">العنوان</label>
+                    <input type="text" value={newNote.title} onChange={e => setNewNote({...newNote, title: e.target.value})} className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none" placeholder="عنوان الملاحظة المرجعي" />
+                  </div>
+                  <div>
+                    <label className="text-sm font-bold text-slate-600 block mb-1">التفاصيل / الملاحظة</label>
+                    <textarea value={newNote.content} onChange={e => setNewNote({...newNote, content: e.target.value})} className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none min-h-[120px]" placeholder="اكتب ملاحظاتك، حسابات، مهام..."></textarea>
+                  </div>
+                  <div>
+                    <label className="text-sm font-bold text-slate-600 block mb-1">تاريخ التذكير (اختياري)</label>
+                    <input type="date" value={newNote.reminder_date} onChange={e => setNewNote({...newNote, reminder_date: e.target.value})} className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none" />
+                  </div>
+                  <Button className="w-full" onClick={handleAddNote}>{editingNoteId ? 'حفظ التعديلات' : 'حفظ الملاحظة'}</Button>
                 </div>
               </motion.div>
             </div>

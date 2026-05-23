@@ -2,6 +2,7 @@ import express from 'express';
 import Database from 'better-sqlite3';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 
@@ -11,7 +12,47 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ limit: '100mb', extended: true }));
+
+  // Local File Database Backup endpoints (قاعدة بيانات النظام)
+  app.post('/api/backup', (req, res) => {
+    try {
+      const data = req.body;
+      const backupPath = path.join(process.cwd(), 'قاعدة بيانات النظام.json');
+      fs.writeFileSync(backupPath, JSON.stringify(data, null, 2), 'utf8');
+      
+      res.json({ 
+        success: true, 
+        message: 'تم حفظ قاعدة بيانات النظام بنجاح على القرص',
+        path: 'قاعدة بيانات النظام.json',
+        timestamp: new Date().toISOString()
+      });
+    } catch (err: any) {
+      console.error('Local backup failed:', err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  app.get('/api/backup/status', (req, res) => {
+    try {
+      const backupPath = path.join(process.cwd(), 'قاعدة بيانات النظام.json');
+      const exists = fs.existsSync(backupPath);
+      if (exists) {
+        const stats = fs.statSync(backupPath);
+        res.json({
+          exists: true,
+          size: stats.size,
+          lastModified: stats.mtime,
+          path: 'قاعدة بيانات النظام.json'
+        });
+      } else {
+        res.json({ exists: false });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || String(err) });
+    }
+  });
 
   // SQLite database setup
   const dbPath = process.env.DB_PATH || path.join(__dirname, 'grocery.db');

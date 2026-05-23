@@ -169,15 +169,25 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       const scanner = new Html5Qrcode(scanContainerId);
       html5QrcodeRef.current = scanner;
 
-      // Safe config with reasonable defaults for broad compatibility
+      // Improved config for faster scanning
       const config = {
-        fps: 10,
+        fps: 25, // Increased FPS for faster scanning
         qrbox: (viewFinderWidth: number, viewFinderHeight: number) => {
           const scannerWidth = Math.max(Math.min(viewFinderWidth * 0.9, 440), 220);
           const scannerHeight = Math.max(Math.min(viewFinderHeight * 0.55, 200), 90);
           return { width: scannerWidth, height: scannerHeight };
         },
         aspectRatio: 1.333333,
+        // Restricting formats specifically to common retail ones speeds up detection algorithm
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.QR_CODE
+        ]
       };
 
       await scanner.start(
@@ -369,7 +379,14 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
 
             {/* Glowing Laser Scan Reticle Overlay */}
             {scannerActive && !errorMsg && (
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                
+                {/* User Hint Text */}
+                <div className="mb-4 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-white/10 flex items-center gap-2 max-w-[90%] pointer-events-auto">
+                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <p className="text-white font-bold text-xs truncate">تأكد من إضاءة جيدة وقرب الكاميرا من الباركود</p>
+                </div>
+
                 {/* Visual Target Area Frame */}
                 <div className="w-[90%] h-[55%] max-w-[440px] max-h-[200px] border-2 border-dashed border-emerald-400/40 rounded-3xl relative flex items-center justify-center shadow-[0_0_0_9999px_rgba(9,15,29,0.70)] animate-pulse-subtle">
                   
