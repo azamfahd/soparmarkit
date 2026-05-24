@@ -223,9 +223,45 @@ export default function App() {
     return allSales;
   }, [lastSettleDate]) || [];
 
-  const currentCycleCashTotal = React.useMemo(() => {
+  // 1. Current cycle cash sales (direct cash sales)
+  const currentCycleCashSales = React.useMemo(() => {
     return currentCycleSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
   }, [currentCycleSales]);
+
+  // 2. All-time cash sales (direct cash sales)
+  const allTimeCashSalesTotal = useLiveQuery(async () => {
+    const allSales = await db.sales.toArray();
+    return allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
+  }) || 0;
+
+  // 3. Customer debt payments (تسديدات الديون)
+  const allTimeDebtPaymentsTotal = useLiveQuery(async () => {
+    const allDebts = await db.debts.toArray();
+    return allDebts.filter(d => d.type === 'payment').reduce((sum, d) => sum + d.amount, 0);
+  }) || 0;
+
+  // 4. Current cycle customer debt payments
+  const currentCycleDebtPayments = useLiveQuery(async () => {
+    const allDebts = await db.debts.toArray();
+    const payments = allDebts.filter(d => d.type === 'payment');
+    if (lastSettleDate) {
+      return payments.filter(d => d.created_at > lastSettleDate);
+    }
+    return payments;
+  }, [lastSettleDate]) || [];
+
+  const currentCycleDebtPaymentsTotal = React.useMemo(() => {
+    return currentCycleDebtPayments.reduce((sum, d) => sum + d.amount, 0);
+  }, [currentCycleDebtPayments]);
+
+  // 5. Total cash actually received both from direct cash sales and customer debt payments
+  const allTimeReceivedCash = React.useMemo(() => {
+    return allTimeCashSalesTotal + allTimeDebtPaymentsTotal;
+  }, [allTimeCashSalesTotal, allTimeDebtPaymentsTotal]);
+
+  const currentCycleCashTotal = React.useMemo(() => {
+    return currentCycleCashSales + currentCycleDebtPaymentsTotal;
+  }, [currentCycleCashSales, currentCycleDebtPaymentsTotal]);
 
   const currentCycleDebtTotal = React.useMemo(() => {
     return currentCycleSales.filter(s => s.payment_type === 'debt').reduce((sum, s) => sum + s.total_amount, 0);
@@ -235,18 +271,13 @@ export default function App() {
     return currentCycleSales.reduce((sum, s) => sum + s.total_amount, 0);
   }, [currentCycleSales]);
 
-  const allTimeCashSalesTotal = useLiveQuery(async () => {
-    const allSales = await db.sales.toArray();
-    return allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-  }) || 0;
-
   const allTimeDeliveredTotal = React.useMemo(() => {
     return salesSettlements.reduce((sum, s) => sum + s.delivered_amount, 0);
   }, [salesSettlements]);
 
   const activeOutstandingCash = React.useMemo(() => {
-    return allTimeCashSalesTotal - allTimeDeliveredTotal;
-  }, [allTimeCashSalesTotal, allTimeDeliveredTotal]);
+    return allTimeReceivedCash - allTimeDeliveredTotal;
+  }, [allTimeReceivedCash, allTimeDeliveredTotal]);
 
   const carriedForwardDeficit = React.useMemo(() => {
     return Math.max(0, activeOutstandingCash - currentCycleCashTotal);
@@ -2447,9 +2478,10 @@ export default function App() {
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                  <div className="bg-white/10 rounded-2xl p-3 border border-white/5">
+                  <div className="bg-white/10 rounded-2xl p-3 border border-white/5 space-y-0.5">
                     <p className="text-white/70 text-[10px] font-bold">المبيعات المتوقعة (كاش)</p>
                     <p className="font-bold text-sm sm:text-base font-mono text-white">{formatPrice(currentCycleCashTotal)}</p>
+                    <span className="text-[9px] text-white/60 block font-mono leading-tight">نقدي: {formatPrice(currentCycleCashSales)} + تسديد: {formatPrice(currentCycleDebtPaymentsTotal)}</span>
                   </div>
                   <div className="bg-white/10 rounded-2xl p-3 border border-white/5">
                     <p className="text-white/70 text-[10px] font-bold">عجز مرحل من سابق</p>
@@ -3266,9 +3298,17 @@ export default function App() {
                 </p>
 
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100/80 text-xs space-y-2.5">
+                  <div className="flex justify-between items-center text-slate-500 font-medium">
+                    <span>مبيعات نقدي مباشر (الدورة):</span>
+                    <span className="font-bold text-slate-700 font-mono">{formatPrice(currentCycleCashSales)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-500 font-medium pb-2 border-b border-slate-200/50">
+                    <span>💳 تسديد ديون مستلمة (كاش):</span>
+                    <span className="font-bold text-slate-705 font-mono text-emerald-600">+{formatPrice(currentCycleDebtPaymentsTotal)}</span>
+                  </div>
                   <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
-                    <span className="text-slate-500 font-medium">مبيعات الدورة الحالية (كاش):</span>
-                    <span className="font-bold text-slate-800 font-mono text-sm">{formatPrice(currentCycleCashTotal)}</span>
+                    <span className="text-slate-600 font-bold">مجموع كاش الدورة الحالية:</span>
+                    <span className="font-black text-slate-800 font-mono text-sm">{formatPrice(currentCycleCashTotal)}</span>
                   </div>
                   {carriedForwardDeficit > 0 && (
                     <div className="flex justify-between items-center pb-2 border-b border-slate-200/50 text-red-650">
