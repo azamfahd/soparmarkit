@@ -42,6 +42,7 @@ export interface Debt {
   amount: number;
   type: 'purchase' | 'payment';
   created_at: string;
+  notes?: string;
 }
 
 export interface InventoryLog {
@@ -75,6 +76,15 @@ export interface Note {
   is_completed?: boolean;
 }
 
+export interface SalesSettlement {
+  id?: number;
+  total_sales: number;
+  delivered_amount: number;
+  difference: number;
+  created_at: string;
+  notes?: string;
+}
+
 export class GroceryDatabase extends Dexie {
   products!: Table<Product>;
   customers!: Table<Customer>;
@@ -85,6 +95,7 @@ export class GroceryDatabase extends Dexie {
   settings!: Table<AppSettings>;
   sync_queue!: Table<SyncQueueItem>;
   notes!: Table<Note>;
+  salesSettlements!: Table<SalesSettlement>;
 
   constructor() {
     super('GroceryDB');
@@ -118,6 +129,18 @@ export class GroceryDatabase extends Dexie {
       settings: '++id, key',
       sync_queue: '++id, table, timestamp',
       notes: '++id, created_at, reminder_date, is_completed'
+    });
+    this.version(7).stores({
+      products: '++id, name, category, stock_quantity, barcode',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at'
     });
   }
 }

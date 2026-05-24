@@ -190,6 +190,7 @@ export default function App() {
   const [trendMode, setTrendMode] = useState<'daily' | 'monthly'>('daily');
   const [topProducts, setTopProducts] = useState<any[]>([]);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
   const [isCartExpanded, setIsCartExpanded] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
@@ -201,10 +202,55 @@ export default function App() {
 
   const appSettings = useLiveQuery(() => db.settings.toArray()) || [];
   const notes = useLiveQuery(() => db.notes.orderBy('created_at').reverse().toArray()) || [];
+  const salesSettlements = useLiveQuery(() => db.salesSettlements ? db.salesSettlements.orderBy('created_at').reverse().toArray() : Promise.resolve([])) || [];
 
   const [showAddNote, setShowAddNote] = useState(false);
   const [newNote, setNewNote] = useState({ title: '', content: '', reminder_date: '' });
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+
+  // States for Reconciling Sales / تصفية المبيعات
+  const [showSettleModal, setShowSettleModal] = useState(false);
+  const [deliveredSettleAmount, setDeliveredSettleAmount] = useState('');
+  const [settleNotes, setSettleNotes] = useState('');
+
+  const lastSettleDate = salesSettlements[0]?.created_at || null;
+
+  const currentCycleSales = useLiveQuery(async () => {
+    const allSales = await db.sales.toArray();
+    if (lastSettleDate) {
+      return allSales.filter(s => s.created_at > lastSettleDate);
+    }
+    return allSales;
+  }, [lastSettleDate]) || [];
+
+  const currentCycleCashTotal = React.useMemo(() => {
+    return currentCycleSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
+  }, [currentCycleSales]);
+
+  const currentCycleDebtTotal = React.useMemo(() => {
+    return currentCycleSales.filter(s => s.payment_type === 'debt').reduce((sum, s) => sum + s.total_amount, 0);
+  }, [currentCycleSales]);
+
+  const currentCycleGrandTotal = React.useMemo(() => {
+    return currentCycleSales.reduce((sum, s) => sum + s.total_amount, 0);
+  }, [currentCycleSales]);
+
+  const allTimeCashSalesTotal = useLiveQuery(async () => {
+    const allSales = await db.sales.toArray();
+    return allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
+  }) || 0;
+
+  const allTimeDeliveredTotal = React.useMemo(() => {
+    return salesSettlements.reduce((sum, s) => sum + s.delivered_amount, 0);
+  }, [salesSettlements]);
+
+  const activeOutstandingCash = React.useMemo(() => {
+    return allTimeCashSalesTotal - allTimeDeliveredTotal;
+  }, [allTimeCashSalesTotal, allTimeDeliveredTotal]);
+
+  const carriedForwardDeficit = React.useMemo(() => {
+    return Math.max(0, activeOutstandingCash - currentCycleCashTotal);
+  }, [activeOutstandingCash, currentCycleCashTotal]);
 
   const [lastBackupDate, setLastBackupDate] = useState<string | null>(null);
 
@@ -547,20 +593,38 @@ export default function App() {
     const amount = Number(paymentAmount);
     
     try {
+      let updatedCustomer: Customer | undefined;
       // Update local DB
       await db.transaction('rw', [db.customers, db.debts], async () => {
-        await db.customers.update(showPaymentModal.id!, {
-          balance: showPaymentModal.balance - amount
-        });
+        const targetCustomer = await db.customers.get(showPaymentModal.id!);
+        if (targetCustomer) {
+          const newBalance = targetCustomer.balance - amount;
+          await db.customers.update(showPaymentModal.id!, {
+            balance: newBalance
+          });
+          updatedCustomer = { ...targetCustomer, balance: newBalance };
+        }
         await db.debts.add({
           customer_id: showPaymentModal.id!,
           amount: amount,
           type: 'payment',
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          notes: paymentNotes.trim() || undefined
         });
       });
       
-      showNotification('تم تسجيل الدفعة بنجاح');
+      const isCleared = updatedCustomer && updatedCustomer.balance <= 0;
+      showNotification(
+        isCleared 
+          ? 'تم تصفية رصيد العميل بالكامل وتسوية الدين بنجاح!' 
+          : 'تم تسجيل الدفعة وتحديث الرصيد المستحق بنجاح'
+      );
+      
+      if (updatedCustomer) {
+        if (showCustomerDetails && showCustomerDetails.id === updatedCustomer.id) {
+          await fetchCustomerHistory(updatedCustomer);
+        }
+      }
     } catch (err) {
       console.error("Failed to process payment:", err);
       showNotification('خطأ في تسجيل الدفعة', 'error');
@@ -568,6 +632,56 @@ export default function App() {
 
     setShowPaymentModal(null);
     setPaymentAmount('');
+    setPaymentNotes('');
+  };
+
+  const handleSaveSettlement = async () => {
+    const delivered = Number(deliveredSettleAmount);
+    if (isNaN(delivered) || delivered < 0) {
+      showNotification('الرجاء إدخال مبلغ مسلم صحيح لتسوية المبيعات', 'error');
+      return;
+    }
+    
+    try {
+      if (!db.salesSettlements) {
+        showNotification('قاعدة البيانات غير مهيأة بعد للتسويات', 'error');
+        return;
+      }
+      const targetToSettle = activeOutstandingCash;
+      await db.salesSettlements.add({
+        total_sales: targetToSettle,
+        delivered_amount: delivered,
+        difference: delivered - targetToSettle,
+        created_at: new Date().toISOString(),
+        notes: settleNotes.trim() || undefined
+      });
+      showNotification('تم حفظ تصفية المبيعات ومطابقة الصندوق بنجاح!');
+      setShowSettleModal(false);
+      setDeliveredSettleAmount('');
+      setSettleNotes('');
+    } catch (err) {
+      console.error('Failed to save settlement:', err);
+      showNotification('خطأ في حفظ تصفية المبيعات', 'error');
+    }
+  };
+
+  const handleDeleteSettlement = async (id: number) => {
+    setConfirmAction({
+      title: 'حذف سجل تصفية',
+      message: 'هل أنت متأكد من حذف سجل هذه التصفية؟ القيام بذلك سيعيد دمج المبيعات التي كانت ضمنها إلى دورة التصفية الحالية.',
+      onConfirm: async () => {
+        try {
+          if (db.salesSettlements) {
+            await db.salesSettlements.delete(id);
+            showNotification('تم حذف سجل التصفية بنجاح وإعادة دمج العمليات');
+          }
+        } catch (err) {
+          console.error('Failed to delete settlement:', err);
+          showNotification('فشل حذف سجل التصفية', 'error');
+        }
+        setConfirmAction(null);
+      }
+    });
   };
 
   const handleAddNote = async () => {
@@ -2235,57 +2349,194 @@ export default function App() {
           )}
 
           {activeTab === 'notes' && (
-            <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
-                    <Home className="w-6 h-6" />
-                  </button>
-                  <h2 className="text-xl font-bold">الملاحظات</h2>
-                </div>
-                <Button variant="outline" className="flex items-center gap-2 w-full sm:w-auto text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => { setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '' }); setShowAddNote(true); }}>
-                  <Plus className="w-4 h-4" /> ملاحظة جديدة
-                </Button>
+            <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              
+              {/* عنوان الصفحة مع زر الرجوع للواجهة الرئيسية */}
+              <div className="flex items-center gap-2 pb-2">
+                <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-2 rounded-full transition-colors flex items-center justify-center cursor-pointer" title="الرجوع للواجهة الرئيسية">
+                  <Home className="w-6 h-6" />
+                </button>
+                <h3 className="text-xl font-extrabold text-slate-800">الملاحظات وتصفية مبيعات الصندوق</h3>
               </div>
 
-              {notes.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-3xl border border-slate-100 shadow-sm">
-                  <div className="w-20 h-20 bg-slate-50 flex items-center justify-center rounded-full mb-4">
-                    <BookOpen className="w-10 h-10 text-slate-300" />
+              {/* قسم الملاحظات والمهام اليومية (أعلى الصفحة الآن) */}
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/80 p-4 rounded-3xl border border-slate-150/60">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-emerald-600" />
+                    <h2 className="text-lg font-bold text-slate-800">سجل المهام والملاحظات واليوميات</h2>
                   </div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-2">لا يوجد ملاحظات</h3>
-                  <p className="text-slate-500 text-sm">قم بإضافة ملاحظاتك ومهامك اليومية هنا لتذكرها لاحقاً</p>
+                  <Button 
+                    variant="outline" 
+                    className="flex items-center gap-2 w-full sm:w-auto text-emerald-600 border-emerald-200 hover:bg-emerald-50 bg-white font-bold text-xs" 
+                    onClick={() => { setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '' }); setShowAddNote(true); }}
+                  >
+                    <Plus className="w-4 h-4" /> إضافة مهمة / ملاحظة جديدة
+                  </Button>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {notes.map(note => (
-                    <Card key={note.id} className="relative overflow-hidden group hover:border-emerald-200 hover:shadow-md transition-all">
-                      <div className="flex justify-between items-start mb-2">
-                        <h3 className={`font-bold text-lg pr-1 ${note.is_completed ? 'line-through text-slate-400' : 'text-slate-800'}`}>{note.title}</h3>
-                        <div className="flex gap-1 shrink-0">
-                          <button onClick={() => handleEditNoteAction(note)} className="text-slate-300 hover:text-emerald-500 transition-colors p-1">
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => handleDeleteNote(note.id!)} className="text-slate-300 hover:text-red-500 transition-colors p-1">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+
+                {notes.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-3xl border border-slate-100 shadow-sm">
+                    <div className="w-16 h-16 bg-slate-50 flex items-center justify-center rounded-full mb-3">
+                      <BookOpen className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <h3 className="text-base font-bold text-slate-800 mb-1">لا يوجد ملاحظات أو مهام</h3>
+                    <p className="text-slate-400 text-xs">قم بإضافة ملاحظاتك ومهامك اليومية هنا لتذكرها لاحقاً</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                    {notes.map(note => (
+                      <Card key={note.id} className="relative overflow-hidden group hover:border-emerald-200 hover:shadow-md transition-all border border-slate-100/80 bg-white">
+                        <div className="flex justify-between items-start mb-2">
+                          <h3 className={`font-bold text-base pr-1 ${note.is_completed ? 'line-through text-slate-400' : 'text-slate-800'}`}>{note.title}</h3>
+                          <div className="flex gap-1 shrink-0">
+                            <button onClick={() => handleEditNoteAction(note)} className="text-slate-300 hover:text-emerald-500 transition-colors p-1 cursor-pointer">
+                              <Edit2 className="w-4 h-4" />
+                            </button>
+                            <button onClick={() => handleDeleteNote(note.id!)} className="text-slate-300 hover:text-red-500 transition-colors p-1 cursor-pointer">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      
-                      <div className="mb-4 text-slate-600 text-sm whitespace-pre-wrap min-h-[60px] line-clamp-4">
-                        {note.content}
-                      </div>
-                      
-                      <div className="flex justify-between items-center text-xs text-slate-400 mt-4 pt-3 border-t border-slate-50">
-                        <span>{new Date(note.created_at).toLocaleDateString('ar-SA')}</span>
-                        {note.reminder_date && (
-                          <span className={`px-2 py-1 rounded-full ${note.is_completed ? 'bg-slate-100 text-slate-400' : 'bg-emerald-50 text-emerald-600'}`}>
-                            تذكير: {new Date(note.reminder_date).toLocaleDateString('ar-SA')}
-                          </span>
-                        )}
-                      </div>
-                    </Card>
-                  ))}
+                        
+                        <div className="mb-4 text-slate-600 text-xs whitespace-pre-wrap min-h-[50px] line-clamp-4 leading-relaxed">
+                          {note.content}
+                        </div>
+                        
+                        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-4 pt-3 border-t border-slate-50">
+                          <span>{new Date(note.created_at).toLocaleDateString('ar-SA')}</span>
+                          {note.reminder_date && (
+                            <span className={`px-2 py-0.5 rounded-full font-bold ${note.is_completed ? 'bg-slate-100 text-slate-400' : 'bg-emerald-50 text-emerald-600'}`}>
+                              تذكير: {new Date(note.reminder_date).toLocaleDateString('ar-SA')}
+                            </span>
+                          )}
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* خط فاصل أنيق ومميز */}
+              <div className="border-t border-slate-200/80 my-2"></div>
+
+              {/* تصفية مبيعات المتجر ومطابقة الصندوق (أسفل الملاحظات الآن) */}
+              <div className="bg-gradient-to-l from-violet-600 to-indigo-600 text-white rounded-3xl p-5 shadow-md space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-5 h-5 animate-pulse text-violet-200" />
+                      <h3 className="text-lg font-bold">تسوية وتصفية مبيعات الصندوق</h3>
+                    </div>
+                    <p className="text-violet-100 text-xs">
+                      {lastSettleDate 
+                        ? `الدورة الحالية منذ: ${new Date(lastSettleDate).toLocaleString('ar-SA')}` 
+                        : 'الدورة الأولى: لم يتم إجراء تصفية مبيعات سابقة بعد'}
+                    </p>
+                  </div>
+                  <Button 
+                    className="bg-white text-violet-700 hover:bg-violet-50 hover:scale-[1.02] active:scale-95 transition-all text-xs font-bold py-2.5 px-4 shadow-sm w-full sm:w-auto mt-2 sm:mt-0 cursor-pointer"
+                    onClick={() => {
+                      setDeliveredSettleAmount(String(activeOutstandingCash || ''));
+                      setSettleNotes('');
+                      setShowSettleModal(true);
+                    }}
+                  >
+                    ⚖️ إجراء تصفية وتدوير لليوم الصندوقي
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
+                  <div className="bg-white/10 rounded-2xl p-3 border border-white/5">
+                    <p className="text-white/70 text-[10px] font-bold">المبيعات المتوقعة (كاش)</p>
+                    <p className="font-bold text-sm sm:text-base font-mono text-white">{formatPrice(currentCycleCashTotal)}</p>
+                  </div>
+                  <div className="bg-white/10 rounded-2xl p-3 border border-white/5">
+                    <p className="text-white/70 text-[10px] font-bold">عجز مرحل من سابق</p>
+                    <p className="font-bold text-sm sm:text-base font-mono text-rose-200">{formatPrice(carriedForwardDeficit)}</p>
+                  </div>
+                  <div className="bg-white/15 rounded-2xl p-3 border border-white/10 md:scale-[1.03] shadow-md ring-1 ring-white/20 bg-indigo-500/30">
+                    <p className="text-yellow-250 text-[10px] font-extrabold text-cyan-205">🎯 المستهدف الكلي للتسوية</p>
+                    <p className="font-extrabold text-sm sm:text-base font-mono text-yellow-200">{formatPrice(activeOutstandingCash)}</p>
+                  </div>
+                  <div className="bg-white/10 rounded-2xl p-3 border border-white/5 col-span-2 sm:col-span-1">
+                    <p className="text-white/70 text-[10px] font-bold">إجمالي مبيعات الآجل (دين)</p>
+                    <p className="font-bold text-sm sm:text-base font-mono text-amber-200">{formatPrice(currentCycleDebtTotal)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* سجل مطابقات الصندوق والتسويات السابقة */}
+              {salesSettlements.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-base font-bold text-slate-800 flex items-center gap-1.5 px-1">
+                    💼 سجل التسويات ومطابقات الصندوق السابقة ({salesSettlements.length})
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {salesSettlements.map((settlement) => {
+                      const isDeficit = settlement.difference < 0;
+                      const isExcess = settlement.difference > 0;
+                      return (
+                        <Card key={settlement.id} className="border border-slate-100 hover:border-violet-100 transition-all p-4 relative flex flex-col justify-between bg-white shadow-xs rounded-2xl">
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                                  #{settlement.id} تسوية مبيعات
+                                </span>
+                                <p className="text-[11px] text-slate-400 mt-1 font-semibold">
+                                  {new Date(settlement.created_at).toLocaleString('ar-SA')}
+                                </p>
+                              </div>
+                              <button 
+                                onClick={() => handleDeleteSettlement(settlement.id!)}
+                                className="text-slate-300 hover:text-red-500 transition-colors p-1 rounded-lg hover:bg-slate-50 cursor-pointer"
+                                title="حذف سجل التصفية"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2 bg-slate-50/60 p-2 rounded-xl text-center border border-slate-100/50">
+                              <div>
+                                <p className="text-[9px] text-slate-400 font-bold">المستهدف (كاش)</p>
+                                <p className="text-xs font-bold font-mono text-slate-700">{formatPrice(settlement.total_sales)}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] text-slate-400 font-bold">المسلم فعلياً</p>
+                                <p className="text-xs font-bold font-mono text-slate-800">{formatPrice(settlement.delivered_amount)}</p>
+                              </div>
+                              <div>
+                                <p className="text-[9px] text-slate-400 font-bold">حالة الصندوق</p>
+                                <p className={`text-xs font-bold font-mono ${isDeficit ? 'text-red-650 font-semibold' : isExcess ? 'text-amber-600 font-semibold' : 'text-emerald-600 font-semibold'}`}>
+                                  {settlement.difference === 0 ? 'مطابق ✅' : formatPrice(settlement.difference)}
+                                </p>
+                              </div>
+                            </div>
+
+                            {settlement.notes && (
+                              <div className="text-xs bg-slate-100/50 text-slate-600 p-2 rounded-xl border border-slate-200/20 italic">
+                                📝 {settlement.notes}
+                              </div>
+                            )}
+
+                            {isDeficit && (
+                              <div className="bg-red-50/70 text-red-800 p-2 rounded-xl text-[11px] font-bold flex items-center gap-1.5 border border-red-105/40">
+                                <AlertCircle className="w-3.5 h-3.5 text-red-550" />
+                                <span>عجز مالي متبقي بقيمة: {formatPrice(Math.abs(settlement.difference))}</span>
+                              </div>
+                            )}
+                            {isExcess && (
+                              <div className="bg-emerald-50 text-emerald-800 p-2 rounded-xl text-[11px] font-bold flex items-center gap-1.5 border border-emerald-100/60">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>زيادة في الصندوق بقيمة: {formatPrice(settlement.difference)}</span>
+                              </div>
+                            )}
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -2911,23 +3162,232 @@ export default function App() {
           )}
 
           {showPaymentModal && (
-            <div key="modal-payment" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+            <div key="modal-payment" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-xs">
               <motion.div 
-                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
+                initial={{ y: '100%', opacity: 0 }} 
+                animate={{ y: 0, opacity: 1 }} 
+                exit={{ y: '100%', opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-xl border border-slate-100"
               >
-                <h3 className="text-xl font-bold">تسديد دين: {showPaymentModal.name}</h3>
-                <p className="text-sm text-slate-500">الرصيد الحالي: {formatPrice(showPaymentModal.balance)}</p>
-                <input 
-                  type="number" 
-                  placeholder="المبلغ المدفوع" 
-                  className="w-full p-3 bg-slate-100 rounded-xl" 
-                  value={paymentAmount} 
-                  onChange={e => setPaymentAmount(e.target.value)} 
-                />
-                <div className="flex gap-2 pt-4">
-                  <Button className="flex-1" onClick={handlePayment}>تأكيد الدفع</Button>
-                  <Button variant="secondary" onClick={() => setShowPaymentModal(null)}>إلغاء</Button>
+                <div className="flex items-center gap-2 text-violet-700">
+                  <Database className="w-5 h-5 animate-pulse" />
+                  <h3 className="text-xl font-bold">تسوية وتصفية الديون</h3>
+                </div>
+                
+                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-1">
+                  <div className="flex justify-between">
+                    <span>اسم العميل / الزبون:</span>
+                    <span className="font-bold text-slate-800">{showPaymentModal.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>إجمالي الدين المتبقي:</span>
+                    <span className="font-bold text-red-600 font-mono text-sm">{formatPrice(showPaymentModal.balance)}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-600 block">المبلغ المدفوع للتسوية:</label>
+                  <div className="relative">
+                    <input 
+                      type="number" 
+                      placeholder="أدخل المبلغ المستلم..." 
+                      className="w-full p-3.5 bg-slate-100 rounded-xl font-bold font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 pl-12 text-slate-800" 
+                      value={paymentAmount} 
+                      onChange={e => setPaymentAmount(e.target.value)} 
+                    />
+                    <span className="absolute left-4 top-3.5 font-bold text-slate-400 text-sm">{currency}</span>
+                  </div>
+                </div>
+
+                {/* Quick Fill Actions (تصفية كامل الدين / تصفير) */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentAmount(String(showPaymentModal.balance));
+                      setPaymentNotes('تصفية وتصفير كامل الدين - نقود مسلمة وتصفية حساب');
+                    }}
+                    className="p-2-5 px-3 text-xs bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-xl transition-all font-bold border border-violet-100 flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    ✨ تصفير الحساب كاملاً
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaymentAmount(String(Math.ceil(showPaymentModal.balance / 2)));
+                      setPaymentNotes('تسديد نصف الدين المتبقي');
+                    }}
+                    className="p-2-5 px-3 text-xs bg-slate-50 text-slate-700 hover:bg-slate-100 rounded-xl transition-all font-bold border border-slate-200 flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    تسديد نصف الدين
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-600 block">تفاصيل وملاحظات التسوية (اختياري):</label>
+                  <input 
+                    type="text" 
+                    placeholder="ملاحظات مثل: نقود مسلمة للتاجر يدوياً، خصم، إلخ..." 
+                    className="w-full p-3 bg-slate-100 rounded-xl text-xs text-slate-700 focus:outline-none" 
+                    value={paymentNotes} 
+                    onChange={e => setPaymentNotes(e.target.value)} 
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button 
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold" 
+                    onClick={handlePayment}
+                    disabled={!paymentAmount || Number(paymentAmount) <= 0}
+                  >
+                    تأكيد وتسوية
+                  </Button>
+                  <Button variant="secondary" onClick={() => { setShowPaymentModal(null); setPaymentAmount(''); setPaymentNotes(''); }}>إلغاء</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showSettleModal && (
+            <div key="modal-settle" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-xs">
+              <motion.div 
+                initial={{ y: '100%', opacity: 0 }} 
+                animate={{ y: 0, opacity: 1 }} 
+                exit={{ y: '100%', opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-xl border border-slate-100 text-right"
+              >
+                <div className="flex items-center gap-2 text-violet-700">
+                  <Database className="w-5 h-5 animate-pulse" />
+                  <h3 className="text-xl font-bold">تسجيل ومطابقة مبيعات الصندوق</h3>
+                </div>
+                
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  تقوم هذه العملية بمطابقة وتصفية المبيعات النقدية في الصندوق. يمكنك تصفية المبلغ بالكامل أو تصفية جزء منه (كالدفع بالنصف أو مبلغ محدد)، ليتم تدوير وحفظ العجز المتبقي تلقائياً للدورة القادمة.
+                </p>
+
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100/80 text-xs space-y-2.5">
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
+                    <span className="text-slate-500 font-medium">مبيعات الدورة الحالية (كاش):</span>
+                    <span className="font-bold text-slate-800 font-mono text-sm">{formatPrice(currentCycleCashTotal)}</span>
+                  </div>
+                  {carriedForwardDeficit > 0 && (
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/50 text-red-650">
+                      <span className="text-red-600 font-bold flex items-center gap-1">🚨 عجز/متبقي مرحل من دورة سابقة:</span>
+                      <span className="font-extrabold font-mono text-sm">{formatPrice(carriedForwardDeficit)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center pt-1 font-bold text-indigo-700">
+                    <span className="text-sm font-bold">إجمالي المبلغ المطلوب تصفيته (الهدف):</span>
+                    <span className="font-extrabold font-mono text-base">{formatPrice(activeOutstandingCash)}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 font-bold">
+                  <label className="text-xs text-slate-600 block">المبلغ الفعلي المستلم (المسلم للتسوية):</label>
+                  <div className="relative">
+                    <input 
+                      type="number" 
+                      placeholder="أدخل المبلغ المسلم يدوياً..." 
+                      className="w-full p-3.5 bg-slate-100 rounded-xl font-bold font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 pl-12 text-slate-800 text-left" 
+                      value={deliveredSettleAmount} 
+                      onChange={e => setDeliveredSettleAmount(e.target.value)} 
+                    />
+                    <span className="absolute left-4 top-3.5 font-bold text-slate-400 text-sm">{currency}</span>
+                  </div>
+                </div>
+
+                {/* Quick Actions */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeliveredSettleAmount(String(activeOutstandingCash));
+                      setSettleNotes('مطابقة تامة ومسلمة بالكامل');
+                    }}
+                    className="p-2 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-xl transition-all text-[11px] font-bold border border-violet-100 cursor-pointer text-center"
+                  >
+                    🤝 تصفير/تصفية كاملة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeliveredSettleAmount(String(Math.ceil(activeOutstandingCash / 2)));
+                      setSettleNotes('تصفية نصف المبلغ المستحق والتدوير للقرين');
+                    }}
+                    className="p-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl transition-all text-[11px] font-bold border border-indigo-105 cursor-pointer text-center"
+                  >
+                    🌓 تصفية النصف (50%)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeliveredSettleAmount('');
+                      setSettleNotes('');
+                    }}
+                    className="p-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl transition-all text-[11px] font-bold border border-slate-200 cursor-pointer text-center"
+                  >
+                    🗑️ مسح القيمة
+                  </button>
+                </div>
+
+                {/* Real-time Status and Warning Boxes (عجز / زيادة / تطابق) */}
+                {deliveredSettleAmount !== '' && (
+                  (() => {
+                    const diff = Number(deliveredSettleAmount) - activeOutstandingCash;
+                    if (diff < 0) {
+                      return (
+                        <div className="bg-red-50 text-red-750 p-3 rounded-2xl text-xs font-semibold space-y-1 border border-red-100">
+                          <div className="flex items-center gap-1.5 font-bold text-red-700 font-bold">
+                            <AlertCircle className="w-4 h-4 text-red-600 animate-bounce animate-pulse" />
+                            <span>عجز/متبقي يرحل للدورة القادمة</span>
+                          </div>
+                          <p>المبلغ المسلم أقل من المطلوب للتسوية. سيتبقى عجز مالي بقيمة: <span className="font-bold underline font-mono">{formatPrice(Math.abs(diff))}</span> يتم تدويره للدورة القادمة.</p>
+                        </div>
+                      );
+                    } else if (diff > 0) {
+                      return (
+                        <div className="bg-amber-50 text-amber-800 p-3 rounded-2xl text-xs font-semibold space-y-1 border border-amber-100">
+                          <div className="flex items-center gap-1.5 font-bold">
+                            <Sparkles className="w-4 h-4 text-amber-600 animate-spin" />
+                            <span>زيادة / فائض مالي في الصندوق!</span>
+                          </div>
+                          <p>المبلغ المسلم أكثر من المطلوب لتسوية الصندوق بمقدار: <span className="font-bold underline font-mono">{formatPrice(diff)}</span></p>
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div className="bg-emerald-50 text-emerald-800 p-3 rounded-2xl text-xs font-semibold space-y-1 border border-emerald-100">
+                          <div className="flex items-center gap-1.5 text-emerald-700 font-bold">
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>تطابق وتصفية حسابية تامة بنسبة %100</span>
+                          </div>
+                          <p>المبلغ مطابق تماماً للهدف المستحق للصندوق بدون أي عجز مرحل.</p>
+                        </div>
+                      );
+                    }
+                  })()
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-600 block">ملاحظات التصفية (اختياري):</label>
+                  <input 
+                    type="text" 
+                    placeholder="مثل: عجز مقبول، فروقات فكة، المستلم: عبدالله، إلخ..." 
+                    className="w-full p-3 bg-slate-100 rounded-xl text-xs text-slate-700 focus:outline-none" 
+                    value={settleNotes} 
+                    onChange={e => setSettleNotes(e.target.value)} 
+                  />
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button 
+                    className="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold" 
+                    onClick={handleSaveSettlement}
+                    disabled={deliveredSettleAmount === '' || Number(deliveredSettleAmount) < 0}
+                  >
+                    💾 حفظ التصفية والتسوية
+                  </Button>
+                  <Button variant="secondary" onClick={() => { setShowSettleModal(false); setDeliveredSettleAmount(''); setSettleNotes(''); }}>إلغاء</Button>
                 </div>
               </motion.div>
             </div>
@@ -3032,6 +3492,12 @@ export default function App() {
                             {entry.entryType === 'sale' ? '+' : '-'}{formatPrice(entry.entryType === 'sale' ? entry.total_amount : entry.amount)}
                           </p>
                         </div>
+                        
+                        {entry.entryType === 'payment' && entry.notes && (
+                          <div className="mt-2 text-xs bg-slate-50 text-slate-600 p-2 rounded-xl border border-slate-100/60 font-medium leading-relaxed">
+                            📝 {entry.notes}
+                          </div>
+                        )}
                         
                         {entry.entryType === 'sale' && (
                           <div className="mt-3 pt-3 border-t border-slate-50">
