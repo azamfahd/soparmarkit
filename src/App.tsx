@@ -27,6 +27,8 @@ import {
   Cloud,
   ShieldCheck,
   FileText,
+  Briefcase,
+  Wallet,
   Droplet,
   Milk,
   Sparkles,
@@ -2492,7 +2494,7 @@ export default function App() {
                     <p className="font-extrabold text-sm sm:text-base font-mono text-yellow-200">{formatPrice(activeOutstandingCash)}</p>
                   </div>
                   <div className="bg-white/10 rounded-2xl p-3 border border-white/5 col-span-2 sm:col-span-1">
-                    <p className="text-white/70 text-[10px] font-bold">إجمالي مبيعات الآجل (دين)</p>
+                    <p className="text-white/70 text-[10px] font-bold">مبيعات لم تسدد بعد</p>
                     <p className="font-bold text-sm sm:text-base font-mono text-amber-200">{formatPrice(currentCycleDebtTotal)}</p>
                   </div>
                 </div>
@@ -3194,240 +3196,282 @@ export default function App() {
           )}
 
           {showPaymentModal && (
-            <div key="modal-payment" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-xs">
+            <div key="modal-payment" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
               <motion.div 
-                initial={{ y: '100%', opacity: 0 }} 
-                animate={{ y: 0, opacity: 1 }} 
-                exit={{ y: '100%', opacity: 0 }}
-                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-xl border border-slate-100"
+                initial={{ scale: 0.9, opacity: 0, y: 20 }} 
+                animate={{ scale: 1, opacity: 1, y: 0 }} 
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="bg-white w-full max-w-md rounded-t-[2rem] sm:rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.3)] border border-white/20 text-right flex flex-col max-h-[85vh]"
               >
-                <div className="flex items-center gap-2 text-violet-700">
-                  <Database className="w-5 h-5 animate-pulse" />
-                  <h3 className="text-xl font-bold">تسوية وتصفية الديون</h3>
-                </div>
-                
-                <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-1">
-                  <div className="flex justify-between">
-                    <span>اسم العميل / الزبون:</span>
-                    <span className="font-bold text-slate-800">{showPaymentModal.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>إجمالي الدين المتبقي:</span>
-                    <span className="font-bold text-red-600 font-mono text-sm">{formatPrice(showPaymentModal.balance)}</span>
+                {/* Modal Header */}
+                <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-6 text-white text-center relative overflow-hidden shrink-0">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
+                  
+                  {/* Close Button */}
+                  <button 
+                    onClick={() => { setShowPaymentModal(null); setPaymentAmount(''); setPaymentNotes(''); }}
+                    className="absolute top-4 left-4 z-20 p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all border border-white/10 text-white"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+
+                  <div className="relative z-10 flex flex-col items-center gap-3">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shadow-inner border border-white/30">
+                      <ShieldCheck className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black">تسوية مديونية زبون</h3>
+                      <p className="text-indigo-100 text-[10px] mt-1 opacity-80">تحصيل المبالغ وتحديث الأرصدة</p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-600 block">المبلغ المدفوع للتسوية:</label>
-                  <div className="relative">
-                    <input 
-                      type="number" 
-                      placeholder="أدخل المبلغ المستلم..." 
-                      className="w-full p-3.5 bg-slate-100 rounded-xl font-bold font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 pl-12 text-slate-800" 
-                      value={paymentAmount} 
-                      onChange={e => setPaymentAmount(e.target.value)} 
+                <div className="p-5 sm:p-6 space-y-6 overflow-y-auto custom-scrollbar">
+                  {/* Customer Info Card - More Compact */}
+                  <div className="flex gap-3">
+                    <div className="flex-1 bg-slate-50 p-3.5 rounded-2xl border border-slate-100">
+                      <p className="text-[10px] text-slate-500 font-bold mb-1 uppercase tracking-tight">الزبون</p>
+                      <p className="text-slate-800 font-black text-sm truncate">{showPaymentModal.name}</p>
+                    </div>
+                    <div className="flex-1 bg-red-50 p-3.5 rounded-2xl border border-red-100">
+                      <p className="text-[10px] text-red-600 font-bold mb-1 uppercase tracking-tight">الرصيد المستحق</p>
+                      <p className="text-red-700 font-black text-sm font-mono leading-tight">{formatPrice(showPaymentModal.balance)}</p>
+                    </div>
+                  </div>
+
+                  {/* Payment Input Area */}
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-xs font-black text-slate-600 flex items-center gap-2 pr-1">
+                        <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
+                        المبلغ المسدد الآن:
+                      </label>
+                      <div className="relative group">
+                        <input 
+                          type="number" 
+                          placeholder="0.00" 
+                          className="w-full p-4 bg-slate-50 rounded-2xl font-black text-xl font-mono focus:outline-none focus:ring-4 focus:ring-indigo-50 pl-16 text-slate-800 border-2 border-slate-100 transition-all focus:bg-white focus:border-indigo-300 shadow-sm" 
+                          value={paymentAmount} 
+                          onChange={e => setPaymentAmount(e.target.value)} 
+                          autoFocus
+                        />
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-xl text-xs">{currency}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentAmount(String(showPaymentModal.balance));
+                          setPaymentNotes('تصفير كامل الحساب وتصفية المديونية');
+                        }}
+                        className="py-3 px-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl transition-all font-bold text-[12px] shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" /> تصفير كامل
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentAmount(String(Math.ceil(showPaymentModal.balance / 2)));
+                          setPaymentNotes('سداد نصف الرصيد المتبقي');
+                        }}
+                        className="py-3 px-3 bg-white text-slate-700 hover:bg-slate-50 rounded-xl transition-all font-bold text-[12px] border-2 border-slate-100 flex items-center justify-center gap-2 active:scale-95"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> سداد (٥٠٪)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-black text-slate-600 pr-1">البيان / ملاحظات:</label>
+                    <textarea 
+                      placeholder="اكتب أي ملاحظات هنا..." 
+                      className="w-full p-4 bg-slate-50 rounded-2xl text-xs text-slate-700 focus:outline-none border-2 border-slate-100 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-200 transition-all min-h-[80px] resize-none" 
+                      value={paymentNotes} 
+                      onChange={e => setPaymentNotes(e.target.value)} 
                     />
-                    <span className="absolute left-4 top-3.5 font-bold text-slate-400 text-sm">{currency}</span>
                   </div>
-                </div>
 
-                {/* Quick Fill Actions (تصفية كامل الدين / تصفير) */}
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentAmount(String(showPaymentModal.balance));
-                      setPaymentNotes('تصفية وتصفير كامل الدين - نقود مسلمة وتصفية حساب');
-                    }}
-                    className="p-2-5 px-3 text-xs bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-xl transition-all font-bold border border-violet-100 flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    ✨ تصفير الحساب كاملاً
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentAmount(String(Math.ceil(showPaymentModal.balance / 2)));
-                      setPaymentNotes('تسديد نصف الدين المتبقي');
-                    }}
-                    className="p-2-5 px-3 text-xs bg-slate-50 text-slate-700 hover:bg-slate-100 rounded-xl transition-all font-bold border border-slate-200 flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    تسديد نصف الدين
-                  </button>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-600 block">تفاصيل وملاحظات التسوية (اختياري):</label>
-                  <input 
-                    type="text" 
-                    placeholder="ملاحظات مثل: نقود مسلمة للتاجر يدوياً، خصم، إلخ..." 
-                    className="w-full p-3 bg-slate-100 rounded-xl text-xs text-slate-700 focus:outline-none" 
-                    value={paymentNotes} 
-                    onChange={e => setPaymentNotes(e.target.value)} 
-                  />
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <Button 
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold" 
-                    onClick={handlePayment}
-                    disabled={!paymentAmount || Number(paymentAmount) <= 0}
-                  >
-                    تأكيد وتسوية
-                  </Button>
-                  <Button variant="secondary" onClick={() => { setShowPaymentModal(null); setPaymentAmount(''); setPaymentNotes(''); }}>إلغاء</Button>
+                  {/* Actions */}
+                  <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                    <Button 
+                      className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-base shadow-xl shadow-indigo-100 rounded-2xl transition-all active:scale-[0.98]" 
+                      onClick={handlePayment}
+                      disabled={!paymentAmount || Number(paymentAmount) <= 0}
+                    >
+                      حفظ السداد
+                    </Button>
+                    <Button 
+                      variant="secondary" 
+                      className="flex-1 py-4 rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-600 font-bold transition-all hover:bg-white hover:text-slate-800"
+                      onClick={() => { setShowPaymentModal(null); setPaymentAmount(''); setPaymentNotes(''); }}
+                    >
+                      إلغاء
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             </div>
           )}
 
           {showSettleModal && (
-            <div key="modal-settle" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-xs">
+            <div key="modal-settle" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
               <motion.div 
-                initial={{ y: '100%', opacity: 0 }} 
-                animate={{ y: 0, opacity: 1 }} 
-                exit={{ y: '100%', opacity: 0 }}
-                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 shadow-xl border border-slate-100 text-right"
+                initial={{ scale: 0.95, opacity: 0, y: 20 }} 
+                animate={{ scale: 1, opacity: 1, y: 0 }} 
+                exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                className="bg-white w-full max-w-lg rounded-t-[2rem] sm:rounded-3xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.3)] border border-slate-100 text-right flex flex-col max-h-[92vh]"
               >
-                <div className="flex items-center gap-2 text-violet-700">
-                  <Database className="w-5 h-5 animate-pulse" />
-                  <h3 className="text-xl font-bold">تسجيل ومطابقة مبيعات الصندوق</h3>
-                </div>
-                
-                <p className="text-xs text-slate-500 leading-relaxed">
-                  تقوم هذه العملية بمطابقة وتصفية المبيعات النقدية في الصندوق. يمكنك تصفية المبلغ بالكامل أو تصفية جزء منه (كالدفع بالنصف أو مبلغ محدد)، ليتم تدوير وحفظ العجز المتبقي تلقائياً للدورة القادمة.
-                </p>
+                {/* Modal Header */}
+                <div className="bg-gradient-to-br from-violet-600 to-indigo-700 p-6 text-white text-center relative overflow-hidden shrink-0">
+                  <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full -mr-20 -mt-20 blur-3xl"></div>
+                  
+                  {/* Close Button */}
+                  <button 
+                    onClick={() => { setShowSettleModal(false); setDeliveredSettleAmount(''); setSettleNotes(''); }}
+                    className="absolute top-4 left-4 z-20 p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all border border-white/10 text-white"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
 
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100/80 text-xs space-y-2.5">
-                  <div className="flex justify-between items-center text-slate-500 font-medium">
-                    <span>مبيعات نقدي مباشر (الدورة):</span>
-                    <span className="font-bold text-slate-700 font-mono">{formatPrice(currentCycleCashSales)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-slate-500 font-medium pb-2 border-b border-slate-200/50">
-                    <span>💳 تسديد ديون مستلمة (كاش):</span>
-                    <span className="font-bold text-slate-705 font-mono text-emerald-600">+{formatPrice(currentCycleDebtPaymentsTotal)}</span>
-                  </div>
-                  <div className="flex justify-between items-center pb-2 border-b border-slate-200/50">
-                    <span className="text-slate-600 font-bold">مجموع كاش الدورة الحالية:</span>
-                    <span className="font-black text-slate-800 font-mono text-sm">{formatPrice(currentCycleCashTotal)}</span>
-                  </div>
-                  {carriedForwardDeficit > 0 && (
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/50 text-red-650">
-                      <span className="text-red-600 font-bold flex items-center gap-1">🚨 عجز/متبقي مرحل من دورة سابقة:</span>
-                      <span className="font-extrabold font-mono text-sm">{formatPrice(carriedForwardDeficit)}</span>
+                  <div className="relative z-10 flex flex-col items-center gap-3">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shadow-inner border border-white/20 rotate-3">
+                      <Database className="w-8 h-8 text-white" />
                     </div>
-                  )}
-                  <div className="flex justify-between items-center pt-1 font-bold text-indigo-700">
-                    <span className="text-sm font-bold">إجمالي المبلغ المطلوب تصفيته (الهدف):</span>
-                    <span className="font-extrabold font-mono text-base">{formatPrice(activeOutstandingCash)}</span>
+                    <div>
+                      <h3 className="text-xl font-black">تصفية نقدية الصندوق</h3>
+                      <p className="text-violet-100 text-[10px] mt-1 opacity-80">مطابقة المبيعات والديون المحصلة</p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-1.5 font-bold">
-                  <label className="text-xs text-slate-600 block">المبلغ الفعلي المستلم (المسلم للتسوية):</label>
-                  <div className="relative">
+                <div className="p-5 sm:p-6 space-y-5 overflow-y-auto custom-scrollbar">
+                  {/* Alert - More Compact */}
+                  <div className="bg-blue-50/70 p-4 rounded-2xl border border-blue-100/50 flex items-start gap-3 shadow-sm">
+                    <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-blue-700 leading-relaxed font-bold">
+                      مطابقة النقدية الفعلية مع المسجل تلقائياً، والترحيل الفوري للعجز.
+                    </p>
+                  </div>
+
+                  {/* Detailed Summary Card */}
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100 space-y-3">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                      <div className="bg-white p-3 rounded-xl border border-slate-200/60 shadow-sm transition-all hover:border-indigo-100">
+                        <span className="text-[9px] text-slate-500 font-black block mb-1">مبيعات نقد</span>
+                        <span className="font-black text-slate-800 font-mono text-xs">{formatPrice(currentCycleCashSales)}</span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200/60 shadow-sm transition-all hover:border-emerald-100">
+                        <span className="text-[9px] text-emerald-600 font-black block mb-1">تحصيل ديون</span>
+                        <span className="font-black text-emerald-700 font-mono text-xs">+{formatPrice(currentCycleDebtPaymentsTotal)}</span>
+                      </div>
+                      <div className="bg-white p-3 rounded-xl border border-slate-200/60 shadow-sm transition-all hover:border-amber-100">
+                        <span className="text-[9px] text-amber-600 font-black block mb-1">مبيعات لم تسدد بعد</span>
+                        <span className="font-black text-amber-700 font-mono text-xs">{formatPrice(currentCycleDebtTotal)}</span>
+                      </div>
+                      <div className={`p-3 rounded-xl border shadow-sm transition-all ${carriedForwardDeficit > 0 ? 'bg-rose-50 border-rose-100' : 'bg-slate-50 border-slate-200/60'}`}>
+                        <span className={`text-[9px] font-black block mb-1 ${carriedForwardDeficit > 0 ? 'text-rose-600' : 'text-slate-400'}`}>عجز سابق</span>
+                        <span className={`font-black font-mono text-xs ${carriedForwardDeficit > 0 ? 'text-rose-700' : 'text-slate-500'}`}>{formatPrice(carriedForwardDeficit)}</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-violet-600 to-indigo-600 p-4 rounded-2xl shadow-lg shadow-indigo-50 flex justify-between items-center text-white">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black opacity-80">المستهدف الكلي للتسوية</span>
+                        <span className="text-xs font-black">صافي الكاش + العجز السابق</span>
+                      </div>
+                      <span className="text-xl font-black font-mono">{formatPrice(activeOutstandingCash)}</span>
+                    </div>
+                  </div>
+
+                  {/* Interaction Section */}
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-black text-slate-600 flex items-center gap-1.5 pr-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-violet-500" />
+                        المبلغ المسلم فعلياً:
+                      </label>
+                      <div className="relative group">
+                        <input 
+                          type="number" 
+                          placeholder="0.00" 
+                          className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl font-mono focus:outline-none focus:ring-4 focus:ring-violet-50 pl-16 text-slate-800 transition-all focus:bg-white focus:border-violet-300 shadow-sm" 
+                          value={deliveredSettleAmount} 
+                          onChange={e => setDeliveredSettleAmount(e.target.value)} 
+                        />
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-violet-600 text-xs bg-violet-50 px-2.5 py-1 rounded-xl">{currency}</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeliveredSettleAmount(String(activeOutstandingCash));
+                          setSettleNotes('مطابقة تامة ومسلمة بالكامل');
+                        }}
+                        className="py-3 bg-violet-600 text-white rounded-xl hover:bg-violet-700 transition-all font-black text-[11px] shadow-lg flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" /> تصفية كاملة
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeliveredSettleAmount(String(Math.ceil(activeOutstandingCash / 2)));
+                          setSettleNotes('تصفية نصف المبلغ المستحق');
+                        }}
+                        className="py-3 bg-white text-slate-700 rounded-xl border-2 border-slate-100 hover:bg-slate-50 transition-all font-black text-[11px] flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> تصفية (٥٠٪)
+                      </button>
+                    </div>
+
+                    {/* Result Analysis - More Compact */}
+                    {(() => {
+                      const deliveredVal = Number(deliveredSettleAmount) || 0;
+                      const diff = deliveredVal - activeOutstandingCash;
+                      return (
+                        <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/50 space-y-3">
+                          <div className={`p-3 rounded-xl ${diff < 0 ? 'bg-rose-50/70 text-rose-700' : diff > 0 ? 'bg-amber-50/70 text-amber-700' : 'bg-emerald-50/70 text-emerald-700'} text-[11px] leading-relaxed font-black text-center`}>
+                             {diff < 0 ? (
+                               <span>🚨 تنبيه: عجز بمقدار <span className="underline">{formatPrice(Math.abs(diff))}</span> سيرحل للدورة القادمة.</span>
+                             ) : diff > 0 ? (
+                               <span>⚠️ تنبيه: تم تسجيل فائض بمقدار <span className="underline">{formatPrice(diff)}</span> عن المطلوب.</span>
+                             ) : (
+                               <span>✅ ممتاز: النقد مطابق تماماً للهدف.</span>
+                             )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     <input 
-                      type="number" 
-                      placeholder="أدخل المبلغ المسلم يدوياً..." 
-                      className="w-full p-3.5 bg-slate-100 rounded-xl font-bold font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 pl-12 text-slate-800 text-left" 
-                      value={deliveredSettleAmount} 
-                      onChange={e => setDeliveredSettleAmount(e.target.value)} 
+                      type="text" 
+                      placeholder="ملاحظات إضافية (اختياري)..." 
+                      className="w-full p-4 bg-slate-50 rounded-2xl text-xs text-slate-600 border-2 border-slate-100 focus:outline-none focus:ring-4 focus:ring-violet-50 transition-all shadow-sm" 
+                      value={settleNotes} 
+                      onChange={e => setSettleNotes(e.target.value)} 
                     />
-                    <span className="absolute left-4 top-3.5 font-bold text-slate-400 text-sm">{currency}</span>
                   </div>
-                </div>
 
-                {/* Quick Actions */}
-                <div className="grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeliveredSettleAmount(String(activeOutstandingCash));
-                      setSettleNotes('مطابقة تامة ومسلمة بالكامل');
-                    }}
-                    className="p-2 bg-violet-50 text-violet-700 hover:bg-violet-100 rounded-xl transition-all text-[11px] font-bold border border-violet-100 cursor-pointer text-center"
-                  >
-                    🤝 تصفير/تصفية كاملة
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeliveredSettleAmount(String(Math.ceil(activeOutstandingCash / 2)));
-                      setSettleNotes('تصفية نصف المبلغ المستحق والتدوير للقرين');
-                    }}
-                    className="p-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl transition-all text-[11px] font-bold border border-indigo-105 cursor-pointer text-center"
-                  >
-                    🌓 تصفية النصف (50%)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeliveredSettleAmount('');
-                      setSettleNotes('');
-                    }}
-                    className="p-2 bg-slate-50 text-slate-600 hover:bg-slate-100 rounded-xl transition-all text-[11px] font-bold border border-slate-200 cursor-pointer text-center"
-                  >
-                    🗑️ مسح القيمة
-                  </button>
-                </div>
-
-                {/* Real-time Status and Warning Boxes (عجز / زيادة / تطابق) */}
-                {deliveredSettleAmount !== '' && (
-                  (() => {
-                    const diff = Number(deliveredSettleAmount) - activeOutstandingCash;
-                    if (diff < 0) {
-                      return (
-                        <div className="bg-red-50 text-red-750 p-3 rounded-2xl text-xs font-semibold space-y-1 border border-red-100">
-                          <div className="flex items-center gap-1.5 font-bold text-red-700 font-bold">
-                            <AlertCircle className="w-4 h-4 text-red-600 animate-bounce animate-pulse" />
-                            <span>عجز/متبقي يرحل للدورة القادمة</span>
-                          </div>
-                          <p>المبلغ المسلم أقل من المطلوب للتسوية. سيتبقى عجز مالي بقيمة: <span className="font-bold underline font-mono">{formatPrice(Math.abs(diff))}</span> يتم تدويره للدورة القادمة.</p>
-                        </div>
-                      );
-                    } else if (diff > 0) {
-                      return (
-                        <div className="bg-amber-50 text-amber-800 p-3 rounded-2xl text-xs font-semibold space-y-1 border border-amber-100">
-                          <div className="flex items-center gap-1.5 font-bold">
-                            <Sparkles className="w-4 h-4 text-amber-600 animate-spin" />
-                            <span>زيادة / فائض مالي في الصندوق!</span>
-                          </div>
-                          <p>المبلغ المسلم أكثر من المطلوب لتسوية الصندوق بمقدار: <span className="font-bold underline font-mono">{formatPrice(diff)}</span></p>
-                        </div>
-                      );
-                    } else {
-                      return (
-                        <div className="bg-emerald-50 text-emerald-800 p-3 rounded-2xl text-xs font-semibold space-y-1 border border-emerald-100">
-                          <div className="flex items-center gap-1.5 text-emerald-700 font-bold">
-                            <CheckCircle2 className="w-4 h-4" />
-                            <span>تطابق وتصفية حسابية تامة بنسبة %100</span>
-                          </div>
-                          <p>المبلغ مطابق تماماً للهدف المستحق للصندوق بدون أي عجز مرحل.</p>
-                        </div>
-                      );
-                    }
-                  })()
-                )}
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-600 block">ملاحظات التصفية (اختياري):</label>
-                  <input 
-                    type="text" 
-                    placeholder="مثل: عجز مقبول، فروقات فكة، المستلم: عبدالله، إلخ..." 
-                    className="w-full p-3 bg-slate-100 rounded-xl text-xs text-slate-700 focus:outline-none" 
-                    value={settleNotes} 
-                    onChange={e => setSettleNotes(e.target.value)} 
-                  />
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  <Button 
-                    className="flex-1 bg-violet-600 hover:bg-violet-700 text-white font-bold" 
-                    onClick={handleSaveSettlement}
-                    disabled={deliveredSettleAmount === '' || Number(deliveredSettleAmount) < 0}
-                  >
-                    💾 حفظ التصفية والتسوية
-                  </Button>
-                  <Button variant="secondary" onClick={() => { setShowSettleModal(false); setDeliveredSettleAmount(''); setSettleNotes(''); }}>إلغاء</Button>
+                  {/* Actions */}
+                  <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                    <Button 
+                      className="flex-[2] py-4 bg-violet-600 hover:bg-violet-700 text-white font-black text-base shadow-xl shadow-violet-50 rounded-2xl transition-all active:scale-[0.98]" 
+                      onClick={handleSaveSettlement}
+                      disabled={deliveredSettleAmount === '' || Number(deliveredSettleAmount) < 0}
+                    >
+                      اعتماد التصفية
+                    </Button>
+                    <Button 
+                      variant="secondary" 
+                      className="flex-1 py-4 rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-600 font-bold transition-all hover:bg-white hover:text-slate-800"
+                      onClick={() => { setShowSettleModal(false); setDeliveredSettleAmount(''); setSettleNotes(''); }}
+                    >
+                      إلغاء
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             </div>
