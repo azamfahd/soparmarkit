@@ -215,6 +215,16 @@ export default function App() {
   const [deliveredSettleAmount, setDeliveredSettleAmount] = useState('');
   const [settleNotes, setSettleNotes] = useState('');
 
+  // States for Drawer Cash Withdrawals / مسحوبات الصندوق (السلفيات والنفقات)
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState('');
+  const [withdrawReason, setWithdrawReason] = useState('');
+  const [withdrawByWhom, setWithdrawByWhom] = useState('أمين الصندوق');
+
+  const allCashWithdrawals = useLiveQuery(() => 
+    db.cashWithdrawals ? db.cashWithdrawals.orderBy('created_at').reverse().toArray() : Promise.resolve([])
+  ) || [];
+
   const lastSettleDate = salesSettlements[0]?.created_at || null;
 
   const currentCycleSales = useLiveQuery(async () => {
@@ -224,6 +234,23 @@ export default function App() {
     }
     return allSales;
   }, [lastSettleDate]) || [];
+
+  const currentCycleWithdrawals = React.useMemo(() => {
+    if (!lastSettleDate) return allCashWithdrawals;
+    return allCashWithdrawals.filter(w => w.created_at > lastSettleDate);
+  }, [allCashWithdrawals, lastSettleDate]);
+
+  const currentCycleWithdrawalsTotal = React.useMemo(() => {
+    return currentCycleWithdrawals.reduce((sum, w) => sum + w.amount, 0);
+  }, [currentCycleWithdrawals]);
+
+  const currentCycleUnpaidWithdrawalsTotal = React.useMemo(() => {
+    return currentCycleWithdrawals.filter(w => !w.is_repaid).reduce((sum, w) => sum + w.amount, 0);
+  }, [currentCycleWithdrawals]);
+
+  const allUnpaidWithdrawalsTotal = React.useMemo(() => {
+    return allCashWithdrawals.filter(w => !w.is_repaid).reduce((sum, w) => sum + w.amount, 0);
+  }, [allCashWithdrawals]);
 
   // 1. Current cycle cash sales (direct cash sales)
   const currentCycleCashSales = React.useMemo(() => {
@@ -681,12 +708,14 @@ export default function App() {
         return;
       }
       const targetToSettle = activeOutstandingCash;
+      const expectedPhysicalValue = Math.max(0, targetToSettle - currentCycleUnpaidWithdrawalsTotal);
       await db.salesSettlements.add({
         total_sales: targetToSettle,
         delivered_amount: delivered,
-        difference: delivered - targetToSettle,
+        difference: delivered - expectedPhysicalValue, // الفارق الفعلي للجرد بالصندوق
         created_at: new Date().toISOString(),
-        notes: settleNotes.trim() || undefined
+        notes: settleNotes.trim() || undefined,
+        cash_withdrawals: currentCycleUnpaidWithdrawalsTotal // تدوين سحبيات العجز/السحبيات الشخصية في الدورة
       });
       showNotification('تم حفظ تصفية المبيعات ومطابقة الصندوق بنجاح!');
       setShowSettleModal(false);
@@ -711,6 +740,80 @@ export default function App() {
         } catch (err) {
           console.error('Failed to delete settlement:', err);
           showNotification('فشل حذف سجل التصفية', 'error');
+        }
+        setConfirmAction(null);
+      }
+    });
+  };
+
+  const handleSaveWithdrawal = async () => {
+    const amount = Number(withdrawAmount);
+    if (!withdrawAmount || isNaN(amount) || amount <= 0) {
+      showNotification('الرجاء إدخال مبلغ سحب صحيح', 'error');
+      return;
+    }
+    if (!withdrawReason.trim()) {
+      showNotification('الرجاء إدخال سبب/بيان السحب', 'error');
+      return;
+    }
+    try {
+      if (!db.cashWithdrawals) {
+        showNotification('قاعدة البيانات غير مهيأة بعد للمسحوبات', 'error');
+        return;
+      }
+      await db.cashWithdrawals.add({
+        amount,
+        by_whom: withdrawByWhom.trim() || 'أمين الصندوق',
+        reason: withdrawReason.trim(),
+        created_at: new Date().toISOString(),
+        is_repaid: false,
+      });
+      showNotification('تم تسجيل مسحوبات الصندوق (السلفة/المنصرف الكاش) بنجاح!');
+      setShowWithdrawModal(false);
+      setWithdrawAmount('');
+      setWithdrawReason('');
+      setWithdrawByWhom('أمين الصندوق');
+    } catch (err) {
+      console.error('Failed to save withdrawal:', err);
+      showNotification('فشل في تسجيل عملية السحب', 'error');
+    }
+  };
+
+  const handleRepayWithdrawal = async (id: number) => {
+    try {
+      if (!db.cashWithdrawals) return;
+      const w = await db.cashWithdrawals.get(id);
+      if (w) {
+        const nextState = !w.is_repaid;
+        await db.cashWithdrawals.update(id, {
+          is_repaid: nextState,
+          repay_date: nextState ? new Date().toISOString() : undefined
+        });
+        showNotification(
+          nextState 
+            ? 'تم تأكيد السداد وإرجاع المبلغ للصندوق بنجاح! تم شطب السلفة.' 
+            : 'تم تراجع السداد، والمبلغ مطلوب سداده مجدداً.'
+        );
+      }
+    } catch (err) {
+      console.error('Failed to update repayment status:', err);
+      showNotification('حدث خطأ أثناء تعديل حالة السداد', 'error');
+    }
+  };
+
+  const handleDeleteWithdrawal = async (id: number) => {
+    setConfirmAction({
+      title: 'حذف سحب نقدي',
+      message: 'هل أنت متأكد من رغبتك في حذف سجل السحب النقدي هذا من الصندوق؟',
+      onConfirm: async () => {
+        try {
+          if (db.cashWithdrawals) {
+            await db.cashWithdrawals.delete(id);
+            showNotification('تم حذف سجل السحب بنجاح');
+          }
+        } catch (err) {
+          console.error('Failed to delete withdrawal:', err);
+          showNotification('فشل حذف سجل السحب', 'error');
         }
         setConfirmAction(null);
       }
@@ -1602,7 +1705,7 @@ export default function App() {
             active={activeTab === 'notes'} 
             onClick={() => { setActiveTab('notes'); setIsSidebarOpen(false); }} 
             icon={<BookOpen />} 
-            label="الملاحظات" 
+            label="تصفية الصندوق والملاحظات" 
           />
           <SidebarButton 
             active={activeTab === 'settings'} 
@@ -1740,7 +1843,7 @@ export default function App() {
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-pink-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-pink-500 transition-colors">
                       <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-pink-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الملاحظات</span>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700 text-center">تصفية الصندوق والملاحظات</span>
                   </motion.button>
 
                   <motion.button 
@@ -2453,7 +2556,114 @@ export default function App() {
               {/* خط فاصل أنيق ومميز */}
               <div className="border-t border-slate-200/80 my-2"></div>
 
-              {/* تصفية مبيعات المتجر ومطابقة الصندوق (أسفل الملاحظات الآن) */}
+              {/* قسم مسحوبات الصندوق (السلفيات ومصروفات الكاش) */}
+              <div className="bg-white rounded-2xl p-4 border border-slate-150/65 shadow-xs space-y-3.5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+                      💸 مسحوبات وسُلفيات الصندوق الكاش (الدورة الحالية)
+                    </h3>
+                    <p className="text-[10px] text-slate-400">
+                      تسجيل أي مبالغ يسحبها ماسك الصندوق/الموظف للتسديد لاحقاً أو كأتعاب قبل إغلاق الفترة
+                    </p>
+                  </div>
+                  <Button 
+                    onClick={() => {
+                      setWithdrawAmount('');
+                      setWithdrawReason('');
+                      setWithdrawByWhom('أمين الصندوق');
+                      setShowWithdrawModal(true);
+                    }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] sm:text-xs py-2 px-3 rounded-xl flex items-center gap-1 cursor-pointer shadow-xs w-full sm:w-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> تسجيل سحب/سلفة جديدة
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex justify-between items-center">
+                    <div>
+                      <span className="text-[9px] text-slate-400 block font-bold">إجمالي المسحوبات (الدورة الحالية)</span>
+                      <span className="text-xs font-black font-mono text-slate-700">{formatPrice(currentCycleWithdrawalsTotal)}</span>
+                    </div>
+                    <span className="text-[9px] bg-slate-200 px-1.5 py-0.5 rounded text-slate-700 font-bold">المسحوبات الكلية</span>
+                  </div>
+                  <div className={`p-2.5 rounded-xl border flex justify-between items-center ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'bg-amber-50/50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
+                    <div>
+                      <span className={`text-[9px] block font-bold ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'text-amber-600' : 'text-slate-400'}`}>المسحوبات غير المسددة (مستحقة للدرج)</span>
+                      <span className={`text-xs font-black font-mono ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'text-amber-800' : 'text-slate-500'}`}>{formatPrice(currentCycleUnpaidWithdrawalsTotal)}</span>
+                    </div>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'bg-amber-100 text-amber-750 font-black' : 'bg-slate-200 text-slate-500'}`}>
+                      {currentCycleUnpaidWithdrawalsTotal > 0 ? 'مستحق السداد للدرج ⚠️' : 'خالٍ من العجز والذمم ✅'}
+                    </span>
+                  </div>
+                </div>
+
+                {currentCycleWithdrawals.length === 0 ? (
+                  <div className="text-center py-4 border border-dashed border-slate-105 rounded-xl text-[10px] text-slate-400 font-medium">
+                    لا توجد أي مسحوبات شخصية أو سلفيات نقدية مسجلة في الدورة الصندوقية الحالية حتى الآن.
+                  </div>
+                ) : (
+                  <div className="border border-slate-100 rounded-xl overflow-hidden shadow-xs relative max-h-[180px] overflow-y-auto custom-scrollbar">
+                    <table className="w-full text-right border-collapse text-[11px]">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100 text-slate-600 font-bold">
+                          <th className="p-2">التاريخ</th>
+                          <th className="p-2">المسؤول/المستلم</th>
+                          <th className="p-2">السبب/البيان</th>
+                          <th className="p-2">المبلغ</th>
+                          <th className="p-2 text-center">حالة السداد</th>
+                          <th className="p-2 text-left">إجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {currentCycleWithdrawals.map((w, idx) => (
+                          <tr key={w.id || idx} className="hover:bg-slate-50/60 transition-colors">
+                            <td className="p-2 text-slate-500 font-mono text-[10px]">
+                              {new Date(w.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}{' '}
+                              {new Date(w.created_at).toLocaleDateString('ar-SA', { month: '2-digit', day: '2-digit' })}
+                            </td>
+                            <td className="p-2 font-bold text-slate-800">{w.by_whom}</td>
+                            <td className="p-2 text-slate-600 max-w-[124px] truncate" title={w.reason}>{w.reason}</td>
+                            <td className="p-2 font-black text-indigo-700 font-mono">{formatPrice(w.amount)}</td>
+                            <td className="p-2 text-center">
+                              <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-black ${
+                                w.is_repaid 
+                                  ? 'bg-emerald-100 text-emerald-800' 
+                                  : 'bg-rose-100 text-rose-800 border border-rose-150'
+                              }`}>
+                                {w.is_repaid ? 'تم السداد 🟢' : 'مطلوب للتسديد 🔴'}
+                              </span>
+                            </td>
+                            <td className="p-2 flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => handleRepayWithdrawal(w.id!)}
+                                className={`p-1 rounded-md transition-all border ${
+                                  w.is_repaid 
+                                    ? 'bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600' 
+                                    : 'bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100'
+                                } cursor-pointer`}
+                                title={w.is_repaid ? "تأشير كغير مسدد" : "تأكيد سداد/إرجاع الكاش للصندوق"}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteWithdrawal(w.id!)}
+                                className="p-1 bg-rose-50 border border-rose-200 text-rose-500 hover:bg-rose-100 rounded-md transition-all cursor-pointer"
+                                title="حذف السحوبة"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* تصفية مبيعات المتجر ومطابقة الصندوق (أسفل الملاحظات والمسحوبات الآن) */}
               <div className="bg-gradient-to-l from-violet-600 to-indigo-600 text-white rounded-3xl p-5 shadow-md space-y-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                   <div className="space-y-1">
@@ -2498,6 +2708,19 @@ export default function App() {
                     <p className="font-bold text-sm sm:text-base font-mono text-amber-200">{formatPrice(currentCycleDebtTotal)}</p>
                   </div>
                 </div>
+
+                {currentCycleUnpaidWithdrawalsTotal > 0 && (
+                  <div className="bg-black/15 border border-white/10 rounded-2xl p-3 text-[10px] sm:text-xs space-y-1 text-white">
+                    <div className="flex justify-between items-center font-bold">
+                      <span className="flex items-center gap-1">💸 مسحوبات معلقة السداد (سلف) بالدورة:</span>
+                      <span className="font-mono text-rose-300 font-extrabold">-{formatPrice(currentCycleUnpaidWithdrawalsTotal)}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-t border-white/10 pt-1.5 font-black text-yellow-200">
+                      <span>السيولة النقدية المتوقع جردها بداخل الصندوق:</span>
+                      <span className="font-mono text-xs sm:text-sm">{formatPrice(Math.max(0, activeOutstandingCash - currentCycleUnpaidWithdrawalsTotal))}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* سجل مطابقات الصندوق والتسويات السابقة */}
@@ -2547,6 +2770,13 @@ export default function App() {
                                 </p>
                               </div>
                             </div>
+
+                            {settlement.cash_withdrawals !== undefined && settlement.cash_withdrawals > 0 && (
+                              <div className="bg-amber-50/70 border border-amber-200/50 text-amber-900 p-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex justify-between items-center shrink-0">
+                                <span className="opacity-90 font-black">💸 مسحوبات الصندوق (سلفيات مقيدة للتسديد):</span>
+                                <span className="font-mono text-xs font-black">{formatPrice(settlement.cash_withdrawals)}</span>
+                              </div>
+                            )}
 
                             {settlement.notes && (
                               <div className="text-xs bg-slate-100/50 text-slate-600 p-2 rounded-xl border border-slate-200/20 italic">
@@ -3376,12 +3606,31 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="bg-gradient-to-r from-violet-600 to-indigo-600 p-4 rounded-2xl shadow-lg shadow-indigo-50 flex justify-between items-center text-white">
-                      <div className="flex flex-col">
-                        <span className="text-[10px] font-black opacity-80">المستهدف الكلي للتسوية</span>
-                        <span className="text-xs font-black">صافي الكاش + العجز السابق</span>
+                    {currentCycleUnpaidWithdrawalsTotal > 0 && (
+                      <div className="bg-amber-50 border border-amber-200/50 p-3 rounded-2xl flex justify-between items-center text-[10px] sm:text-xs text-amber-900 font-bold shrink-0">
+                        <span>💸 مسحوبات وسلفيات الصندوق معلقة السداد:</span>
+                        <span className="font-mono text-xs text-rose-700 font-black">-{formatPrice(currentCycleUnpaidWithdrawalsTotal)}</span>
                       </div>
-                      <span className="text-xl font-black font-mono">{formatPrice(activeOutstandingCash)}</span>
+                    )}
+
+                    <div className="bg-gradient-to-r from-violet-600 to-indigo-600 p-4 rounded-2xl shadow-lg shadow-indigo-50 space-y-2.5 text-white">
+                      <div className="flex justify-between items-center text-xs">
+                        <div className="flex flex-col text-right">
+                          <span className="text-[10px] font-black opacity-85">المستهدف الكلي للتسوية</span>
+                          <span className="text-[9px] font-medium opacity-70">إجمالي السيولة المقيدة</span>
+                        </div>
+                        <span className="text-sm font-bold font-mono">{formatPrice(activeOutstandingCash)}</span>
+                      </div>
+                      
+                      {currentCycleUnpaidWithdrawalsTotal > 0 && (
+                        <div className="flex justify-between items-center border-t border-white/10 pt-2.5">
+                          <div className="flex flex-col text-right">
+                            <span className="text-[10px] font-black opacity-90 text-amber-200">السيولة النقدية المتوقع جردها بالصندوق</span>
+                            <span className="text-[9px] font-medium opacity-75 text-violet-100">المبلغ الفعلي المطلوب تسليمه كاش</span>
+                          </div>
+                          <span className="text-base font-black font-mono text-yellow-200">{formatPrice(Math.max(0, activeOutstandingCash - currentCycleUnpaidWithdrawalsTotal))}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -3408,38 +3657,41 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => {
-                          setDeliveredSettleAmount(String(activeOutstandingCash));
-                          setSettleNotes('مطابقة تامة ومسلمة بالكامل');
+                          const expectedPhysical = Math.max(0, activeOutstandingCash - currentCycleUnpaidWithdrawalsTotal);
+                          setDeliveredSettleAmount(String(expectedPhysical));
+                          setSettleNotes('مطابقة تامة ومسلمة بالكامل حسب الجرد الفعلي');
                         }}
                         className="py-3 bg-violet-600 text-white rounded-xl hover:bg-violet-700 transition-all font-black text-[11px] shadow-lg flex items-center justify-center gap-1.5 active:scale-95"
                       >
-                        <Sparkles className="w-3.5 h-3.5" /> تصفية كاملة
+                        <Sparkles className="w-3.5 h-3.5" /> تصفية كاملة للجرد
                       </button>
                       <button
                         type="button"
                         onClick={() => {
-                          setDeliveredSettleAmount(String(Math.ceil(activeOutstandingCash / 2)));
-                          setSettleNotes('تصفية نصف المبلغ المستحق');
+                          const expectedPhysical = Math.max(0, activeOutstandingCash - currentCycleUnpaidWithdrawalsTotal);
+                          setDeliveredSettleAmount(String(Math.ceil(expectedPhysical / 2)));
+                          setSettleNotes('تصفية نصف مبلغ الجرد المستحق');
                         }}
                         className="py-3 bg-white text-slate-700 rounded-xl border-2 border-slate-100 hover:bg-slate-50 transition-all font-black text-[11px] flex items-center justify-center gap-1.5 active:scale-95"
                       >
-                        <RotateCcw className="w-3.5 h-3.5" /> تصفية (٥٠٪)
+                        <RotateCcw className="w-3.5 h-3.5" /> تصفية نصف المتبقي
                       </button>
                     </div>
 
                     {/* Result Analysis - More Compact */}
                     {(() => {
                       const deliveredVal = Number(deliveredSettleAmount) || 0;
-                      const diff = deliveredVal - activeOutstandingCash;
+                      const expectedPhysical = Math.max(0, activeOutstandingCash - currentCycleUnpaidWithdrawalsTotal);
+                      const diff = deliveredVal - expectedPhysical;
                       return (
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/50 space-y-3">
-                          <div className={`p-3 rounded-xl ${diff < 0 ? 'bg-rose-50/70 text-rose-700' : diff > 0 ? 'bg-amber-50/70 text-amber-700' : 'bg-emerald-50/70 text-emerald-700'} text-[11px] leading-relaxed font-black text-center`}>
+                          <div className={`p-3 rounded-xl ${diff < 0 ? 'bg-rose-50/70 text-rose-700 border border-rose-100' : diff > 0 ? 'bg-amber-50/70 text-amber-700 border border-amber-100' : 'bg-emerald-50/70 text-emerald-700 border border-emerald-100'} text-[11px] leading-relaxed font-bold text-center`}>
                              {diff < 0 ? (
-                               <span>🚨 تنبيه: عجز بمقدار <span className="underline">{formatPrice(Math.abs(diff))}</span> سيرحل للدورة القادمة.</span>
+                               <span>🚨 عجز جرد فعلي (بخلاف المسحوبات): عجز بمقدار <span className="font-extrabold underline">{formatPrice(Math.abs(diff))}</span> سيرحل للدورة القادمة كعجز مالي بالصندوق.</span>
                              ) : diff > 0 ? (
-                               <span>⚠️ تنبيه: تم تسجيل فائض بمقدار <span className="underline">{formatPrice(diff)}</span> عن المطلوب.</span>
+                               <span>⚠️ زيادة بالصندوق: تم رصد زيادة بمقدار <span className="font-extrabold underline">{formatPrice(diff)}</span> عن المطلوب.</span>
                              ) : (
-                               <span>✅ ممتاز: النقد مطابق تماماً للهدف.</span>
+                               <span>✅ ممتاز: النقد مطابق تماماً لجرد الصندوق الفعلي المتوقع! (ولا يزال هناك {formatPrice(currentCycleUnpaidWithdrawalsTotal)} ذمم شخصية منفصلة).</span>
                              )}
                           </div>
                         </div>
@@ -3620,6 +3872,98 @@ export default function App() {
                   >
                     تسجيل دفعة جديدة
                   </Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showWithdrawModal && (
+            <div key="modal-withdraw" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0, y: 20 }} 
+                animate={{ scale: 1, opacity: 1, y: 0 }} 
+                exit={{ scale: 0.95, opacity: 0, y: 20 }}
+                className="bg-white w-full max-w-md rounded-t-[2rem] sm:rounded-3xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.3)] border border-slate-100 text-right flex flex-col max-h-[92vh]"
+              >
+                {/* Modal Header */}
+                <div className="bg-gradient-to-br from-indigo-600 to-indigo-700 p-6 text-white text-center relative overflow-hidden shrink-0">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl"></div>
+                  
+                  {/* Close button inside modal */}
+                  <button 
+                    onClick={() => { setShowWithdrawModal(false); }}
+                    className="absolute top-4 left-4 z-20 p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all border border-white/10 text-white cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+
+                  <div className="relative z-10 flex flex-col items-center gap-3">
+                    <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shadow-inner border border-white/20 rotate-3">
+                      <Briefcase className="w-8 h-8 text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black">تسجيل مسحوبات / سلف نقدية</h3>
+                      <p className="text-indigo-100 text-[10px] mt-1 opacity-80">أوامر الصرف الشخصية والعهد المؤقتة للتسديد</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-5 sm:p-6 space-y-4 overflow-y-auto custom-scrollbar">
+                  <div className="space-y-3">
+                    <div className="space-y-1.5 font-sans">
+                      <label className="text-[11px] font-black text-slate-500 block pr-1">المبلغ المطلوب سحبه (كاش):</label>
+                      <div className="relative group">
+                        <input 
+                          type="number" 
+                          placeholder="0.00" 
+                          className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-lg font-mono focus:outline-none focus:ring-4 focus:ring-indigo-50 pl-16 text-slate-800 text-right transition-all focus:bg-white focus:border-indigo-300 shadow-xs" 
+                          value={withdrawAmount} 
+                          onChange={e => setWithdrawAmount(e.target.value)} 
+                        />
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-indigo-600 text-xs bg-indigo-50 px-2.5 py-1 rounded-xl">{currency}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 font-sans">
+                      <label className="text-[11px] font-black text-slate-500 block pr-1">المستلم / الشخص المسؤول (لسحب الشطب):</label>
+                      <input 
+                        type="text" 
+                        placeholder="مثال: أحمد أمين الصندوق، أو مالك الحساب..." 
+                        className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xs text-slate-800 font-bold focus:outline-none focus:ring-4 focus:ring-indigo-50 transition-all focus:bg-white focus:border-indigo-300 shadow-xs text-right" 
+                        value={withdrawByWhom} 
+                        onChange={e => setWithdrawByWhom(e.target.value)} 
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 font-sans">
+                      <label className="text-[11px] font-black text-slate-500 block pr-1">البيان / سبب السحب الشخصي:</label>
+                      <textarea
+                        rows={2}
+                        placeholder="مثال: سلفة نقدية طارئة، أو تغطية مصروف بضائع عاجل..." 
+                        className="w-full p-3.5 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xs text-slate-800 font-medium focus:outline-none focus:ring-4 focus:ring-indigo-50 transition-all focus:bg-white focus:border-indigo-300 shadow-xs text-right" 
+                        value={withdrawReason} 
+                        onChange={e => setWithdrawReason(e.target.value)} 
+                      />
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex flex-col sm:flex-row gap-2 pt-2 text-right">
+                    <Button 
+                      className="flex-[2] py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm shadow-xl shadow-indigo-50 rounded-2xl transition-all active:scale-[0.98]" 
+                      onClick={handleSaveWithdrawal}
+                      disabled={!withdrawAmount || Number(withdrawAmount) <= 0 || !withdrawReason.trim()}
+                    >
+                      تسجيل وسحب من الصندوق
+                    </Button>
+                    <Button 
+                      variant="secondary" 
+                      className="flex-1 py-3.5 rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-600 font-bold transition-all hover:bg-white hover:text-slate-800"
+                      onClick={() => { setShowWithdrawModal(false); }}
+                    >
+                      إلغاء
+                    </Button>
+                  </div>
                 </div>
               </motion.div>
             </div>

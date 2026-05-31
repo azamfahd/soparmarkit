@@ -83,6 +83,17 @@ export interface SalesSettlement {
   difference: number;
   created_at: string;
   notes?: string;
+  cash_withdrawals?: number; // Added to store withdrawals of the cycle
+}
+
+export interface CashWithdrawal {
+  id?: number;
+  amount: number;
+  by_whom: string;
+  reason: string;
+  created_at: string;
+  is_repaid: boolean; // false if still due to be repaid by cashier, true if repaid
+  repay_date?: string;
 }
 
 export class GroceryDatabase extends Dexie {
@@ -96,6 +107,7 @@ export class GroceryDatabase extends Dexie {
   sync_queue!: Table<SyncQueueItem>;
   notes!: Table<Note>;
   salesSettlements!: Table<SalesSettlement>;
+  cashWithdrawals!: Table<CashWithdrawal>;
 
   constructor() {
     super('GroceryDB');
@@ -141,6 +153,19 @@ export class GroceryDatabase extends Dexie {
       sync_queue: '++id, table, timestamp',
       notes: '++id, created_at, reminder_date, is_completed',
       salesSettlements: '++id, created_at'
+    });
+    this.version(8).stores({
+      products: '++id, name, category, stock_quantity, barcode',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid'
     });
   }
 }
