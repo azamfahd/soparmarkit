@@ -177,7 +177,7 @@ export default function App() {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product'>('pos');
   const [scannedProductInfo, setScannedProductInfo] = useState<Product | null>(null);
-  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '' });
+  const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', initialDebt: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [inventorySearchTerm, setInventorySearchTerm] = useState('');
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
@@ -1427,18 +1427,36 @@ export default function App() {
   };
 
   const handleAddCustomer = async () => {
+    if (!newCustomer.name.trim()) {
+      showNotification('يرجى إدخال اسم الزبون', 'error');
+      return;
+    }
+    
+    const initialDebtVal = parseFloat(newCustomer.initialDebt) || 0;
+    
     const customerData = {
       name: newCustomer.name,
       phone: newCustomer.phone,
-      balance: 0
+      balance: initialDebtVal
     };
     
     try {
       // Add to local DB
       const customerId = await db.customers.add(customerData);
       
+      // If there is an initial debt, record it in debts log table
+      if (initialDebtVal > 0) {
+        await db.debts.add({
+          customer_id: customerId as number,
+          amount: initialDebtVal,
+          type: 'purchase',
+          created_at: new Date().toISOString(),
+          notes: 'رصيد دين سابق عند إضافة وإدخال الزبون لأول مرة'
+        });
+      }
+      
       setShowAddCustomer(false);
-      setNewCustomer({ name: '', phone: '' });
+      setNewCustomer({ name: '', phone: '', initialDebt: '' });
       setSelectedCustomer(customerId as number);
       // Re-trigger cart preview if it was closed
       setIsCartExpanded(true);
@@ -1840,7 +1858,7 @@ export default function App() {
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-indigo-500 transition-colors">
                       <Users className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الزبائن</span>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الزبائن والديون</span>
                   </motion.button>
 
                   <motion.button 
@@ -1873,7 +1891,7 @@ export default function App() {
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-indigo-700 transition-colors animate-pulse">
                       <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                     </div>
-                    <span className="font-extrabold text-[10px] sm:text-[11px] text-indigo-700">ذكاء المبيعات BI</span>
+                    <span className="font-extrabold text-[10px] sm:text-[11px] text-indigo-700">تحليل المبيعات البصري BI</span>
                   </motion.button>
 
                   <motion.button 
@@ -3471,11 +3489,32 @@ export default function App() {
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
               >
-                <h3 className="text-xl font-bold">إضافة زبون جديد</h3>
-                <input placeholder="اسم الزبون" className="w-full p-3 bg-slate-100 rounded-xl" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} />
-                <input placeholder="رقم الهاتف" className="w-full p-3 bg-slate-100 rounded-xl" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />
+                <h3 className="text-xl font-bold text-slate-800">إضافة زبون جديد</h3>
+                
+                <div className="space-y-1 text-right">
+                  <label className="text-xs text-slate-500 font-bold block pr-1">اسم الزبون :</label>
+                  <input placeholder="اسم الزبون الكامل" className="w-full p-3 bg-slate-100 rounded-xl" value={newCustomer.name} onChange={e => setNewCustomer({...newCustomer, name: e.target.value})} />
+                </div>
+                
+                <div className="space-y-1 text-right">
+                  <label className="text-xs text-slate-500 font-bold block pr-1">رقم الهاتف :</label>
+                  <input placeholder="رقم الهاتف (اختياري)" className="w-full p-3 bg-slate-100 rounded-xl" value={newCustomer.phone} onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})} />
+                </div>
+
+                <div className="space-y-1 text-right">
+                  <label className="text-xs text-slate-500 font-bold block pr-1">الدين السابق المستحق (إن وجد) :</label>
+                  <input 
+                    placeholder="رصيد دين سابق متبقي على الزبون" 
+                    type="number" 
+                    className="w-full p-3 bg-slate-100 rounded-xl" 
+                    value={newCustomer.initialDebt} 
+                    onChange={e => setNewCustomer({...newCustomer, initialDebt: e.target.value})} 
+                  />
+                  <p className="text-[10px] text-slate-400 block pr-1">استخدم هذا الحقل لتسجيل المبالغ والديون القديمة والمستحقة على الزبون قبل بدء استخدامه للبرنامج.</p>
+                </div>
+
                 <div className="flex gap-2 pt-4">
-                  <Button className="flex-1" onClick={handleAddCustomer}>حفظ</Button>
+                  <Button className="flex-1" onClick={handleAddCustomer}>حفظ البيانات</Button>
                   <Button variant="secondary" onClick={() => setShowAddCustomer(false)}>إلغاء</Button>
                 </div>
               </motion.div>
