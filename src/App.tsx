@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import BarcodeScanner from './components/BarcodeScanner';
+import SmartAnalytics from './components/SmartAnalytics';
 import { Scan, QrCode } from 'lucide-react';
 import { 
   LayoutDashboard, 
@@ -40,6 +41,7 @@ import {
   Menu,
   X,
   PieChart,
+  BarChart3,
   Camera,
   Home,
   BookOpen,
@@ -1690,6 +1692,12 @@ export default function App() {
             label="سجل المبيعات" 
           />
           <SidebarButton 
+            active={activeTab === 'analytics'} 
+            onClick={() => { setActiveTab('analytics'); setIsSidebarOpen(false); }} 
+            icon={<BarChart3 />} 
+            label="التحليل البصري الذكي Power BI" 
+          />
+          <SidebarButton 
             active={activeTab === 'products'} 
             onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
             icon={<Package />} 
@@ -1786,7 +1794,7 @@ export default function App() {
             >
               <div className="space-y-3">
                 <h2 className="text-lg font-bold text-slate-800">الوصول السريع</h2>
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-3 w-full">
+                <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-8 gap-3 w-full">
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('pos')} 
@@ -1843,7 +1851,7 @@ export default function App() {
                     <div className="w-8 h-8 sm:w-10 sm:h-10 bg-pink-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-pink-500 transition-colors">
                       <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-pink-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700 text-center">تصفية الصندوق والملاحظات</span>
+                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700 text-center">الصندوق</span>
                   </motion.button>
 
                   <motion.button 
@@ -1855,6 +1863,17 @@ export default function App() {
                       <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600 group-hover:text-white transition-colors" />
                     </div>
                     <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">التقارير</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('analytics')} 
+                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-indigo-50 border border-indigo-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-indigo-300 hover:bg-indigo-100/50 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-indigo-700 transition-colors animate-pulse">
+                      <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                    </div>
+                    <span className="font-extrabold text-[10px] sm:text-[11px] text-indigo-700">ذكاء المبيعات BI</span>
                   </motion.button>
 
                   <motion.button 
@@ -2445,40 +2464,40 @@ export default function App() {
                 {customers
                   .filter(c => c.name.includes(customerSearchTerm))
                   .map((c, idx) => (
-                  <Card 
-                    key={`customer-card-${c.id ?? 'no-id'}-${idx}`} 
-                    className="flex justify-between items-center cursor-pointer active:bg-slate-50"
-                    onClick={() => fetchCustomerHistory(c)}
-                  >
-                    <div>
-                      <p className="font-bold">{c.name}</p>
-                      <p className="text-sm text-slate-500">{c.phone}</p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-left">
-                        <p className="text-xs text-slate-400">الرصيد المستحق</p>
-                        <p className={`font-bold ${c.balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                          {formatPrice(c.balance)}
-                        </p>
+                    <Card 
+                      key={`customer-card-${c.id ?? 'no-id'}-${idx}`} 
+                      className="flex justify-between items-center cursor-pointer active:bg-slate-50 p-4 border border-slate-100 bg-white hover:border-slate-200 transition-all shadow-xs"
+                      onClick={() => fetchCustomerHistory(c)}
+                    >
+                      <div className="text-right">
+                        <p className="font-bold text-slate-800">{c.name}</p>
+                        <p className="text-sm text-slate-500">{c.phone}</p>
                       </div>
-                      <div className="flex gap-2">
-                        {c.balance > 0 && (
+                      <div className="flex items-center gap-4">
+                        <div className="text-left">
+                          <p className="text-xs text-slate-400">الرصيد المستحق</p>
+                          <p className={`font-bold ${c.balance > 0 ? 'text-red-650' : 'text-emerald-650'}`}>
+                            {formatPrice(c.balance)}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          {c.balance > 0 && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); setShowPaymentModal(c); }}
+                              className="bg-emerald-100 text-emerald-800 font-bold text-xs px-3 py-1.5 rounded-lg cursor-pointer hover:bg-emerald-200 transition-colors"
+                            >
+                              تسديد
+                            </button>
+                          )}
                           <button 
-                            onClick={(e) => { e.stopPropagation(); setShowPaymentModal(c); }}
-                            className="bg-emerald-100 text-emerald-600 p-2 rounded-lg"
+                            onClick={(e) => { e.stopPropagation(); if (confirm('حذف الزبون؟')) handleDeleteCustomer(c.id!); }}
+                            className="text-red-405 hover:text-red-600 p-2 cursor-pointer transition-colors"
                           >
-                            تسديد
+                            <Trash2 className="w-4 h-4" />
                           </button>
-                        )}
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id); }}
-                          className="text-red-400 p-2 hover:text-red-600"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        </div>
                       </div>
-                    </div>
-                  </Card>
+                    </Card>
                 ))}
               </div>
             </motion.div>
@@ -2522,7 +2541,7 @@ export default function App() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                     {notes.map(note => (
-                      <Card key={note.id} className="relative overflow-hidden group hover:border-emerald-200 hover:shadow-md transition-all border border-slate-100/80 bg-white">
+                      <Card key={note.id} className="relative overflow-hidden group hover:border-emerald-200 hover:shadow-md transition-all border border-slate-100/80 bg-white p-4">
                         <div className="flex justify-between items-start mb-2">
                           <h3 className={`font-bold text-base pr-1 ${note.is_completed ? 'line-through text-slate-400' : 'text-slate-800'}`}>{note.title}</h3>
                           <div className="flex gap-1 shrink-0">
@@ -2535,7 +2554,7 @@ export default function App() {
                           </div>
                         </div>
                         
-                        <div className="mb-4 text-slate-600 text-xs whitespace-pre-wrap min-h-[50px] line-clamp-4 leading-relaxed">
+                        <div className="mb-4 text-slate-600 text-xs whitespace-pre-wrap min-h-[50px] line-clamp-4 leading-relaxed text-right">
                           {note.content}
                         </div>
                         
@@ -2580,85 +2599,116 @@ export default function App() {
                   </Button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-right">
                   <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex justify-between items-center">
                     <div>
                       <span className="text-[9px] text-slate-400 block font-bold">إجمالي المسحوبات (الدورة الحالية)</span>
                       <span className="text-xs font-black font-mono text-slate-700">{formatPrice(currentCycleWithdrawalsTotal)}</span>
                     </div>
-                    <span className="text-[9px] bg-slate-200 px-1.5 py-0.5 rounded text-slate-700 font-bold">المسحوبات الكلية</span>
+                    <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-black">المسحوبات الكلية</span>
                   </div>
                   <div className={`p-2.5 rounded-xl border flex justify-between items-center ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'bg-amber-50/50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
                     <div>
                       <span className={`text-[9px] block font-bold ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'text-amber-600' : 'text-slate-400'}`}>المسحوبات غير المسددة (مستحقة للدرج)</span>
                       <span className={`text-xs font-black font-mono ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'text-amber-800' : 'text-slate-500'}`}>{formatPrice(currentCycleUnpaidWithdrawalsTotal)}</span>
                     </div>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'bg-amber-100 text-amber-750 font-black' : 'bg-slate-200 text-slate-500'}`}>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${currentCycleUnpaidWithdrawalsTotal > 0 ? 'bg-amber-100 text-amber-750 font-black animate-pulse' : 'bg-slate-200 text-slate-500'}`}>
                       {currentCycleUnpaidWithdrawalsTotal > 0 ? 'مستحق السداد للدرج ⚠️' : 'خالٍ من العجز والذمم ✅'}
                     </span>
                   </div>
                 </div>
 
                 {currentCycleWithdrawals.length === 0 ? (
-                  <div className="text-center py-4 border border-dashed border-slate-105 rounded-xl text-[10px] text-slate-400 font-medium">
+                  <div className="text-center py-6 border border-dashed border-slate-100 rounded-2xl text-[11px] text-slate-400 font-medium bg-slate-50/10">
                     لا توجد أي مسحوبات شخصية أو سلفيات نقدية مسجلة في الدورة الصندوقية الحالية حتى الآن.
                   </div>
                 ) : (
-                  <div className="border border-slate-100 rounded-xl overflow-hidden shadow-xs relative max-h-[180px] overflow-y-auto custom-scrollbar">
-                    <table className="w-full text-right border-collapse text-[11px]">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-100 text-slate-600 font-bold">
-                          <th className="p-2">التاريخ</th>
-                          <th className="p-2">المسؤول/المستلم</th>
-                          <th className="p-2">السبب/البيان</th>
-                          <th className="p-2">المبلغ</th>
-                          <th className="p-2 text-center">حالة السداد</th>
-                          <th className="p-2 text-left">إجراءات</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {currentCycleWithdrawals.map((w, idx) => (
-                          <tr key={w.id || idx} className="hover:bg-slate-50/60 transition-colors">
-                            <td className="p-2 text-slate-500 font-mono text-[10px]">
-                              {new Date(w.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}{' '}
-                              {new Date(w.created_at).toLocaleDateString('ar-SA', { month: '2-digit', day: '2-digit' })}
-                            </td>
-                            <td className="p-2 font-bold text-slate-800">{w.by_whom}</td>
-                            <td className="p-2 text-slate-600 max-w-[124px] truncate" title={w.reason}>{w.reason}</td>
-                            <td className="p-2 font-black text-indigo-700 font-mono">{formatPrice(w.amount)}</td>
-                            <td className="p-2 text-center">
-                              <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-black ${
-                                w.is_repaid 
-                                  ? 'bg-emerald-100 text-emerald-800' 
-                                  : 'bg-rose-100 text-rose-800 border border-rose-150'
-                              }`}>
-                                {w.is_repaid ? 'تم السداد 🟢' : 'مطلوب للتسديد 🔴'}
-                              </span>
-                            </td>
-                            <td className="p-2 flex items-center justify-end gap-1">
-                              <button
-                                onClick={() => handleRepayWithdrawal(w.id!)}
-                                className={`p-1 rounded-md transition-all border ${
-                                  w.is_repaid 
-                                    ? 'bg-slate-50 border-slate-200 text-slate-400 hover:text-slate-600' 
-                                    : 'bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100'
-                                } cursor-pointer`}
-                                title={w.is_repaid ? "تأشير كغير مسدد" : "تأكيد سداد/إرجاع الكاش للصندوق"}
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteWithdrawal(w.id!)}
-                                className="p-1 bg-rose-50 border border-rose-200 text-rose-500 hover:bg-rose-100 rounded-md transition-all cursor-pointer"
-                                title="حذف السحوبة"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
+                  <div className="border border-slate-150/50 rounded-2xl overflow-hidden shadow-xs bg-white">
+                    <div className="overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-right border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
+                            <th className="p-3.5 text-center">تاريخ وساعة السحب</th>
+                            <th className="p-3.5">المستلم / المسؤول</th>
+                            <th className="p-3.5">السبب والبيان التوضيحي</th>
+                            <th className="p-3.5">المبلغ المسحوب</th>
+                            <th className="p-3.5 text-center">حالة السداد للدرج</th>
+                            <th className="p-3.5 text-left">إجراءات</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-150/60">
+                          {currentCycleWithdrawals.map((w, idx) => {
+                            const dateObj = new Date(w.created_at);
+                            const timeStr = dateObj.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
+                            const dateStr = dateObj.toLocaleDateString('ar-SA', { month: '2-digit', day: '2-digit' });
+                            
+                            return (
+                              <tr 
+                                key={w.id || idx} 
+                                className={`transition-all ${
+                                  w.is_repaid 
+                                    ? 'bg-slate-50/40 text-slate-500 hover:bg-slate-50' 
+                                    : 'bg-white hover:bg-rose-50/[0.04]'
+                                }`}
+                              >
+                                <td className="p-3.5 text-center font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                                  {timeStr} | {dateStr}
+                                </td>
+                                <td className="p-3.5 font-bold text-slate-800 whitespace-nowrap">
+                                  {w.by_whom}
+                                </td>
+                                <td className="p-3.5 text-slate-650 max-w-[200px] break-words">
+                                  <div>
+                                    <p className="font-semibold text-slate-700">{w.reason}</p>
+                                    {w.is_repaid && w.repay_date && (
+                                      <p className="text-[10px] text-emerald-600 font-bold mt-1">
+                                        ✓ تم الإرجاع: {new Date(w.repay_date).toLocaleString('ar-SA', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                      </p>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="p-3.5 font-black text-indigo-600 font-mono text-[13px] whitespace-nowrap">
+                                  {formatPrice(w.amount)}
+                                </td>
+                                <td className="p-3.5 text-center whitespace-nowrap">
+                                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black ${
+                                    w.is_repaid 
+                                      ? 'bg-emerald-50 text-emerald-700' 
+                                      : 'bg-rose-50 text-rose-700 border border-rose-100'
+                                  }`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${w.is_repaid ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`}></span>
+                                    {w.is_repaid ? 'تم السداد والصحة' : 'مطلوب للتسديد فوراً'}
+                                  </span>
+                                </td>
+                                <td className="p-3.5">
+                                  <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                                    <button
+                                      onClick={() => handleRepayWithdrawal(w.id!)}
+                                      className={`p-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-all ${
+                                        w.is_repaid 
+                                          ? 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-slate-200 hover:text-slate-700' 
+                                          : 'bg-emerald-50 border-emerald-250 text-emerald-700 hover:bg-emerald-100'
+                                      }`}
+                                      title={w.is_repaid ? "تأشير كغير مسدد" : "تأكيد سداد وإرجاع الكاش للصندوق"}
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      <span>{w.is_repaid ? "تراجع" : "تأكيد إرجاع"}</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteWithdrawal(w.id!)}
+                                      className="p-1.5 bg-rose-50 border border-rose-200 text-rose-500 hover:bg-rose-100 rounded-lg transition-all cursor-pointer"
+                                      title="حذف المسحوبة"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2984,6 +3034,13 @@ export default function App() {
                 </Card>
               </div>
             </motion.div>
+          )}
+          {activeTab === 'analytics' && (
+            <SmartAnalytics 
+              currency={currency} 
+              formatPrice={formatPrice} 
+              onGoBack={() => setActiveTab('dashboard')} 
+            />
           )}
           {activeTab === 'history' && (
             <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
