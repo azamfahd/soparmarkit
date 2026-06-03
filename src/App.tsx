@@ -187,6 +187,21 @@ export default function App() {
   const [showCustomerDetails, setShowCustomerDetails] = useState<Customer | null>(null);
   const [showProductDetails, setShowProductDetails] = useState<Product | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [addProfitPercent, setAddProfitPercent] = useState<string>('');
+  const [editProfitPercent, setEditProfitPercent] = useState<string>('');
+
+  useEffect(() => {
+    if (editingProduct) {
+      if (editingProduct.cost_price > 0 && editingProduct.sale_price >= 0) {
+        const pct = Math.round(((editingProduct.sale_price - editingProduct.cost_price) / editingProduct.cost_price) * 100);
+        setEditProfitPercent(pct.toString());
+      } else {
+        setEditProfitPercent('');
+      }
+    } else {
+      setEditProfitPercent('');
+    }
+  }, [editingProduct?.id]);
   const [customerHistory, setCustomerHistory] = useState<{ sales: any[], debts: any[] }>({ sales: [], debts: [] });
   const [productHistory, setProductHistory] = useState<any[]>([]);
   const [dailySales, setDailySales] = useState<any[]>([]);
@@ -675,12 +690,23 @@ export default function App() {
         });
       });
       
-      const isCleared = updatedCustomer && updatedCustomer.balance <= 0;
-      showNotification(
-        isCleared 
-          ? 'تم تصفية رصيد العميل بالكامل وتسوية الدين بنجاح!' 
-          : 'تم تسجيل الدفعة وتحديث الرصيد المستحق بنجاح'
-      );
+      const oldBalance = showPaymentModal.balance;
+      const isCleared = updatedCustomer && oldBalance > 0 && updatedCustomer.balance === 0;
+      const isCreditIncreased = updatedCustomer && updatedCustomer.balance < 0;
+
+      let notifMsg = 'تم تسجيل العملية وتحديث حساب الزبون بنجاح';
+      if (isCleared) {
+        notifMsg = 'تم تصفية رصيد الزبون بالكامل وتسوية الدين بنجاح!';
+      } else if (isCreditIncreased) {
+        if (oldBalance <= 0) {
+          notifMsg = `تم إيداع الدفعة المقدمة بنجاح! الرصيد المتوفر حالياً للزبون: ${formatPrice(Math.abs(updatedCustomer.balance))}`;
+        } else {
+          notifMsg = `تم سداد كامل الدين وتسجيل رصيد إضافي مقدّم بقيمة: ${formatPrice(Math.abs(updatedCustomer.balance))}`;
+        }
+      } else {
+        notifMsg = `تم استلام الدفعة بنجاح! المتبقي المستحق على الزبون: ${formatPrice(updatedCustomer?.balance || 0)}`;
+      }
+      showNotification(notifMsg, 'success');
       
       if (updatedCustomer) {
         if (showCustomerDetails && showCustomerDetails.id === updatedCustomer.id) {
@@ -880,6 +906,113 @@ export default function App() {
     });
   };
 
+  const handleAddCostChange = (costStr: string) => {
+    const cost = parseFloat(costStr) || 0;
+    let saleStr = newProduct.sale;
+    let computedPercent = addProfitPercent;
+
+    if (cost > 0 && addProfitPercent !== '') {
+      const pct = parseFloat(addProfitPercent) || 0;
+      const computedSale = cost * (1 + pct / 100);
+      saleStr = Number(computedSale.toFixed(2)).toString();
+    } else if (cost > 0 && newProduct.sale !== '') {
+      const sale = parseFloat(newProduct.sale) || 0;
+      computedPercent = Math.round(((sale - cost) / cost) * 100).toString();
+    }
+
+    setAddProfitPercent(computedPercent);
+    setNewProduct(prev => ({ ...prev, cost: costStr, sale: saleStr }));
+  };
+
+  const handleAddProfitPercentChange = (pctStr: string) => {
+    setAddProfitPercent(pctStr);
+    const pct = parseFloat(pctStr) || 0;
+    const cost = parseFloat(newProduct.cost) || 0;
+    const sale = parseFloat(newProduct.sale) || 0;
+
+    if (cost > 0) {
+      if (pctStr !== '') {
+        const computedSale = cost * (1 + pct / 100);
+        setNewProduct(prev => ({ ...prev, sale: Number(computedSale.toFixed(2)).toString() }));
+      } else {
+        setNewProduct(prev => ({ ...prev, sale: '' }));
+      }
+    } else if (sale > 0 && pctStr !== '') {
+      const computedCost = sale / (1 + pct / 100);
+      setNewProduct(prev => ({ ...prev, cost: Number(computedCost.toFixed(2)).toString() }));
+    }
+  };
+
+  const handleAddSaleChange = (saleStr: string) => {
+    const sale = parseFloat(saleStr) || 0;
+    const cost = parseFloat(newProduct.cost) || 0;
+    const pct = parseFloat(addProfitPercent) || 0;
+
+    if (cost > 0 && saleStr !== '') {
+      const computedPct = Math.round(((sale - cost) / cost) * 100);
+      setAddProfitPercent(computedPct.toString());
+    } else if (addProfitPercent !== '' && saleStr !== '') {
+      const computedCost = sale / (1 + pct / 100);
+      setNewProduct(prev => ({ ...prev, cost: Number(computedCost.toFixed(2)).toString() }));
+    }
+    setNewProduct(prev => ({ ...prev, sale: saleStr }));
+  };
+
+  const handleEditCostChange = (costPriceNum: number) => {
+    if (!editingProduct) return;
+    const cost = costPriceNum;
+    let computedSalePrice = editingProduct.sale_price;
+    let computedPercent = editProfitPercent;
+
+    if (cost > 0 && editProfitPercent !== '') {
+      const pct = parseFloat(editProfitPercent) || 0;
+      const computedSale = cost * (1 + pct / 100);
+      computedSalePrice = Number(computedSale.toFixed(2));
+    } else if (cost > 0 && editingProduct.sale_price > 0) {
+      computedPercent = Math.round(((editingProduct.sale_price - cost) / cost) * 100).toString();
+    }
+
+    setEditProfitPercent(computedPercent);
+    setEditingProduct(prev => prev ? { ...prev, cost_price: cost, sale_price: computedSalePrice } : null);
+  };
+
+  const handleEditProfitPercentChange = (pctStr: string) => {
+    setEditProfitPercent(pctStr);
+    if (!editingProduct) return;
+    const pct = parseFloat(pctStr) || 0;
+    let cost = editingProduct.cost_price;
+    let salePrice = editingProduct.sale_price;
+
+    if (cost > 0) {
+      if (pctStr !== '') {
+        salePrice = Number((cost * (1 + pct / 100)).toFixed(2));
+      } else {
+        salePrice = 0;
+      }
+      setEditingProduct(prev => prev ? { ...prev, sale_price: salePrice } : null);
+    } else if (salePrice > 0 && pctStr !== '') {
+      cost = Number((salePrice / (1 + pct / 100)).toFixed(2));
+      setEditingProduct(prev => prev ? { ...prev, cost_price: cost } : null);
+    }
+  };
+
+  const handleEditSaleChange = (salePriceNum: number) => {
+    if (!editingProduct) return;
+    const sale = salePriceNum;
+    let cost = editingProduct.cost_price;
+    let pctStr = editProfitPercent;
+
+    if (cost > 0 && sale > 0) {
+      pctStr = Math.round(((sale - cost) / cost) * 100).toString();
+    } else if (editProfitPercent !== '' && sale > 0) {
+      const pct = parseFloat(editProfitPercent) || 0;
+      cost = Number((sale / (1 + pct / 100)).toFixed(2));
+    }
+
+    setEditProfitPercent(pctStr);
+    setEditingProduct(prev => prev ? { ...prev, cost_price: cost, sale_price: sale } : null);
+  };
+
   const handleAddProduct = async () => {
     const stock = Number(newProduct.stock);
     const productData = {
@@ -909,6 +1042,7 @@ export default function App() {
     }
 
     setShowAddProduct(false);
+    setAddProfitPercent('');
     setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '' });
   };
 
@@ -2304,7 +2438,32 @@ export default function App() {
                             </button>
                           </div>
                         </div>
-                        <div className="space-y-1">
+
+                        {(() => {
+                          const activeCustomerInfo = customers.find(c => c.id === selectedCustomer);
+                          if (!activeCustomerInfo) return null;
+                          return (
+                            <div className={`col-span-2 p-3 rounded-xl border flex justify-between items-center text-xs ${
+                              activeCustomerInfo.balance > 0 
+                                ? 'bg-red-50 border-red-100 text-red-800' 
+                                : activeCustomerInfo.balance < 0 
+                                  ? 'bg-emerald-50 border-emerald-100 text-emerald-800 font-extrabold animate-pulse' 
+                                  : 'bg-slate-50 border-slate-100 text-slate-500'
+                            }`}>
+                              <span className="font-bold">حالة حساب هذا الزبون:</span>
+                              <span className="font-black font-mono">
+                                {activeCustomerInfo.balance > 0 
+                                  ? `شراء بالدين (عليه متبقي): ${formatPrice(activeCustomerInfo.balance)}` 
+                                  : activeCustomerInfo.balance < 0 
+                                    ? `لديه رصيد مقدّم متوفر: ${formatPrice(Math.abs(activeCustomerInfo.balance))}` 
+                                    : 'حسابه مسوّى وخالص تماماً'
+                                }
+                              </span>
+                            </div>
+                          );
+                        })()}
+
+                        <div className="space-y-1 col-span-2">
                           <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">ملاحظة للطلب (اختياري)</label>
                           <textarea 
                             value={saleNotes}
@@ -2493,23 +2652,27 @@ export default function App() {
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="text-left">
-                          <p className="text-xs text-slate-400">الرصيد المستحق</p>
-                          <p className={`font-bold ${c.balance > 0 ? 'text-red-650' : 'text-emerald-650'}`}>
-                            {formatPrice(c.balance)}
+                          <p className="text-[10px] text-slate-400 font-bold">
+                            {c.balance > 0 ? 'الرصيد المستحق (دين)' : c.balance < 0 ? 'رصيد دائن (دفعة مقدمة)' : 'الرصيد خالص'}
+                          </p>
+                          <p className={`font-bold text-sm ${c.balance > 0 ? 'text-red-500' : c.balance < 0 ? 'text-emerald-600 font-black' : 'text-slate-500'}`}>
+                            {c.balance < 0 ? formatPrice(Math.abs(c.balance)) : formatPrice(c.balance)}
                           </p>
                         </div>
                         <div className="flex gap-2">
-                          {c.balance > 0 && (
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); setShowPaymentModal(c); }}
-                              className="bg-emerald-100 text-emerald-800 font-bold text-xs px-3 py-1.5 rounded-lg cursor-pointer hover:bg-emerald-200 transition-colors"
-                            >
-                              تسديد
-                            </button>
-                          )}
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); setShowPaymentModal(c); }}
+                            className={`font-semibold text-xs px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                              c.balance > 0 
+                                ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' 
+                                : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                            }`}
+                          >
+                            {c.balance > 0 ? 'سداد متبقي' : 'إيداع مقدم'}
+                          </button>
                           <button 
                             onClick={(e) => { e.stopPropagation(); if (confirm('حذف الزبون؟')) handleDeleteCustomer(c.id!); }}
-                            className="text-red-405 hover:text-red-600 p-2 cursor-pointer transition-colors"
+                            className="text-red-400 hover:text-red-600 p-2 cursor-pointer transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -3263,9 +3426,37 @@ export default function App() {
                     <span>مسح</span>
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="number" placeholder="سعر التكلفة" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.cost} onChange={e => setNewProduct({...newProduct, cost: e.target.value})} />
-                  <input type="number" placeholder="سعر البيع" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.sale} onChange={e => setNewProduct({...newProduct, sale: e.target.value})} />
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">سعر التكلفة</label>
+                    <input 
+                      type="number" 
+                      placeholder="التكلفة" 
+                      className="w-full p-2.5 bg-slate-100 rounded-xl text-center text-sm font-semibold" 
+                      value={newProduct.cost} 
+                      onChange={e => handleAddCostChange(e.target.value)} 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">نسبة الربح %</label>
+                    <input 
+                      type="number" 
+                      placeholder="%" 
+                      className="w-full p-2.5 bg-indigo-50 text-indigo-700 placeholder-indigo-300 rounded-xl text-center text-sm font-bold border border-indigo-100 focus:outline-none focus:ring-1 focus:ring-indigo-400" 
+                      value={addProfitPercent} 
+                      onChange={e => handleAddProfitPercentChange(e.target.value)} 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">سعر البيع</label>
+                    <input 
+                      type="number" 
+                      placeholder="البيع" 
+                      className="w-full p-2.5 bg-emerald-50 text-emerald-700 placeholder-emerald-300 rounded-xl text-center text-sm font-bold border border-emerald-100 focus:outline-none focus:ring-1 focus:ring-emerald-400" 
+                      value={newProduct.sale} 
+                      onChange={e => handleAddSaleChange(e.target.value)} 
+                    />
+                  </div>
                 </div>
                 <input type="number" placeholder="الكمية المتوفرة" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} />
                 <input 
@@ -3427,9 +3618,37 @@ export default function App() {
                     <span>مسح</span>
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="number" placeholder="سعر التكلفة" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.cost_price} onChange={e => setEditingProduct({...editingProduct, cost_price: Number(e.target.value)})} />
-                  <input type="number" placeholder="سعر البيع" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.sale_price} onChange={e => setEditingProduct({...editingProduct, sale_price: Number(e.target.value)})} />
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">سعر التكلفة</label>
+                    <input 
+                      type="number" 
+                      placeholder="التكلفة" 
+                      className="w-full p-2.5 bg-slate-100 rounded-xl text-center text-sm font-semibold" 
+                      value={editingProduct.cost_price === 0 ? '' : editingProduct.cost_price} 
+                      onChange={e => handleEditCostChange(Number(e.target.value))} 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">نسبة الربح %</label>
+                    <input 
+                      type="number" 
+                      placeholder="%" 
+                      className="w-full p-2.5 bg-indigo-50 text-indigo-700 placeholder-indigo-300 rounded-xl text-center text-sm font-bold border border-indigo-100 focus:outline-none focus:ring-1 focus:ring-indigo-400" 
+                      value={editProfitPercent} 
+                      onChange={e => handleEditProfitPercentChange(e.target.value)} 
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">سعر البيع</label>
+                    <input 
+                      type="number" 
+                      placeholder="البيع" 
+                      className="w-full p-2.5 bg-emerald-50 text-emerald-700 placeholder-emerald-300 rounded-xl text-center text-sm font-bold border border-emerald-100 focus:outline-none focus:ring-1 focus:ring-emerald-400" 
+                      value={editingProduct.sale_price === 0 ? '' : editingProduct.sale_price} 
+                      onChange={e => handleEditSaleChange(Number(e.target.value))} 
+                    />
+                  </div>
                 </div>
                 <input type="number" placeholder="الكمية المتوفرة" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.stock_quantity} onChange={e => setEditingProduct({...editingProduct, stock_quantity: Number(e.target.value)})} />
                 <input 
@@ -3536,7 +3755,7 @@ export default function App() {
                   {/* Close Button */}
                   <button 
                     onClick={() => { setShowPaymentModal(null); setPaymentAmount(''); setPaymentNotes(''); }}
-                    className="absolute top-4 left-4 z-20 p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all border border-white/10 text-white"
+                    className="absolute top-4 left-4 z-20 p-2 bg-white/10 hover:bg-white/20 rounded-xl transition-all border border-white/10 text-white cursor-pointer"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -3546,8 +3765,12 @@ export default function App() {
                       <ShieldCheck className="w-8 h-8 text-white" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-black">تسوية مديونية زبون</h3>
-                      <p className="text-indigo-100 text-[10px] mt-1 opacity-80">تحصيل المبالغ وتحديث الأرصدة</p>
+                      <h3 className="text-xl font-black">
+                        {showPaymentModal.balance > 0 ? 'تسوية مديونية زبون' : 'إيداع دفعة مقدمة (شحن رصيد)'}
+                      </h3>
+                      <p className="text-indigo-100 text-[10px] mt-1 opacity-80">
+                        {showPaymentModal.balance > 0 ? 'تحصيل المبالغ وتحديث الأرصدة' : 'شحن رصيد الزبون لاستعماله في مشترياته اللاحقة'}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -3559,24 +3782,35 @@ export default function App() {
                       <p className="text-[10px] text-slate-500 font-bold mb-1 uppercase tracking-tight">الزبون</p>
                       <p className="text-slate-800 font-black text-sm truncate">{showPaymentModal.name}</p>
                     </div>
-                    <div className="flex-1 bg-red-50 p-3.5 rounded-2xl border border-red-100">
-                      <p className="text-[10px] text-red-600 font-bold mb-1 uppercase tracking-tight">الرصيد المستحق</p>
-                      <p className="text-red-700 font-black text-sm font-mono leading-tight">{formatPrice(showPaymentModal.balance)}</p>
-                    </div>
+                    {showPaymentModal.balance > 0 ? (
+                      <div className="flex-1 bg-red-50 p-3.5 rounded-2xl border border-red-100">
+                        <p className="text-[10px] text-red-600 font-bold mb-1 uppercase tracking-tight">الرصيد المستحق (دين)</p>
+                        <p className="text-red-700 font-black text-sm font-mono leading-tight">{formatPrice(showPaymentModal.balance)}</p>
+                      </div>
+                    ) : (
+                      <div className="flex-1 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-100">
+                        <p className="text-[10px] text-emerald-600 font-bold mb-1 uppercase tracking-tight">
+                          {showPaymentModal.balance < 0 ? 'رصيد دائن حالي (مقدّم)' : 'رصيد الحساب الحالي'}
+                        </p>
+                        <p className="text-emerald-700 font-black text-sm font-mono leading-tight">
+                          {showPaymentModal.balance < 0 ? formatPrice(Math.abs(showPaymentModal.balance)) : '0 ر.س'}
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {/* Payment Input Area */}
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-black text-slate-600 flex items-center gap-2 pr-1">
+                      <label className="text-xs font-black text-slate-600 flex items-center gap-2 pr-1 flex-row-reverse justify-end">
                         <TrendingUp className="w-3.5 h-3.5 text-indigo-500" />
-                        المبلغ المسدد الآن:
+                        <span>{showPaymentModal.balance > 0 ? 'المبلغ المسدد الآن:' : 'مبلغ الإيداع المقدم الآن:'}</span>
                       </label>
                       <div className="relative group">
                         <input 
                           type="number" 
                           placeholder="0.00" 
-                          className="w-full p-4 bg-slate-50 rounded-2xl font-black text-xl font-mono focus:outline-none focus:ring-4 focus:ring-indigo-50 pl-16 text-slate-800 border-2 border-slate-100 transition-all focus:bg-white focus:border-indigo-300 shadow-sm" 
+                          className="w-full p-4 bg-slate-50 rounded-2xl font-black text-xl font-mono focus:outline-none focus:ring-4 focus:ring-indigo-50 pl-16 text-slate-800 border-2 border-slate-100 transition-all focus:bg-white focus:border-indigo-300 shadow-sm text-center" 
                           value={paymentAmount} 
                           onChange={e => setPaymentAmount(e.target.value)} 
                           autoFocus
@@ -3585,28 +3819,63 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPaymentAmount(String(showPaymentModal.balance));
-                          setPaymentNotes('تصفير كامل الحساب وتصفية المديونية');
-                        }}
-                        className="py-3 px-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl transition-all font-bold text-[12px] shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-95"
-                      >
-                        <Sparkles className="w-3.5 h-3.5" /> تصفير كامل
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPaymentAmount(String(Math.ceil(showPaymentModal.balance / 2)));
-                          setPaymentNotes('سداد نصف الرصيد المتبقي');
-                        }}
-                        className="py-3 px-3 bg-white text-slate-700 hover:bg-slate-50 rounded-xl transition-all font-bold text-[12px] border-2 border-slate-100 flex items-center justify-center gap-2 active:scale-95"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" /> سداد (٥٠٪)
-                      </button>
-                    </div>
+                    {showPaymentModal.balance > 0 ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentAmount(String(showPaymentModal.balance));
+                            setPaymentNotes('تصفير كامل الحساب وتصفية المديونية');
+                          }}
+                          className="py-3 px-3 bg-indigo-600 text-white hover:bg-indigo-700 rounded-xl transition-all font-bold text-[12px] shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" /> تصفير كامل
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentAmount(String(Math.ceil(showPaymentModal.balance / 2)));
+                            setPaymentNotes('سداد نصف الرصيد المتبقي');
+                          }}
+                          className="py-3 px-3 bg-white text-slate-700 hover:bg-slate-50 rounded-xl transition-all font-bold text-[12px] border-2 border-slate-100 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> سداد (٥٠٪)
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentAmount('50');
+                            setPaymentNotes('إيداع سلفة / دفعة مقدّمة بقيمة 50');
+                          }}
+                          className="py-3 px-2 bg-emerald-50 text-emerald-750 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-150 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                        >
+                          +50 {currency}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentAmount('100');
+                            setPaymentNotes('إيداع سلفة / دفعة مقدّمة بقيمة 100');
+                          }}
+                          className="py-3 px-2 bg-emerald-50 text-emerald-750 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-150 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                        >
+                          +100 {currency}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentAmount('200');
+                            setPaymentNotes('إيداع سلفة / دفعة مقدّمة بقيمة 200');
+                          }}
+                          className="py-3 px-2 bg-emerald-50 text-emerald-750 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-150 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                        >
+                          +200 {currency}
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -3622,15 +3891,15 @@ export default function App() {
                   {/* Actions */}
                   <div className="flex flex-col sm:flex-row gap-2 pt-2">
                     <Button 
-                      className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-base shadow-xl shadow-indigo-100 rounded-2xl transition-all active:scale-[0.98]" 
+                      className="flex-[2] py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-base shadow-xl shadow-indigo-100 rounded-2xl transition-all active:scale-[0.98] cursor-pointer" 
                       onClick={handlePayment}
                       disabled={!paymentAmount || Number(paymentAmount) <= 0}
                     >
-                      حفظ السداد
+                      {showPaymentModal.balance > 0 ? 'حفظ السداد وتحديث الحساب' : 'تأكيد شحن الحساب المقدم'}
                     </Button>
                     <Button 
                       variant="secondary" 
-                      className="flex-1 py-4 rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-600 font-bold transition-all hover:bg-white hover:text-slate-800"
+                      className="flex-1 py-4 rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-600 font-bold transition-all hover:bg-white hover:text-slate-800 cursor-pointer"
                       onClick={() => { setShowPaymentModal(null); setPaymentAmount(''); setPaymentNotes(''); }}
                     >
                       إلغاء
@@ -3863,10 +4132,22 @@ export default function App() {
                       <p className="text-[10px] text-emerald-600 font-bold uppercase mb-1">تم تسديده</p>
                       <p className="text-lg font-bold text-emerald-900">{formatPrice(customerStats.totalPaid)}</p>
                     </div>
-                    <div className="bg-red-50 p-3 rounded-2xl border border-red-100">
-                      <p className="text-[10px] text-red-600 font-bold uppercase mb-1">المتبقي (دين)</p>
-                      <p className="text-lg font-bold text-red-900">{formatPrice(showCustomerDetails.balance)}</p>
-                    </div>
+                    {showCustomerDetails.balance > 0 ? (
+                      <div className="bg-red-50 p-3 rounded-2xl border border-red-100">
+                        <p className="text-[10px] text-red-600 font-bold uppercase mb-1">المتبقي (دين)</p>
+                        <p className="text-lg font-bold text-red-900">{formatPrice(showCustomerDetails.balance)}</p>
+                      </div>
+                    ) : showCustomerDetails.balance < 0 ? (
+                      <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-150">
+                        <p className="text-[10px] text-emerald-700 font-bold uppercase mb-1">الرصيد الدائن (مقدم)</p>
+                        <p className="text-lg font-bold text-emerald-800">{formatPrice(Math.abs(showCustomerDetails.balance))}</p>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-100/60 p-3 rounded-2xl border border-slate-200">
+                        <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">رصيد الزبون</p>
+                        <p className="text-md sm:text-lg font-black text-slate-600 mt-1">خالص تماماً</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -3960,13 +4241,13 @@ export default function App() {
                 <div className="p-4 bg-white border-t border-slate-100">
                   <Button 
                     variant="primary" 
-                    className="w-full py-4 rounded-2xl shadow-lg shadow-emerald-100"
+                    className="w-full py-4 rounded-2xl shadow-lg shadow-emerald-100 cursor-pointer"
                     onClick={() => {
                       setShowCustomerDetails(null);
                       setShowPaymentModal(showCustomerDetails);
                     }}
                   >
-                    تسجيل دفعة جديدة
+                    {showCustomerDetails.balance > 0 ? 'تسجيل سداد دفعة مديونية' : 'إيداع دفعة مقدمة في الرصيد'}
                   </Button>
                 </div>
               </motion.div>
