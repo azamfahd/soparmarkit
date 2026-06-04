@@ -9,6 +9,22 @@ export interface Product {
   category: string;
   barcode?: string;
   unit?: string;
+  supplier_id?: number;
+}
+
+export interface Supplier {
+  id?: number;
+  name: string;
+  phone: string;
+  balance: number;
+}
+
+export interface SupplierPayment {
+  id?: number;
+  supplier_id: number;
+  amount: number;
+  payment_date: string;
+  notes?: string;
 }
 
 export interface Customer {
@@ -108,6 +124,8 @@ export class GroceryDatabase extends Dexie {
   notes!: Table<Note>;
   salesSettlements!: Table<SalesSettlement>;
   cashWithdrawals!: Table<CashWithdrawal>;
+  suppliers!: Table<Supplier>;
+  supplierPayments!: Table<SupplierPayment>;
 
   constructor() {
     super('GroceryDB');
@@ -166,6 +184,21 @@ export class GroceryDatabase extends Dexie {
       notes: '++id, created_at, reminder_date, is_completed',
       salesSettlements: '++id, created_at',
       cashWithdrawals: '++id, created_at, is_repaid'
+    });
+    this.version(9).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date'
     });
   }
 }

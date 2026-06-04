@@ -57,30 +57,15 @@ import {
   ResponsiveContainer,
   CartesianGrid
 } from 'recharts';
-import { db, seedDatabase } from './db';
+import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 // --- Types ---
-interface Product {
-  id?: number;
-  name: string;
-  cost_price: number;
-  sale_price: number;
-  stock_quantity: number;
-  category: string;
-  barcode?: string;
-  unit?: string;
-}
-
-interface Customer {
-  id?: number;
-  name: string;
-  phone: string;
-  balance: number;
-}
+// (Local type definitions removed as they conflict with db.ts imports)
 
 interface Summary {
   totalSales: number;
+  totalCostOfSales: number;
   totalDebts: number;
   lowStock: number;
   totalProfit: number;
@@ -88,16 +73,6 @@ interface Summary {
   monthlySales: number;
   todaySales: number;
   weeklySales: number;
-}
-
-interface Sale {
-  id?: number;
-  customer_id?: number | null;
-  customer_name?: string | null;
-  total_amount: number;
-  payment_type: 'cash' | 'debt';
-  created_at: string;
-  items?: string;
 }
 
 // --- Components ---
@@ -132,6 +107,7 @@ export default function App() {
   // Local DB Queries using Dexie
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
+  const suppliers = useLiveQuery(() => db.suppliers.toArray()) || [];
   const sales = useLiveQuery(() => db.sales.orderBy('created_at').reverse().limit(50).toArray()) || [];
   
   const enrichedSales = React.useMemo(() => {
@@ -142,7 +118,7 @@ export default function App() {
     }));
   }, [sales, customers]);
 
-  const [summary, setSummary] = useState<Summary>({ totalSales: 0, totalDebts: 0, lowStock: 0, totalProfit: 0, totalInventoryCost: 0, monthlySales: 0, todaySales: 0, weeklySales: 0 });
+  const [summary, setSummary] = useState<Summary>({ totalSales: 0, totalCostOfSales: 0, totalDebts: 0, lowStock: 0, totalProfit: 0, totalInventoryCost: 0, monthlySales: 0, todaySales: 0, weeklySales: 0 });
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [historyFilter, setHistoryFilter] = useState<'all' | 'cash' | 'debt'>('all');
   const [expandedSaleId, setExpandedSaleId] = useState<number | null>(null);
@@ -173,7 +149,7 @@ export default function App() {
   const [saleNotes, setSaleNotes] = useState('');
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
-  const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '' });
+  const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined as number | undefined });
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product'>('pos');
   const [scannedProductInfo, setScannedProductInfo] = useState<Product | null>(null);
@@ -186,6 +162,13 @@ export default function App() {
   const [showPaymentModal, setShowPaymentModal] = useState<Customer | null>(null);
   const [showCustomerDetails, setShowCustomerDetails] = useState<Customer | null>(null);
   const [showProductDetails, setShowProductDetails] = useState<Product | null>(null);
+  const [showAddSupplier, setShowAddSupplier] = useState(false);
+  const [newSupplier, setNewSupplier] = useState({ name: '', phone: '', initialBalance: '' });
+  const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
+  const [showSupplierDetails, setShowSupplierDetails] = useState<Supplier | null>(null);
+  const [showSupplierPaymentModal, setShowSupplierPaymentModal] = useState<Supplier | null>(null);
+  const [supplierPaymentAmount, setSupplierPaymentAmount] = useState('');
+  const [supplierPaymentNotes, setSupplierPaymentNotes] = useState('');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [addProfitPercent, setAddProfitPercent] = useState<string>('');
   const [editProfitPercent, setEditProfitPercent] = useState<string>('');
@@ -547,8 +530,11 @@ export default function App() {
       return sum;
     }, 0);
 
+    const totalSupplierBalances = (await db.suppliers.toArray()).reduce((sum, s) => sum + (s.balance || 0), 0);
+
     setSummary({
       totalSales,
+      totalCostOfSales: totalSupplierBalances,
       totalDebts,
       lowStock: lowStockCount,
       totalProfit,
@@ -556,6 +542,28 @@ export default function App() {
       monthlySales,
       todaySales,
       weeklySales
+    });
+  };
+
+  const handleDeleteSupplier = async (id: number) => {
+    setConfirmAction({
+      title: 'حذف مورد',
+      message: 'هل أنت متأكد من حذف هذا المورد؟ سيتم مسح بيانات المورد وسجل مدفوعاته، ولكن المنتجات المرتبطة به ستبقى في النظام بدون مورد.',
+      onConfirm: async () => {
+        try {
+          await db.transaction('rw', [db.suppliers, db.supplierPayments, db.products], async () => {
+            await db.supplierPayments.where('supplier_id').equals(id).delete();
+            await db.suppliers.delete(id);
+            // Optional: Unlink products from this supplier
+            await db.products.where('supplier_id').equals(id).modify({ supplier_id: undefined });
+          });
+          setShowSupplierDetails(null);
+          showNotification('تم حذف المورد بنجاح');
+        } catch (err) {
+          console.error("Failed to delete supplier:", err);
+          showNotification('خطأ في حذف المورد', 'error');
+        }
+      }
     });
   };
 
@@ -1015,14 +1023,15 @@ export default function App() {
 
   const handleAddProduct = async () => {
     const stock = Number(newProduct.stock);
-    const productData = {
+    const productData: any = {
       name: newProduct.name,
       cost_price: Number(newProduct.cost),
       sale_price: Number(newProduct.sale),
       stock_quantity: stock,
       category: newProduct.category,
       barcode: newProduct.barcode.trim() || undefined,
-      unit: newProduct.unit.trim() || undefined
+      unit: newProduct.unit.trim() || undefined,
+      supplier_id: newProduct.supplier_id
     };
 
     try {
@@ -1043,7 +1052,7 @@ export default function App() {
 
     setShowAddProduct(false);
     setAddProfitPercent('');
-    setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '' });
+    setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined });
   };
 
   const handleEditProduct = async () => {
@@ -1119,7 +1128,7 @@ export default function App() {
       onConfirm: async () => {
         try {
           // Update local DB
-          await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts], async () => {
+          await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts, db.suppliers], async () => {
             const sale = await db.sales.get(id);
             if (!sale) return;
 
@@ -1136,6 +1145,16 @@ export default function App() {
                   reason: 'refund',
                   created_at: new Date().toISOString()
                 });
+
+                // Reverse supplier balance change if product has a supplier
+                if (product.supplier_id) {
+                  const supplier = await db.suppliers.get(product.supplier_id);
+                  if (supplier) {
+                    await db.suppliers.update(product.supplier_id, {
+                      balance: supplier.balance - (product.cost_price * item.quantity)
+                    });
+                  }
+                }
               }
             }
 
@@ -1199,6 +1218,8 @@ export default function App() {
     const data = {
       products: await db.products.toArray(),
       customers: await db.customers.toArray(),
+      suppliers: await db.suppliers.toArray(),
+      supplierPayments: await db.supplierPayments.toArray(),
       sales: await db.sales.toArray(),
       saleItems: await db.saleItems.toArray(),
       debts: await db.debts.toArray(),
@@ -1233,9 +1254,11 @@ export default function App() {
     reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        await db.transaction('rw', [db.products, db.customers, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
+        await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
           await db.products.clear();
           await db.customers.clear();
+          await db.suppliers.clear();
+          await db.supplierPayments.clear();
           await db.sales.clear();
           await db.saleItems.clear();
           await db.debts.clear();
@@ -1245,6 +1268,8 @@ export default function App() {
 
           if (data.products) await db.products.bulkAdd(data.products);
           if (data.customers) await db.customers.bulkAdd(data.customers);
+          if (data.suppliers) await db.suppliers.bulkAdd(data.suppliers);
+          if (data.supplierPayments) await db.supplierPayments.bulkAdd(data.supplierPayments);
           if (data.sales) await db.sales.bulkAdd(data.sales);
           if (data.saleItems) await db.saleItems.bulkAdd(data.saleItems);
           if (data.debts) await db.debts.bulkAdd(data.debts);
@@ -1267,6 +1292,8 @@ export default function App() {
       const data = {
         products,
         customers,
+        suppliers,
+        supplierPayments: await db.supplierPayments.toArray(),
         sales,
         saleItems: await db.saleItems.toArray(),
         debts: await db.debts.toArray(),
@@ -1298,9 +1325,11 @@ export default function App() {
       title: 'إعادة ضبط البرنامج',
       message: 'هل أنت متأكد من مسح جميع البيانات؟ لا يمكن التراجع عن هذه الخطوة وسيتم حذف كل المنتجات والزبائن والمبيعات.',
       onConfirm: async () => {
-        await db.transaction('rw', [db.products, db.customers, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
+        await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
           await db.products.clear();
           await db.customers.clear();
+          await db.suppliers.clear();
+          await db.supplierPayments.clear();
           await db.sales.clear();
           await db.saleItems.clear();
           await db.debts.clear();
@@ -1560,6 +1589,66 @@ export default function App() {
     printWindow.document.close();
   };
 
+  const [supplierHistory, setSupplierHistory] = useState<{ payments: any[], products: any[] }>({ payments: [], products: [] });
+
+  const fetchSupplierHistory = async (supplier: any) => {
+    const payments = await db.supplierPayments.where('supplier_id').equals(supplier.id).toArray();
+    const prods = await db.products.where('supplier_id').equals(supplier.id).toArray();
+    setSupplierHistory({ payments, products: prods });
+    setShowSupplierDetails(supplier);
+  };
+
+  const handleAddSupplier = async () => {
+    if (!newSupplier.name) {
+      showNotification('يرجى إدخال اسم المورد', 'error');
+      return;
+    }
+    try {
+      await db.suppliers.add({
+        name: newSupplier.name,
+        phone: newSupplier.phone,
+        balance: Number(newSupplier.initialBalance) || 0
+      });
+      setShowAddSupplier(false);
+      setNewSupplier({ name: '', phone: '', initialBalance: '' });
+      showNotification('تم إضافة المورد بنجاح');
+    } catch (err) {
+      console.error("Failed to add supplier:", err);
+      showNotification('خطأ في إضافة المورد', 'error');
+    }
+  };
+
+  const handleSupplierPayment = async () => {
+    if (!showSupplierPaymentModal || !supplierPaymentAmount) return;
+    const amount = Number(supplierPaymentAmount);
+    
+    try {
+      await db.transaction('rw', [db.suppliers, db.supplierPayments], async () => {
+        await db.supplierPayments.add({
+          supplier_id: showSupplierPaymentModal.id!,
+          amount,
+          payment_date: new Date().toISOString(),
+          notes: supplierPaymentNotes
+        });
+        
+        await db.suppliers.update(showSupplierPaymentModal.id!, {
+          balance: showSupplierPaymentModal.balance - amount
+        });
+      });
+      
+      showNotification('تم تسجيل الدفعة بنجاح');
+      setShowSupplierPaymentModal(null);
+      setSupplierPaymentAmount('');
+      setSupplierPaymentNotes('');
+      if (showSupplierDetails && showSupplierDetails.id === showSupplierPaymentModal.id) {
+        fetchSupplierHistory(showSupplierPaymentModal);
+      }
+    } catch (err) {
+      console.error("Failed to record supplier payment:", err);
+      showNotification('خطأ في تسجيل الدفعة', 'error');
+    }
+  };
+
   const handleAddCustomer = async () => {
     if (!newCustomer.name.trim()) {
       showNotification('يرجى إدخال اسم الزبون', 'error');
@@ -1653,7 +1742,7 @@ export default function App() {
           message: `لم يتم العثور على الباركود (${code}) في المخزون. هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
           onConfirm: () => {
             setConfirmAction(null);
-            setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '' });
+            setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined });
             setShowAddProduct(true);
           }
         });
@@ -1714,7 +1803,7 @@ export default function App() {
     };
 
     try {
-      await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts], async () => {
+      await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts, db.suppliers], async () => {
         const saleId = await db.sales.add({
           customer_id: selectedCustomer,
           total_amount: total,
@@ -1742,6 +1831,16 @@ export default function App() {
               reason: 'sale',
               created_at: new Date().toISOString()
             });
+
+            // Update supplier balance if product has a supplier
+            if (product.supplier_id) {
+              const supplier = await db.suppliers.get(product.supplier_id);
+              if (supplier) {
+                await db.suppliers.update(product.supplier_id, {
+                  balance: supplier.balance + (product.cost_price * item.quantity)
+                });
+              }
+            }
           }
         }
 
@@ -1862,6 +1961,12 @@ export default function App() {
             label="الزبائن والديون" 
           />
           <SidebarButton 
+            active={activeTab === 'suppliers'} 
+            onClick={() => { setActiveTab('suppliers'); setIsSidebarOpen(false); }} 
+            icon={<Briefcase />} 
+            label="الموردين والتسويات" 
+          />
+          <SidebarButton 
             active={activeTab === 'notes'} 
             onClick={() => { setActiveTab('notes'); setIsSidebarOpen(false); }} 
             icon={<BookOpen />} 
@@ -1946,16 +2051,16 @@ export default function App() {
             >
               <div className="space-y-3">
                 <h2 className="text-lg font-bold text-slate-800">الوصول السريع</h2>
-                <div className="grid grid-cols-4 sm:grid-cols-4 md:grid-cols-8 gap-3 w-full">
+                <div className="grid grid-cols-5 sm:grid-cols-5 md:grid-cols-9 gap-2 w-full">
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('pos')} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-emerald-200 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-emerald-200 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
-                      <ShoppingCart className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-emerald-50 rounded-lg flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
+                      <ShoppingCart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">بيع جديد</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">بيع جديد</span>
                   </motion.button>
 
                   <motion.button 
@@ -1965,78 +2070,89 @@ export default function App() {
                       setScannerMode('pos');
                       setIsScannerOpen(true);
                     }} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-violet-200 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-violet-200 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-violet-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-violet-500 transition-colors">
-                      <Scan className="w-4 h-4 sm:w-5 sm:h-5 text-violet-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-violet-50 rounded-lg flex items-center justify-center group-hover:bg-violet-500 transition-colors">
+                      <Scan className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-violet-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الماسح الضوئي</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">الماسح</span>
                   </motion.button>
                   
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('products')} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-blue-200 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-blue-200 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-blue-500 transition-colors">
-                      <Package className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-50 rounded-lg flex items-center justify-center group-hover:bg-blue-500 transition-colors">
+                      <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">المخزون</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">المخزون</span>
                   </motion.button>
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('customers')} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-indigo-200 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-indigo-200 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-indigo-500 transition-colors">
-                      <Users className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-indigo-50 rounded-lg flex items-center justify-center group-hover:bg-indigo-500 transition-colors">
+                      <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">الزبائن والديون</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700 text-center">الزبائن</span>
                   </motion.button>
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('notes')} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-pink-200 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-pink-200 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-pink-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-pink-500 transition-colors">
-                      <BookOpen className="w-4 h-4 sm:w-5 sm:h-5 text-pink-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-pink-50 rounded-lg flex items-center justify-center group-hover:bg-pink-500 transition-colors">
+                      <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-pink-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700 text-center">الصندوق</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700 text-center">الصندوق</span>
                   </motion.button>
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('history')} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-slate-300 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-slate-300 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-slate-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-slate-800 transition-colors">
-                      <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-slate-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-50 rounded-lg flex items-center justify-center group-hover:bg-slate-800 transition-colors">
+                      <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">التقارير</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">التقارير</span>
                   </motion.button>
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('analytics')} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-indigo-50 border border-indigo-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-indigo-300 hover:bg-indigo-100/50 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-indigo-50 border border-indigo-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-indigo-300 hover:bg-indigo-100/50 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-indigo-700 transition-colors animate-pulse">
-                      <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-700 transition-colors">
+                      <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
                     </div>
-                    <span className="font-extrabold text-[10px] sm:text-[11px] text-indigo-700">تحليل المبيعات البصري BI</span>
+                    <span className="font-extrabold text-[9px] sm:text-[10px] text-indigo-700 text-center">التحليل</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('suppliers')} 
+                    className="p-1.5 sm:p-2 rounded-xl bg-amber-50 border border-amber-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-amber-300 hover:bg-amber-100/50 hover:shadow-md transition-all group"
+                  >
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-amber-500 rounded-lg flex items-center justify-center group-hover:bg-amber-600 transition-colors">
+                      <Briefcase className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+                    </div>
+                    <span className="font-extrabold text-[9px] sm:text-[10px] text-amber-700 text-center">الموردين</span>
                   </motion.button>
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={exportData} 
-                    className="p-2 sm:p-3 rounded-xl sm:rounded-2xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-2 hover:border-amber-200 hover:shadow-md transition-all group"
+                    className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-amber-200 hover:shadow-md transition-all group"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-amber-50 rounded-lg sm:rounded-xl flex items-center justify-center group-hover:bg-amber-500 transition-colors">
-                      <Download className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 group-hover:text-white transition-colors" />
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-amber-50 rounded-lg flex items-center justify-center group-hover:bg-amber-500 transition-colors">
+                      <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 group-hover:text-white transition-colors" />
                     </div>
-                    <span className="font-bold text-[10px] sm:text-[11px] text-slate-700">احتياطية</span>
+                    <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">احتياطية</span>
                   </motion.button>
                 </div>
               </div>
@@ -2085,6 +2201,15 @@ export default function App() {
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">تكلفة المخزون</p>
                   <p className="text-lg font-bold text-slate-800">{formatPrice(summary.totalInventoryCost)}</p>
+                </motion.div>
+
+                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-amber-50 border border-amber-100 shadow-sm">
+                  <div className="flex justify-between items-start mb-1">
+                    <Briefcase className="w-4 h-4 text-amber-600" />
+                    <span className="text-[9px] font-bold bg-amber-100/50 text-amber-700 px-1.5 py-0.5 rounded-md">تسوية</span>
+                  </div>
+                  <p className="text-[10px] text-amber-600/70 mt-1">مستحق المورد (بالتكلفة)</p>
+                  <p className="text-lg font-bold text-amber-900">{formatPrice(summary.totalCostOfSales)}</p>
                 </motion.div>
 
                 <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-red-50 border border-red-100 shadow-sm cursor-pointer hover:bg-red-100 transition-colors" onClick={() => setActiveTab('customers')}>
@@ -3037,6 +3162,84 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'suppliers' && (
+            <motion.div 
+              key="suppliers"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="space-y-4"
+            >
+              <div className="flex justify-between items-center mb-4">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
+                    <Home className="w-6 h-6" />
+                  </button>
+                  <h2 className="text-xl font-extrabold text-slate-800 tracking-tight text-right">إدارة الموردين والشركات</h2>
+                </div>
+                <Button variant="outline" className="flex items-center gap-2 rounded-2xl" onClick={() => setShowAddSupplier(true)}>
+                  <Plus className="w-4 h-4" /> إضافة مورد جديد
+                </Button>
+              </div>
+
+              <div className="bg-amber-100/30 border border-amber-100 p-3 rounded-2xl mb-4">
+                 <p className="text-[10px] text-amber-700 font-bold leading-relaxed">
+                   💡 هنا يمكنك تصفية حسابات الموردين بالتكلفة. عند بيع أي منتج مرتبط بمورد، يتم إضافة "سعر التكلفة" تلقائياً لرصيد المورد المستحق.
+                 </p>
+              </div>
+
+              <div className="relative mb-4">
+                <Search className="absolute right-3 top-3.5 text-slate-400 w-5 h-5" />
+                <input 
+                  type="text" 
+                  placeholder="ابحث عن مورد بالاسم..." 
+                  className="w-full p-3.5 pr-11 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 outline-none shadow-sm transition-all text-right"
+                  value={supplierSearchTerm}
+                  onChange={(e) => setSupplierSearchTerm(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                {suppliers
+                  .filter(s => s.name.includes(supplierSearchTerm))
+                  .map((s, idx) => (
+                  <Card 
+                    key={`supplier-card-list-${s.id ?? 'no-id'}-${idx}`} 
+                    className="hover:border-amber-200 transition-all cursor-pointer p-0 overflow-hidden bg-white border border-slate-100/60 shadow-xs" 
+                    onClick={() => fetchSupplierHistory(s)}
+                  >
+                    <div className="p-4 flex justify-between items-center">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-[1.25rem] flex items-center justify-center font-black text-xl shadow-xs border border-amber-100/50">
+                          {s.name.charAt(0)}
+                        </div>
+                        <div className="text-right">
+                          <p className="font-extrabold text-slate-800">{s.name}</p>
+                          <p className="text-[11px] text-slate-400 font-bold">{s.phone || 'لم يسجل رقم هاتف'}</p>
+                        </div>
+                      </div>
+                      <div className="text-left bg-slate-50/70 backdrop-blur-sm px-4 py-2 rounded-2xl border border-slate-100/60 transition-colors hover:bg-slate-100/70">
+                        <p className="text-[8px] text-slate-400 font-extrabold uppercase tracking-widest mb-0.5">المستحق للمورد (بالتكلفة)</p>
+                        <p className={`font-mono font-black text-sm ${s.balance > 0 ? 'text-amber-800' : 'text-emerald-700'}`}>
+                          {formatPrice(s.balance)}
+                        </p>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+                
+                {suppliers.filter(s => s.name.includes(supplierSearchTerm)).length === 0 && (
+                  <div className="text-center py-20">
+                    <div className="bg-slate-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Users className="w-8 h-8 text-slate-300" />
+                    </div>
+                    <p className="text-slate-400 font-bold">لم يتم العثور على موردين.</p>
+                    <Button variant="outline" className="mt-4" onClick={() => setShowAddSupplier(true)}>أضف موردك الأول الآن</Button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
               <div className="flex justify-between items-center">
@@ -3466,6 +3669,19 @@ export default function App() {
                   value={newProduct.category} 
                   onChange={e => setNewProduct({...newProduct, category: e.target.value})} 
                 />
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">المورد</label>
+                  <select 
+                    className="w-full p-3 bg-slate-100 rounded-xl text-sm"
+                    value={newProduct.supplier_id || ''}
+                    onChange={e => setNewProduct({...newProduct, supplier_id: e.target.value ? Number(e.target.value) : undefined} as any)}
+                  >
+                    <option value="">اختار المورد (اختياري)</option>
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <datalist id="categories-list">
                   {categories.filter(c => c !== 'الكل').map((c, idx) => <option key={`cat-opt-${c}-${idx}`} value={c} />)}
                 </datalist>
@@ -3665,9 +3881,180 @@ export default function App() {
                   value={editingProduct.unit || ''} 
                   onChange={e => setEditingProduct({...editingProduct, unit: e.target.value})} 
                 />
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">المورد</label>
+                  <select 
+                    className="w-full p-3 bg-slate-100 rounded-xl text-sm"
+                    value={editingProduct.supplier_id || ''}
+                    onChange={e => setEditingProduct({...editingProduct, supplier_id: e.target.value ? Number(e.target.value) : undefined} as any)}
+                  >
+                    <option value="">اختار المورد (اختياري)</option>
+                    {suppliers.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex gap-2 pt-4">
                   <Button className="flex-1" onClick={handleEditProduct}>تحديث</Button>
                   <Button variant="secondary" onClick={() => setEditingProduct(null)}>إلغاء</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showAddSupplier && (
+            <div key="modal-add-supplier" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+              <motion.div 
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
+              >
+                <h3 className="text-xl font-bold text-slate-800">إضافة مورد جديد</h3>
+                <div className="space-y-1 text-right">
+                  <label className="text-xs text-slate-500 font-bold block pr-1">اسم المورد :</label>
+                  <input placeholder="اسم المورد أو الشركة" className="w-full p-3 bg-slate-100 rounded-xl font-bold" value={newSupplier.name} onChange={e => setNewSupplier({...newSupplier, name: e.target.value})} />
+                </div>
+                <div className="space-y-1 text-right">
+                  <label className="text-xs text-slate-500 font-bold block pr-1">رقم الهاتف :</label>
+                  <input placeholder="رقم الهاتف للتواصل" className="w-full p-3 bg-slate-100 rounded-xl" value={newSupplier.phone} onChange={e => setNewSupplier({...newSupplier, phone: e.target.value})} />
+                </div>
+                <div className="space-y-1 text-right">
+                  <label className="text-xs text-slate-500 font-bold block pr-1">الرصيد المستحق الحالي للمورد :</label>
+                  <input placeholder="0.00" type="number" className="w-full p-3 bg-slate-100 rounded-xl font-mono" value={newSupplier.initialBalance} onChange={e => setNewSupplier({...newSupplier, initialBalance: e.target.value})} />
+                  <p className="text-[10px] text-slate-400 block pr-1">المبلغ الذي تدين به حالياً لهذا المورد قبل بدء التسجيل.</p>
+                </div>
+                <div className="flex gap-2 pt-4">
+                  <Button className="flex-1" onClick={handleAddSupplier}>حفظ المورد</Button>
+                  <Button variant="secondary" onClick={() => setShowAddSupplier(false)}>إلغاء</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showSupplierDetails && (
+            <div key="modal-supplier-details" className="fixed inset-0 bg-black/50 z-50 flex flex-col justify-end p-0">
+              <motion.div 
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                className="bg-slate-50 w-full rounded-t-3xl sm:max-w-2xl sm:mx-auto max-h-[95vh] overflow-hidden flex flex-col"
+              >
+                <div className="bg-white p-6 border-b border-slate-100">
+                  <div className="flex justify-between items-start mb-6">
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center font-bold text-2xl">
+                        {showSupplierDetails.name.charAt(0)}
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-black text-slate-800">{showSupplierDetails.name}</h3>
+                        <p className="text-sm text-slate-400 font-bold">{showSupplierDetails.phone || 'بدون هاتف'}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                       <button onClick={() => handleDeleteSupplier(showSupplierDetails.id!)} className="p-2 bg-red-50 hover:bg-red-100 rounded-full transition-colors">
+                        <Trash2 className="w-5 h-5 text-red-500" />
+                      </button>
+                      <button onClick={() => setShowSupplierDetails(null)} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">
+                        <X className="w-6 h-6 text-slate-500" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-amber-50 p-4 rounded-3xl border border-amber-100 flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] text-amber-600 font-extrabold uppercase">صافي المستحق للمورد (بالتكلفة)</p>
+                        <p className="text-2xl font-black font-mono text-amber-900">{formatPrice(showSupplierDetails.balance)}</p>
+                      </div>
+                      <Briefcase className="w-8 h-8 text-amber-400 opacity-50" />
+                    </div>
+                    <Button onClick={() => setShowSupplierPaymentModal(showSupplierDetails)} className="py-4 rounded-3xl font-black flex items-center justify-center gap-2">
+                       <Wallet className="w-5 h-5" /> تسديد دفعة للمورد
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  <div className="space-y-3">
+                    <h4 className="font-black text-slate-700 text-sm flex items-center gap-2">
+                      <Package className="w-4 h-4 text-slate-400" /> منتجات هذا المورد
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {supplierHistory.products.length > 0 ? supplierHistory.products.map(p => (
+                        <div key={p.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-xs">
+                          <span className="font-bold text-sm text-slate-700">{p.name}</span>
+                          <span className="text-xs bg-slate-50 px-2 py-1 rounded-lg font-mono font-bold text-slate-500">تكلفة: {formatPrice(p.cost_price)}</span>
+                        </div>
+                      )) : (
+                        <p className="text-xs text-slate-400 p-2 italic">لم يتم ربط أي منتجات بهذا المورد حالياً.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h4 className="font-black text-slate-700 text-sm flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-slate-400" /> سجل المدفوعات للتاجر
+                    </h4>
+                    <div className="space-y-2">
+                      {supplierHistory.payments.length > 0 ? supplierHistory.payments.map(py => (
+                        <div key={py.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-xs">
+                          <div>
+                            <p className="text-xs font-bold text-emerald-700">تم تسديد مبلغ: {formatPrice(py.amount)}</p>
+                            <p className="text-[10px] text-slate-400 font-bold">{new Date(py.payment_date).toLocaleString('ar-SA')}</p>
+                          </div>
+                          {py.notes && <span className="text-[10px] bg-slate-50 px-2 py-1 rounded-lg text-slate-500 italic max-w-[120px] truncate">{py.notes}</span>}
+                        </div>
+                      )) : (
+                        <p className="text-xs text-slate-400 p-2 italic text-center">لا توجد مدفوعات مسجلة سابقاً.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showSupplierPaymentModal && (
+            <div key="modal-supplier-payment" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 space-y-4 shadow-2xl relative"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="bg-amber-100 p-3 rounded-2xl">
+                    <Wallet className="w-6 h-6 text-amber-600" />
+                  </div>
+                  <button onClick={() => setShowSupplierPaymentModal(null)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
+                </div>
+                
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">تسديد مبلغ للمورد</h3>
+                  <p className="text-sm text-slate-500 font-bold">تسجيل دفعة نقدية لتصفية حساب {showSupplierPaymentModal.name}</p>
+                </div>
+
+                <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100">
+                  <p className="text-[10px] text-amber-600 font-bold uppercase mb-1">إجمالي المستحق حالياً</p>
+                  <p className="text-xl font-black font-mono text-amber-900">{formatPrice(showSupplierPaymentModal.balance)}</p>
+                </div>
+
+                <div className="space-y-4">
+                   <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 block pr-1">المبلغ المراد تسديده :</label>
+                      <input 
+                        type="number" 
+                        placeholder="0.00" 
+                        value={supplierPaymentAmount}
+                        onChange={(e) => setSupplierPaymentAmount(e.target.value)}
+                        className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-3xl text-center text-2xl font-black text-emerald-700 focus:border-emerald-500 outline-none transition-all"
+                      />
+                   </div>
+                   <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-600 block pr-1">ملاحظات (اختياري) :</label>
+                      <textarea 
+                        placeholder="اكتب تفاصيل الدفعة أو رقم السند..." 
+                        value={supplierPaymentNotes}
+                        onChange={(e) => setSupplierPaymentNotes(e.target.value)}
+                        className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl h-20 text-sm outline-none focus:border-emerald-500 resize-none transition-all"
+                      />
+                   </div>
+                   <Button className="w-full py-4 rounded-2xl text-lg font-black shadow-lg shadow-emerald-500/20" onClick={handleSupplierPayment}>تأكيد التسديد وحفظ</Button>
                 </div>
               </motion.div>
             </div>

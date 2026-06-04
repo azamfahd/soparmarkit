@@ -42,7 +42,8 @@ import {
   Download,
   Search,
   FileText,
-  Filter
+  Filter,
+  Database
 } from 'lucide-react';
 
 interface SmartAnalyticsProps {
@@ -143,6 +144,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   // --- Dynamic calculations of High-level business KPIs ---
   const performanceKPIs = useMemo(() => {
     let salesTotal = 0;
+    let costTotal = 0;
     let profitTotal = 0;
     let cashSalesTotal = 0;
     let debtSalesTotal = 0;
@@ -163,10 +165,14 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       const product = productMap.get(item.product_id);
       itemsCountTotal += item.quantity;
       if (product) {
+        const itemCost = product.cost_price * item.quantity;
         const itemProfit = (item.price_at_sale - product.cost_price) * item.quantity;
+        costTotal += itemCost;
         profitTotal += itemProfit;
       } else {
         // Fallback average profit margin (25%) if product was deleted
+        const fallbackCost = item.price_at_sale * item.quantity * 0.75;
+        costTotal += fallbackCost;
         profitTotal += item.price_at_sale * item.quantity * 0.25;
       }
     });
@@ -232,6 +238,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
     return {
       salesTotal,
+      costTotal,
       profitTotal,
       profitMarginPercent,
       cashSalesTotal,
@@ -249,7 +256,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
   // --- Real-time Daily Sales Tabular Aggregation ---
   const dailySalesBreakdown = useMemo(() => {
-    const dailyMap: { [key: string]: { dateStr: string, rawDate: Date, totalAmount: number, cashAmount: number, debtAmount: number, profit: number, count: number } } = {};
+    const dailyMap: { [key: string]: { dateStr: string, rawDate: Date, totalAmount: number, cashAmount: number, debtAmount: number, profit: number, cost: number, count: number } } = {};
     
     filteredSalesData.forEach(sale => {
       const d = new Date(sale.created_at);
@@ -263,6 +270,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
           cashAmount: 0,
           debtAmount: 0,
           profit: 0,
+          cost: 0,
           count: 0
         };
       }
@@ -284,12 +292,17 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
         const dayKey = d.toLocaleDateString('ar-SA', { year: 'numeric', month: '2-digit', day: '2-digit' });
         
         const product = productMap.get(item.product_id);
-        const profit = product 
+        const itemProfit = product 
           ? (item.price_at_sale - product.cost_price) * item.quantity
           : item.price_at_sale * item.quantity * 0.25;
+
+        const itemCost = product
+          ? product.cost_price * item.quantity
+          : item.price_at_sale * item.quantity * 0.75;
         
         if (dailyMap[dayKey]) {
-          dailyMap[dayKey].profit += profit;
+          dailyMap[dayKey].profit += itemProfit;
+          dailyMap[dayKey].cost += itemCost;
         }
       }
     });
@@ -586,9 +599,10 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                 <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 20%;">اليوم والتاريخ</th>
                 <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: center; width: 12%;">عدد العمليات</th>
                 <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 18%;">النقد الفوري (كاش)</th>
-                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 18%;">الآجل (ديون)</th>
-                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 16%;">المبيعات الإجمالية</th>
-                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 16%;">الأرباح التقريبية</th>
+                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 14%;">الآجل (ديون)</th>
+                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 14%;">الإجمالي</th>
+                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 14%;">التكلفة (للمورد)</th>
+                <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; width: 14%;">الأرباح</th>
               </tr>
             </thead>
             <tbody>
@@ -599,6 +613,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                   <td style="border: 1px solid #cbd5e1; padding: 8px;">${formatPrice(d.cashAmount)}</td>
                   <td style="border: 1px solid #cbd5e1; padding: 8px;">${formatPrice(d.debtAmount)}</td>
                   <td style="border: 1px solid #cbd5e1; padding: 8px; font-weight: 900; color: #4f46e5;">${formatPrice(d.totalAmount)}</td>
+                  <td style="border: 1px solid #cbd5e1; padding: 8px; font-weight: 900; color: #b45309;">${formatPrice(d.cost)}</td>
                   <td style="border: 1px solid #cbd5e1; padding: 8px; font-weight: 900; color: #16a34a;">${formatPrice(d.profit)}</td>
                 </tr>
               `).join('')}
@@ -859,6 +874,24 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
           </div>
         </div>
 
+        {/* Cost Basis Metric */}
+        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
+          <div className="space-y-2">
+            <span className="text-[10px] font-extrabold text-slate-400 block tracking-wider uppercase">قيمة المبيعات بسعر التكلفة (تسوية التاجر)</span>
+            <span className="text-2xl font-black font-mono tracking-tight text-amber-800 block">
+              {formatPrice(performanceKPIs.costTotal || (performanceKPIs.salesTotal - (performanceKPIs.profitTotal || 0)))}
+            </span>
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md leading-tight">
+                هذا هو المبلغ الذي يجب تسليمه للتاجر تعويضاً عن البضاعة المباعة (دون الأرباح).
+              </span>
+            </div>
+          </div>
+          <div className="p-3 rounded-2xl bg-amber-50 text-amber-600">
+            <Database className="w-6 h-6" />
+          </div>
+        </div>
+
         {/* Metric 3 */}
         <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
           <div className="space-y-2">
@@ -1082,6 +1115,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                             <th className="p-4">المبيعات النقدية (كاش)</th>
                             <th className="p-4">المبيعات الآجلة (ديون)</th>
                             <th className="p-4">صافي إجمالي المبيعات</th>
+                            <th className="p-4 text-amber-700">المبيعات بالتكلفة (للمورد)</th>
                             <th className="p-4 text-emerald-800">الأرباح التقريبية لليوم</th>
                           </tr>
                         </thead>
@@ -1102,6 +1136,11 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                               </td>
                               <td className="p-4 font-black text-indigo-600 font-mono text-[13px] whitespace-nowrap">
                                 {formatPrice(day.totalAmount)}
+                              </td>
+                              <td className="p-4 font-black text-amber-700 font-mono whitespace-nowrap">
+                                <span className="bg-amber-50 px-2 py-1 rounded-lg">
+                                  {formatPrice(day.cost)}
+                                </span>
                               </td>
                               <td className="p-4 font-extrabold text-emerald-700 font-mono whitespace-nowrap">
                                 <span className="bg-emerald-50 px-2 py-1 rounded-lg">
