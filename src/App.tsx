@@ -198,6 +198,7 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [storeName, setStoreName] = useState('النظام المحاسبي');
   const [currency, setCurrency] = useState('ر.ي');
+  const [roundingFactor, setRoundingFactor] = useState<number | null>(50);
   const [showReceipt, setShowReceipt] = useState<any>(null);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
@@ -412,6 +413,10 @@ export default function App() {
         showNotification('تنبيه: لم تقم بأخذ نسخة احتياطية منذ أكثر من أسبوع!', 'error');
       }
     }
+    const roundingSetting = appSettings.find(s => s.key === 'roundingFactor');
+    if (roundingSetting) {
+      setRoundingFactor(roundingSetting.value);
+    }
   }, [appSettings]);
 
   useEffect(() => {
@@ -443,6 +448,13 @@ export default function App() {
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const applyCurrencyRounding = (price: number): number => {
+    if (roundingFactor && roundingFactor > 0) {
+      return Math.ceil(price / roundingFactor) * roundingFactor;
+    }
+    return Number(price.toFixed(2));
   };
 
   const formatPrice = (price: number) => `${price} ${currency}`;
@@ -922,7 +934,7 @@ export default function App() {
     if (cost > 0 && addProfitPercent !== '') {
       const pct = parseFloat(addProfitPercent) || 0;
       const computedSale = cost * (1 + pct / 100);
-      saleStr = Number(computedSale.toFixed(2)).toString();
+      saleStr = applyCurrencyRounding(computedSale).toString();
     } else if (cost > 0 && newProduct.sale !== '') {
       const sale = parseFloat(newProduct.sale) || 0;
       computedPercent = Math.round(((sale - cost) / cost) * 100).toString();
@@ -941,7 +953,7 @@ export default function App() {
     if (cost > 0) {
       if (pctStr !== '') {
         const computedSale = cost * (1 + pct / 100);
-        setNewProduct(prev => ({ ...prev, sale: Number(computedSale.toFixed(2)).toString() }));
+        setNewProduct(prev => ({ ...prev, sale: applyCurrencyRounding(computedSale).toString() }));
       } else {
         setNewProduct(prev => ({ ...prev, sale: '' }));
       }
@@ -975,7 +987,7 @@ export default function App() {
     if (cost > 0 && editProfitPercent !== '') {
       const pct = parseFloat(editProfitPercent) || 0;
       const computedSale = cost * (1 + pct / 100);
-      computedSalePrice = Number(computedSale.toFixed(2));
+      computedSalePrice = applyCurrencyRounding(computedSale);
     } else if (cost > 0 && editingProduct.sale_price > 0) {
       computedPercent = Math.round(((editingProduct.sale_price - cost) / cost) * 100).toString();
     }
@@ -993,7 +1005,7 @@ export default function App() {
 
     if (cost > 0) {
       if (pctStr !== '') {
-        salePrice = Number((cost * (1 + pct / 100)).toFixed(2));
+        salePrice = applyCurrencyRounding(cost * (1 + pct / 100));
       } else {
         salePrice = 0;
       }
@@ -1211,7 +1223,23 @@ export default function App() {
       await db.settings.add({ key: 'currency', value: newCurrency });
     }
     setCurrency(newCurrency);
+    
+    // Automatically adjust rounding based on currency
+    const newRounding = newCurrency === 'ر.ي' ? 50 : null;
+    await updateRoundingFactor(newRounding, true);
+
     showNotification('تم تحديث العملة');
+  };
+
+  const updateRoundingFactor = async (factor: number | null, silent: boolean = false) => {
+    const existing = await db.settings.where('key').equals('roundingFactor').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: factor });
+    } else {
+      await db.settings.add({ key: 'roundingFactor', value: factor });
+    }
+    setRoundingFactor(factor);
+    if (!silent) showNotification('تم تحديث إعدادات التقريب');
   };
 
   const exportData = async () => {
@@ -3280,6 +3308,22 @@ export default function App() {
                         <option value="ر.ي">ريال يمني (ر.ي)</option>
                         <option value="ر.س">ريال سعودي (ر.س)</option>
                         <option value="$">دولار أمريكي ($)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-600">تقريب سعر البيع (إلى أقرب)</label>
+                    <div className="flex gap-2">
+                      <select 
+                        value={roundingFactor || 0}
+                        onChange={(e) => updateRoundingFactor(Number(e.target.value) || null)}
+                        className="flex-1 p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none transition-all"
+                      >
+                        <option value={0}>بدون تقريب</option>
+                        <option value={5}>5</option>
+                        <option value={10}>10</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
                       </select>
                     </div>
                   </div>
