@@ -43,7 +43,8 @@ import {
   Search,
   FileText,
   Filter,
-  Database
+  Database,
+  Wallet
 } from 'lucide-react';
 
 interface SmartAnalyticsProps {
@@ -58,12 +59,16 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const [selectedProductCategory, setSelectedProductCategory] = useState<string>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<string>('all');
 
+  // --- Interactive tabs inside Trends and Liquidity section ---
+  const [trendChartType, setTrendChartType] = useState<'sales_profit' | 'cash_flow'>('sales_profit');
+  const [liquidityDonutType, setLiquidityDonutType] = useState<'revenue_mix' | 'liquidity_allocation'>('revenue_mix');
+
+  // --- Interactive Ledger explorer category ---
+  const [activeExplorerTab, setActiveExplorerTab] = useState<'daily' | 'customers' | 'products'>('daily');
+
   // --- Accordion collapse states ---
   const [isOverviewOpen, setIsOverviewOpen] = useState(true);
   const [isTrendsAndLiquidityOpen, setIsTrendsAndLiquidityOpen] = useState(true);
-  const [isDailySalesOpen, setIsDailySalesOpen] = useState(false);
-  const [isCustomerSalesOpen, setIsCustomerSalesOpen] = useState(false);
-  const [isCategoryPerformanceOpen, setIsCategoryPerformanceOpen] = useState(false);
   const [isInsightsOpen, setIsInsightsOpen] = useState(true);
 
   // --- Search keys within lists ---
@@ -76,7 +81,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
   const debts = useLiveQuery(() => db.debts.toArray()) || [];
-  const salesSettlements = useLiveQuery(() => db.salesSettlements.toArray()) || [];
+  const salesSettlements = useLiveQuery(() => db.salesSettlements?.toArray() || Promise.resolve([])) || [];
+  const cashWithdrawals = useLiveQuery(() => db.cashWithdrawals?.toArray() || Promise.resolve([])) || [];
   const storeNameSetting = useLiveQuery(() => db.settings.where('key').equals('storeName').first());
   
   const storeName = storeNameSetting?.value || 'المخزن الذكي';
@@ -218,18 +224,90 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       ? Math.min(100, (totalCollectedPayments / totalPurchasedDebts) * 100) 
       : 100;
 
-    // Drawer Settle discrepancy rate
+    // All-time totals to calculate the absolute current cash in drawer
+    let allTimeCashSales = 0;
+    sales.forEach(s => {
+      if (s.payment_type === 'cash') allTimeCashSales += s.total_amount;
+    });
+    
+    let allTimeDebtPayments = 0;
+    debts.forEach(d => {
+      if (d.type === 'payment') allTimeDebtPayments += d.amount;
+    });
+    
+    let allTimeDelivered = 0;
+    salesSettlements.forEach(s => {
+      allTimeDelivered += s.delivered_amount;
+    });
+    
+    let allTimeUnpaidWithdrawals = 0;
+    cashWithdrawals.forEach(w => {
+      if (!w.is_repaid) allTimeUnpaidWithdrawals += w.amount;
+    });
+
+    const absoluteActualCashInDrawer = Math.max(0, (allTimeCashSales + allTimeDebtPayments) - allTimeDelivered - allTimeUnpaidWithdrawals);
+
+    // Period specific calculations for settlements and deficits
     let exactSettlementsCount = 0;
     let totalSettlements = 0;
     let totalDeficitAmount = 0;
+    let totalSettledAmount = 0;
 
     salesSettlements.forEach(s => {
-      totalSettlements++;
-      if (s.difference === 0) {
-        exactSettlementsCount++;
-      } else if (s.difference < 0) {
-        totalDeficitAmount += Math.abs(s.difference);
+      const sDate = new Date(s.created_at);
+      const isWithinDate = (() => {
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        if (dateFilter === 'today') return sDate >= startOfDay;
+        if (dateFilter === '7days') {
+          const w = new Date(startOfDay); w.setDate(startOfDay.getDate() - 7);
+          return sDate >= w;
+        }
+        if (dateFilter === '30days') {
+          const m = new Date(startOfDay); m.setDate(startOfDay.getDate() - 30);
+          return sDate >= m;
+        }
+        if (dateFilter === 'month') {
+          const m = new Date(now.getFullYear(), now.getMonth(), 1);
+          return sDate >= m;
+        }
+        return true;
+      })();
+
+      if (isWithinDate) {
+        totalSettledAmount += s.delivered_amount;
+        totalSettlements++;
+        if (s.difference === 0) {
+          exactSettlementsCount++;
+        } else if (s.difference < 0) {
+          totalDeficitAmount += Math.abs(s.difference);
+        }
       }
+    });
+
+    // Withdrawal calculation
+    let totalWithdrawals = 0;
+    cashWithdrawals.forEach(w => {
+      const wDate = new Date(w.created_at);
+      const isWithinDate = (() => {
+        const now = new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        if (dateFilter === 'today') return wDate >= startOfDay;
+        if (dateFilter === '7days') {
+          const w = new Date(startOfDay); w.setDate(startOfDay.getDate() - 7);
+          return wDate >= w;
+        }
+        if (dateFilter === '30days') {
+          const m = new Date(startOfDay); m.setDate(startOfDay.getDate() - 30);
+          return wDate >= m;
+        }
+        if (dateFilter === 'month') {
+          const m = new Date(now.getFullYear(), now.getMonth(), 1);
+          return wDate >= m;
+        }
+        return true;
+      })();
+      if (isWithinDate) totalWithdrawals += w.amount;
     });
 
     const boxMatchingScore = totalSettlements > 0 
@@ -250,9 +328,13 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       debtRecoveryRate,
       boxMatchingScore,
       totalDeficitAmount,
+      totalWithdrawals,
+      absoluteActualCashInDrawer,
+      totalSettledAmount,
+      receivedCashInPeriod: cashSalesTotal + totalCollectedPayments,
       transactionsCount: filteredSalesData.length
     };
-  }, [filteredSalesData, filteredSaleItemsData, debts, salesSettlements, dateFilter, productMap]);
+  }, [filteredSalesData, filteredSaleItemsData, debts, salesSettlements, cashWithdrawals, sales, dateFilter, productMap]);
 
   // --- Real-time Daily Sales Tabular Aggregation ---
   const dailySalesBreakdown = useMemo(() => {
@@ -386,6 +468,86 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     // Generate beautiful sequential operational days chart line
     return [...dailySalesBreakdown].reverse().slice(-12); 
   }, [dailySalesBreakdown]);
+
+  // --- Chart 1B: Live Integrated Cashflow (Receipts vs Outlays Timeline) ---
+  const unifiedCashflowTimeline = useMemo(() => {
+    const dailyMap: { 
+      [key: string]: { 
+        dateStr: string; 
+        rawDate: Date; 
+        moneyIn: number; // Cash sales + debt payments (Money added to drawer)
+        moneyOut: number; // Self-withdrawals + settlements (Money removed from drawer)
+        netRegisterChange: number; 
+      } 
+    } = {};
+
+    const addToMap = (dateStr: string, rawDate: Date, inVal: number, outVal: number) => {
+      if (!dailyMap[dateStr]) {
+        dailyMap[dateStr] = {
+          dateStr,
+          rawDate,
+          moneyIn: 0,
+          moneyOut: 0,
+          netRegisterChange: 0
+        };
+      }
+      dailyMap[dateStr].moneyIn += inVal;
+      dailyMap[dateStr].moneyOut += outVal;
+      dailyMap[dateStr].netRegisterChange = dailyMap[dateStr].moneyIn - dailyMap[dateStr].moneyOut;
+    };
+
+    // 1. Physical Direct Cash Sales
+    sales.forEach(s => {
+      if (s.payment_type === 'cash') {
+        const d = new Date(s.created_at);
+        const dayKey = d.toLocaleDateString('ar-SA', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        addToMap(dayKey, d, s.total_amount, 0);
+      }
+    });
+
+    // 2. Debts Payments Received (Customer paid back debt)
+    debts.forEach(d => {
+      if (d.type === 'payment') {
+        const date = new Date(d.created_at);
+        const dayKey = date.toLocaleDateString('ar-SA', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        addToMap(dayKey, date, d.amount, 0);
+      }
+    });
+
+    // 3. Cash Withdrawals / Expenses (Outflow)
+    cashWithdrawals.forEach(w => {
+      const date = new Date(w.created_at);
+      const dayKey = date.toLocaleDateString('ar-SA', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      addToMap(dayKey, date, 0, w.amount);
+    });
+
+    // 4. Sales Settlements (Manual handovers to the owner / business manager)
+    salesSettlements.forEach(s => {
+      const date = new Date(s.created_at);
+      const dayKey = date.toLocaleDateString('ar-SA', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      addToMap(dayKey, date, 0, s.delivered_amount);
+    });
+
+    // Sort chronologically and apply date range mapping
+    const sorted = Object.values(dailyMap).sort((a, b) => a.rawDate.getTime() - b.rawDate.getTime());
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfDay.getDate() - 7);
+    const startOf30Days = new Date(startOfDay);
+    startOf30Days.setDate(startOfDay.getDate() - 30);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    return sorted.filter(day => {
+      const d = day.rawDate;
+      if (dateFilter === 'today') return d >= startOfDay;
+      if (dateFilter === '7days') return d >= startOfWeek;
+      if (dateFilter === '30days') return d >= startOf30Days;
+      if (dateFilter === 'month') return d >= startOfMonth;
+      return true;
+    }).slice(-12); // Present last 12 active days
+  }, [sales, debts, cashWithdrawals, salesSettlements, dateFilter]);
 
   // --- Chart 2: Top Selling Products with Revenue & Profit Contributions ---
   const topProductsChart = useMemo(() => {
@@ -702,250 +864,256 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       initial={{ opacity: 0, y: 15 }} 
       animate={{ opacity: 1, y: 0 }} 
       exit={{ opacity: 0, y: -15 }}
-      className="space-y-6 text-right pb-10"
+      className="space-y-6 text-right pb-10 font-sans"
     >
-      {/* Header section with BI Title, Filter, and Export */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-        <div className="flex items-center gap-3">
+      {/* Upper Title Section / Header */}
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-gradient-to-br from-slate-900 to-slate-950 p-6 sm:p-7 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden">
+        {/* Decorative corner glow */}
+        <div className="absolute top-0 right-0 w-36 h-36 bg-indigo-500/10 rounded-full blur-3xl"></div>
+        <div className="absolute bottom-0 left-0 w-36 h-36 bg-emerald-500/10 rounded-full blur-3xl"></div>
+
+        <div className="flex items-center gap-3.5 z-10">
           <button 
             onClick={onGoBack} 
-            className="p-2 sm:p-2.5 hover:bg-slate-100 rounded-full transition-all cursor-pointer text-slate-500 hover:text-indigo-600 border border-slate-100"
-            title="العودة للوحة الرئيسية"
+            className="p-3 bg-white/5 hover:bg-white/10 text-white hover:text-indigo-300 rounded-2xl transition-all cursor-pointer border border-white/10 active:scale-95 animate-none"
+            title="العودة للوحة الجرد الحركي الرئيسية"
           >
-            <ArrowLeft className="w-5 h-5 animate-pulse" />
+            <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-800 flex items-center gap-2">
-              📊 لوحة تحليلات البيع الرقمي الذكي <span className="text-[10px] sm:text-xs font-black bg-indigo-50 border border-indigo-150 text-indigo-700 rounded-full py-0.5 px-3">مستوحى من Microsoft Power BI</span>
+            <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
+              📊 مركز التحليلات والذكاء المحاسبي المتكامل
+              <span className="text-[10px] sm:text-xs font-black bg-indigo-500/20 border border-indigo-400/25 text-indigo-300 rounded-full py-0.5 px-3">
+                Live BI Graphics
+              </span>
             </h2>
-            <p className="text-xs text-slate-450 mt-1">خرائط بصرية حيوية ومؤشرات تفاعلية لمراقبة صحة الصندوق وتتبع الذمم المالية المترتبة</p>
+            <p className="text-xs text-slate-300 mt-1 font-medium leading-relaxed">
+              شاشات إحصائية حية لتقييم كفاءة عمليات البيع، صحة خزينة الدرج، ومطابقة الرصيد الفعلي بالذمة والديون
+            </p>
           </div>
         </div>
 
-        {/* Date Filter Selection and PDF Export Trigger Row */}
-        <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
-          {/* Quick Date Pills */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100/80 p-1 rounded-2xl w-full sm:w-auto">
-            <button
-              onClick={() => setDateFilter('today')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                dateFilter === 'today' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-white/40'
-              }`}
-            >
-              اليوم
-            </button>
-            <button
-              onClick={() => setDateFilter('7days')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                dateFilter === '7days' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-white/40'
-              }`}
-            >
-              آخر 7 أيام
-            </button>
-            <button
-              onClick={() => setDateFilter('30days')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                dateFilter === '30days' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-white/40'
-              }`}
-            >
-              آخر 30 يوم
-            </button>
-            <button
-              onClick={() => setDateFilter('month')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                dateFilter === 'month' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-white/40'
-              }`}
-            >
-              الشهر الحالي
-            </button>
-            <button
-              onClick={() => setDateFilter('all')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer ${
-                dateFilter === 'all' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:bg-white/40'
-              }`}
-            >
-              الكل
-            </button>
+        {/* Date Filters + Global Report Button */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full xl:w-auto z-10">
+          <div className="flex flex-wrap items-center gap-1 bg-white/5 p-1 rounded-2xl border border-white/10">
+            {[
+              { id: 'today', label: 'اليوم' },
+              { id: '7days', label: '٧ أيام' },
+              { id: '30days', label: '٣٠ يوماً' },
+              { id: 'month', label: 'الشهر الجاري' },
+              { id: 'all', label: 'الكل' }
+            ].map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setDateFilter(p.id as any)}
+                className={`px-3 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
+                  dateFilter === p.id 
+                    ? 'bg-indigo-600 text-white shadow-md' 
+                    : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
 
-          {/* Export PDF Button */}
           <button
             onClick={handleExportPDF}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-700 hover:to-teal-600 text-white text-xs font-bold rounded-2xl shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer border-t border-white/20"
+            className="flex items-center justify-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-2xl shadow-lg transition-all duration-200 cursor-pointer border-t border-white/20 active:scale-95"
           >
-            <Download className="w-4 h-4 animate-bounce" />
-            <span>تصدير PDF (ملف BDF)</span>
+            <Download className="w-4 h-4" />
+            <span>تصدير ملف مالي (PDF)</span>
           </button>
         </div>
       </div>
 
-      {/* Accordion List 1: Pivot Filters (collapsible & tidy) */}
-      <div className="bg-slate-50 border border-slate-150/60 rounded-3xl overflow-hidden shadow-xs">
-        <button 
-          onClick={() => setIsOverviewOpen(!isOverviewOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-100/60 hover:bg-slate-100 transition-colors pointer-cursor text-right"
-        >
-          <div className="flex items-center gap-2 font-bold text-sm text-slate-800">
-            <Filter className="w-4 h-4 text-indigo-500" />
-            <span>🎛️ مصافي ومحاور التحليل المحورية (Filters Profile Tracker)</span>
-          </div>
-          {isOverviewOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-        </button>
-
-        <AnimatePresence initial={false}>
-          {isOverviewOpen && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden border-t border-slate-150"
+      {/* Integrated Live Segmental Filters */}
+      <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm">
+        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-slate-50">
+          <Filter className="w-4.5 h-4.5 text-indigo-500" />
+          <h3 className="text-xs font-black text-slate-800">
+            تخصيص البيانات والتحليل البصري (Multi-Pivot Filters)
+          </h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 block">فئات المنتجات والسلع</span>
+            <select 
+              value={selectedProductCategory} 
+              onChange={(e) => setSelectedProductCategory(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-100 p-2.5 rounded-2xl font-black text-xs text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden cursor-pointer"
             >
-              <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-500"> تصفية الفئات السلعية الكلية</label>
-                  <select 
-                    value={selectedProductCategory} 
-                    onChange={(e) => setSelectedProductCategory(e.target.value)}
-                    className="w-full bg-white border border-slate-200 p-2.5 rounded-xl font-bold text-xs text-slate-700 shadow-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
-                  >
-                    <option value="all">كل المبيعات والسلع المتنوعة</option>
-                    {categoriesList.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-500">حساب العميل أو طريقة وتدفقات السداد</label>
-                  <select 
-                    value={selectedCustomer} 
-                    onChange={(e) => setSelectedCustomer(e.target.value)}
-                    className="w-full bg-white border border-slate-200 p-2.5 rounded-xl font-bold text-xs text-slate-700 shadow-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden cursor-pointer"
-                  >
-                    <option value="all">كل العملاء والذمم والبيوع النقدية</option>
-                    <option value="cash">البيوع النقدية (كاش وشبكة) فقط</option>
-                    <option value="debtors">مبيعات الديون والحساب الآجل</option>
-                    {customers.map(c => (
-                      <option key={c.id} value={String(c.id)}>{c.name} {c.balance > 0 ? `(آجل: ${formatPrice(c.balance)})` : ''}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              <option value="all">كل الفئات والسلع الحسابية</option>
+              {categoriesList.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 block">حالة العميل أو طريق الدفع</span>
+            <select 
+              value={selectedCustomer} 
+              onChange={(e) => setSelectedCustomer(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-100 p-2.5 rounded-2xl font-black text-xs text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden cursor-pointer"
+            >
+              <option value="all">أجهزة الدفع، الديون، وكل العملاء</option>
+              <option value="cash">المقبوض النقدي كاش وشبكة (فوري)</option>
+              <option value="debtors">مبيعات الديون والحساب الآجل</option>
+              {customers.map(c => (
+                <option key={c.id} value={String(c.id)}>{c.name} {c.balance > 0 ? `(آجل: ${formatPrice(c.balance)})` : ''}</option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
-      {/* KPI Dashboard Cards Grid (Quick Stats) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Structured Grouped Metrics Panels */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
-        {/* Metric 1 */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
-          <div className="space-y-2">
-            <span className="text-[10px] font-extrabold text-slate-400 block tracking-wider uppercase">صافي المبيعات الكلية</span>
-            <span className="text-2xl font-black font-mono tracking-tight text-slate-800 block">
-              {formatPrice(performanceKPIs.salesTotal)}
-            </span>
-            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400">
-              <Activity className="w-3.5 h-3.5 text-indigo-500" />
-              <span>إجمالي الفواتير: {performanceKPIs.transactionsCount} فواتير</span>
-            </div>
-          </div>
-          <div className="p-3 rounded-2xl bg-indigo-50 text-indigo-600">
-            <ShoppingBag className="w-6 h-6" />
-          </div>
-        </div>
-
-        {/* Metric 2 */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
-          <div className="space-y-2">
-            <span className="text-[10px] font-extrabold text-slate-400 block tracking-wider uppercase">الأرباح التقريبية الصافية</span>
-            <span className="text-2xl font-black font-mono tracking-tight text-emerald-800 block">
-              {formatPrice(performanceKPIs.profitTotal)}
-            </span>
-            <div className="flex items-center gap-1">
-              <Percent className="w-3.5 h-3.5 text-emerald-500" />
-              <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
-                هامش صافي الأرباح: {performanceKPIs.profitMarginPercent.toFixed(1)}%
+        {/* Panel A: Operational & Sales Summary */}
+        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+          <div className="flex justify-between items-center pb-2.5 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                <ShoppingBag className="w-4 h-4" />
               </span>
+              <h3 className="text-xs font-black text-slate-800">
+                لوحة الأداء التشغيلي وأعمال البيع والربحية
+              </h3>
             </div>
+            <span className="text-[10px] text-slate-400 font-bold">مؤشرات حية</span>
           </div>
-          <div className="p-3 rounded-2xl bg-emerald-50 text-emerald-600">
-            <TrendingUp className="w-6 h-6" />
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Total Sales Card */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">إجمالي المبيعات المحققة</span>
+              <div className="my-2 text-lg sm:text-xl font-black text-slate-800 font-mono">
+                {formatPrice(performanceKPIs.salesTotal)}
+              </div>
+              <div className="text-[9px] font-bold text-slate-500">
+                الحجم: <span className="font-extrabold text-indigo-600">{performanceKPIs.transactionsCount} عمليات</span>
+              </div>
+            </div>
+
+            {/* Total Profit Card */}
+            <div className="bg-emerald-50/30 border border-emerald-100/40 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-emerald-700">الأرباح التقريبية الصافية</span>
+              <div className="my-2 text-lg sm:text-xl font-black text-emerald-700 font-mono">
+                {formatPrice(performanceKPIs.profitTotal)}
+              </div>
+              <div className="text-[9px] font-bold text-emerald-800">
+                معدل الهامش: <span className="font-extrabold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-md">{performanceKPIs.profitMarginPercent.toFixed(1)}%</span>
+              </div>
+            </div>
+
+            {/* Goods Cost Card */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">قيمة السلع بسعر التكلفة (للمورد)</span>
+              <div className="my-2 text-base sm:text-lg font-black text-slate-700 font-mono">
+                {formatPrice(performanceKPIs.costTotal)}
+              </div>
+              <p className="text-[9px] text-slate-400 leading-none">مستحقات الشراء وتكلفة الرفوف</p>
+            </div>
+
+            {/* Average Order Value (AOV) Card */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">متوسط قيمة الفاتورة المصدرة</span>
+              <div className="my-2 text-base sm:text-lg font-black text-slate-700 font-mono">
+                {formatPrice(performanceKPIs.avgOrderValue)}
+              </div>
+              <p className="text-[9px] text-slate-400 leading-none">معدل البيع لكل زبون بالعملية</p>
+            </div>
           </div>
         </div>
 
-        {/* Cost Basis Metric */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
-          <div className="space-y-2">
-            <span className="text-[10px] font-extrabold text-slate-400 block tracking-wider uppercase">قيمة المبيعات بسعر التكلفة (تسوية التاجر)</span>
-            <span className="text-2xl font-black font-mono tracking-tight text-amber-800 block">
-              {formatPrice(performanceKPIs.costTotal || (performanceKPIs.salesTotal - (performanceKPIs.profitTotal || 0)))}
-            </span>
-            <div className="flex items-center gap-1">
-              <span className="text-[9px] font-black text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-md leading-tight">
-                هذا هو المبلغ الذي يجب تسليمه للتاجر تعويضاً عن البضاعة المباعة (دون الأرباح).
+        {/* Panel B: Drawer Cash & Liquidity Dynamics */}
+        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
+          <div className="flex justify-between items-center pb-2.5 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                <Wallet className="w-4 h-4" />
               </span>
+              <h3 className="text-xs font-black text-slate-800">
+                حركة كاش الصندوق وحسابات السيولة والأرصدة الفورية
+              </h3>
             </div>
+            <span className="text-[10px] text-emerald-600 font-black">جرد وخزينة المبيعات</span>
           </div>
-          <div className="p-3 rounded-2xl bg-amber-50 text-amber-600">
-            <Database className="w-6 h-6" />
-          </div>
-        </div>
 
-        {/* Metric 3 */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
-          <div className="space-y-2">
-            <span className="text-[10px] font-extrabold text-slate-400 block tracking-wider uppercase">معدل تحصيل السداد الآجل</span>
-            <span className="text-2xl font-black font-mono tracking-tight text-purple-800 block">
-              {performanceKPIs.debtRecoveryRate.toFixed(1)}%
-            </span>
-            <div className="flex flex-col text-[10px] text-slate-400 gap-0.5 font-semibold">
-              <span className="text-purple-600">تسديدات محصّلة: {formatPrice(performanceKPIs.totalCollectedPayments)}</span>
-              <span>مبيعات آجلة: {formatPrice(performanceKPIs.totalPurchasedDebts)}</span>
+          <div className="grid grid-cols-2 gap-4">
+            {/* Absolute Cash in Drawer */}
+            <div className="bg-indigo-50/40 border border-indigo-100/40 p-4 rounded-2xl flex flex-col justify-between col-span-2">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-black text-indigo-700 flex items-center gap-1">
+                  💸 نقدية صندوق الدرج الملموسة والجاهزة للجرد (Cash in Drawer)
+                </span>
+                <span className="text-[8px] bg-indigo-100 text-indigo-800 font-black rounded-sm px-1 leading-none uppercase">فعلي وحي</span>
+              </div>
+              <div className="my-2.5 text-xl sm:text-2xl font-black text-indigo-900 font-mono">
+                {formatPrice(performanceKPIs.absoluteActualCashInDrawer)}
+              </div>
+              <p className="text-[9px] text-slate-500 leading-relaxed">
+                * يمثل الكاش المسلم بالدرج فعلياً. يعادل (كاش مبيعات + مدفوعات ديون) مطروحاً منه التسويات للملك والمسحوبات الشخصية.
+              </p>
             </div>
-          </div>
-          <div className="p-3 rounded-2xl bg-purple-50 text-purple-600">
-            <Users className="w-6 h-6" />
-          </div>
-        </div>
 
-        {/* Metric 4 */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-xs flex justify-between items-start transition-all hover:scale-[1.01]">
-          <div className="space-y-2">
-            <span className="text-[10px] font-extrabold text-slate-400 block tracking-wider uppercase">نزاهة وانضباط الصندوق</span>
-            <span className={`text-2xl font-black font-mono tracking-tight block ${performanceKPIs.boxMatchingScore >= 90 ? 'text-blue-800' : 'text-amber-800'}`}>
-              {performanceKPIs.boxMatchingScore.toFixed(0)}%
-            </span>
-            <div className="flex items-center gap-1 text-[10px] text-slate-400 font-bold">
-              {performanceKPIs.totalDeficitAmount > 0 ? (
-                <span className="text-red-500 bg-red-50 px-1.5 py-0.5 rounded-md flex items-center gap-0.5 leading-none">
-                  ⚠️ إجمالي العجز المسجل: {formatPrice(performanceKPIs.totalDeficitAmount)}
-                </span>
-              ) : (
-                <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md leading-none">
-                  ✓ الصندوق متطابق بالكامل ومحصن
-                </span>
-              )}
+            {/* Total Period Receipts */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">مقبوضات نقداً (كاش + تحصيلات)</span>
+              <div className="my-1 text-sm font-black text-slate-800 font-mono">
+                {formatPrice(performanceKPIs.receivedCashInPeriod)}
+              </div>
+              <p className="text-[9px] text-slate-400">إجمالي النقدية الواردة الصندوق</p>
             </div>
-          </div>
-          <div className="p-3 rounded-2xl bg-blue-50 text-blue-600">
-            <Award className="w-6 h-6" />
+
+            {/* Settlements to owner */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">مصفى للدرج والمالك مسبقاً</span>
+              <div className="my-1 text-sm font-black text-slate-800 font-mono">
+                {formatPrice(performanceKPIs.totalSettledAmount)}
+              </div>
+              <p className="text-[9px] text-slate-400">التصفيات الفعلية المرحّلة</p>
+            </div>
+
+            {/* Personal Withdrawals */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">نفقات ومسحوبات وسلفيات</span>
+              <div className="my-1 text-sm font-black text-rose-700 font-mono">
+                -{formatPrice(performanceKPIs.totalWithdrawals)}
+              </div>
+              <p className="text-[9px] text-slate-400">الذمم والسلفيات غير المسددة</p>
+            </div>
+
+            {/* Drawer accuracy score */}
+            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
+              <span className="text-[10px] font-black text-slate-400">دقة مطابقة عجز الصندوق</span>
+              <div className="my-1 text-sm font-black text-slate-800 font-mono flex items-center gap-1">
+                <span className={performanceKPIs.boxMatchingScore >= 95 ? 'text-emerald-600' : 'text-amber-600'}>
+                  {performanceKPIs.boxMatchingScore.toFixed(0)}%
+                </span>
+                {performanceKPIs.totalDeficitAmount > 0 && (
+                  <span className="text-[9px] font-black text-rose-600">(فجوة: {formatPrice(performanceKPIs.totalDeficitAmount)})</span>
+                )}
+              </div>
+              <p className="text-[9px] text-slate-400">مدى مطابقة حساب الدرج</p>
+            </div>
           </div>
         </div>
 
       </div>
 
-      {/* Accordion List 2: Charts and Liquidity balances (Collapsible to save huge space) */}
+      {/* BI Analytics Visualizer - Charts Workspace */}
       <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
         <button 
           onClick={() => setIsTrendsAndLiquidityOpen(!isTrendsAndLiquidityOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors pointer-cursor text-right"
+          className="w-full flex items-center justify-between p-5 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer text-right"
         >
-          <div className="flex items-center gap-2 font-black text-sm text-slate-800">
-            <TrendingUp className="w-4 h-4 text-emerald-500" />
-            <span>📈 توجه الحركة التراكمية وسيناريوهات التدفق المالي التفاعلي (Live Analytics Graphics)</span>
+          <div className="flex items-center gap-2 font-black text-sm text-slate-800 animate-none">
+            <TrendingUp className="w-4.5 h-4.5 text-indigo-600" />
+            <span>📈 شاشات التحليل البصري التفاعلي وحركة التدفق المالي العميقة (BI Graphics Dashboard)</span>
           </div>
-          {isTrendsAndLiquidityOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+          {isTrendsAndLiquidityOpen ? <ChevronUp className="w-4.5 h-4.5 text-slate-500" /> : <ChevronDown className="w-4.5 h-4.5 text-slate-500" />}
         </button>
 
         <AnimatePresence initial={false}>
@@ -957,181 +1125,368 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
               className="overflow-hidden border-t border-slate-100"
             >
               <div className="p-5 grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Area Chart */}
-                <div className="lg:col-span-2 space-y-3">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-500">منحنيات البيع والتراكم المالي للأرباح الكلية بالتواريخ</h3>
-                    <p className="text-[10px] text-slate-400">مراقبة الفروق المباشرة بين قيمة البيع وتكلفة شراء السلع</p>
+                
+                {/* Visual Trend Chart */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-3">
+                    <div>
+                      <h3 className="text-xs font-black text-slate-755 flex items-center gap-1.5">
+                        <BarChart3 className="w-4 h-4 text-indigo-500" />
+                        <span>منحنيات تتبع الأداء الحركي والمالي بالدورة</span>
+                      </h3>
+                      <p className="text-[10px] text-slate-400 mt-0.5">اضغط على التبويبات للتبديل بين اتجاهات الأرباح وسجل مسار الكاش</p>
+                    </div>
+
+                    {/* Chart Tab Selectors */}
+                    <div className="flex bg-slate-100 px-1 py-1 rounded-2xl text-[10px] font-black font-sans">
+                      <button
+                        onClick={() => setTrendChartType('sales_profit')}
+                        className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                          trendChartType === 'sales_profit' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        📈 المبيعات والأرباح
+                      </button>
+                      <button
+                        onClick={() => setTrendChartType('cash_flow')}
+                        className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                          trendChartType === 'cash_flow' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        💸 التدفق النقدي كاش
+                      </button>
+                    </div>
                   </div>
-                  
-                  <div className="h-60 sm:h-64 w-full bg-slate-50/50 rounded-2xl p-2 border border-slate-100/60">
-                    {salesAndProfitTrendChart.length === 0 ? (
-                      <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                        لا تتوفر حركة ملموسة للتواريخ الحالية في نطاق الفئات المحددة.
-                      </div>
+
+                  {/* Render Area/Line Charts */}
+                  <div className="h-64 sm:h-72 w-full bg-slate-50/40 rounded-2xl p-2 border border-slate-100 flex flex-col justify-between">
+                    {trendChartType === 'sales_profit' ? (
+                      salesAndProfitTrendChart.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                          لا تتوفر حركة ملموسة للتواريخ الحالية في نطاق الفئات المحددة.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="95%">
+                          <AreaChart data={salesAndProfitTrendChart} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorSalesNew" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.20}/>
+                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
+                              </linearGradient>
+                              <linearGradient id="colorProfitNew" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.20}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
+                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
+                            <Tooltip 
+                              contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
+                              formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات اليومية' : 'أرباح اليوم الصافية']}
+                            />
+                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
+                            <Area type="monotone" dataKey="totalAmount" name="totalAmount" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorSalesNew)" />
+                            <Area type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfitNew)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      )
                     ) : (
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={salesAndProfitTrendChart} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
-                              <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.0}/>
-                            </linearGradient>
-                            <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.15}/>
-                              <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                          <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="bold" />
-                          <YAxis stroke="#94a3b8" fontSize={9} fontWeight="bold" />
-                          <Tooltip 
-                            contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
-                            formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات اليومية' : 'هامش أرباح اليوم']}
-                          />
-                          <Area type="monotone" dataKey="totalAmount" name="totalAmount" stroke="#4f46e5" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
-                          <Area type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfit)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
+                      unifiedCashflowTimeline.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                          لا تتوفر حركات مالية كحصد مبيعات، سحب نقد، أو تسوية جرد بالتاريخ الحالي.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="95%">
+                          <AreaChart data={unifiedCashflowTimeline} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorMoneyIn" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#2563eb" stopOpacity={0.16}/>
+                                <stop offset="95%" stopColor="#2563eb" stopOpacity={0.0}/>
+                              </linearGradient>
+                              <linearGradient id="colorMoneyOut" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#dc2626" stopOpacity={0.12}/>
+                                <stop offset="95%" stopColor="#dc2626" stopOpacity={0.0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                            <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
+                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
+                            <Tooltip 
+                              contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
+                              formatter={(value: any, name: any) => [
+                                formatPrice(Math.round(value)), 
+                                name === 'moneyIn' ? 'المقبوضات (كاش مبيعات + تحصيل)' : name === 'moneyOut' ? 'المدفوعات (نفقات ومسحوبات وتصفية)' : 'صافي نمو الصندوق باليوم'
+                              ]}
+                            />
+                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
+                            <Area type="monotone" dataKey="moneyIn" name="moneyIn" stroke="#2563eb" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMoneyIn)" />
+                            <Area type="monotone" dataKey="moneyOut" name="moneyOut" stroke="#dc2626" strokeWidth={2} fillOpacity={1} fill="url(#colorMoneyOut)" />
+                            <Line type="monotone" dataKey="netRegisterChange" name="netRegisterChange" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4, strokeWidth: 1 }} />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      )
                     )}
                   </div>
                 </div>
 
-                {/* Donut Liquidity representation */}
-                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between space-y-4">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-500"> توازن وموجات الدفع السيولية</h3>
-                    <p className="text-[10px] text-slate-400">مقارنة السيولة الكاش الفورية والذمم والديون الملزمة</p>
+                {/* Donut Chart Representation for business balances */}
+                <div className="bg-slate-50/60 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between space-y-4">
+                  <div className="flex flex-col gap-2 border-b border-slate-150 pb-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black text-slate-755">توازن وموجات الدفع والسيولة</h3>
+                      
+                      <select 
+                        value={liquidityDonutType}
+                        onChange={(e) => setLiquidityDonutType(e.target.value as any)}
+                        className="bg-white border border-slate-200 py-1 px-1.5 rounded-lg text-[9px] font-black focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                      >
+                        <option value="revenue_mix">توزيع المبيعات (كاش/آجل)</option>
+                        <option value="liquidity_allocation">توزيع السيولة بالمنظومة</option>
+                      </select>
+                    </div>
+                    <p className="text-[10px] text-slate-400">بنية توزيع المال والسيولة لتأكيد ترابط وتوازن الصندوق</p>
                   </div>
 
+                  {/* Render dynamic interactive Pie Charts */}
                   <div className="h-40 w-full flex items-center justify-center relative">
                     {performanceKPIs.salesTotal === 0 ? (
-                      <span className="text-xs text-slate-400">لا تتوفر مبيعات</span>
+                      <span className="text-xs text-slate-400">لا تتوفر بيانات حية</span>
                     ) : (
                       <ResponsiveContainer width="100%" height="100%">
                         <RechartsPieChart>
-                          <Pie
-                            data={[
-                              { name: 'كاش وتوصيل نقد', value: performanceKPIs.cashSalesTotal },
-                              { name: 'ذمم وديون آجلة', value: performanceKPIs.debtSalesTotal }
-                            ]}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={45}
-                            outerRadius={60}
-                            paddingAngle={3}
-                            dataKey="value"
-                          >
-                            <Cell fill="#10b981" />
-                            <Cell fill="#f59e0b" />
-                          </Pie>
-                          <Tooltip formatter={(value: any) => formatPrice(value)} />
+                          {liquidityDonutType === 'revenue_mix' ? (
+                            <Pie
+                              data={[
+                                { name: 'بيوع نقدية (كاش)', value: performanceKPIs.cashSalesTotal },
+                                { name: 'مبيعات ديون (آجل)', value: performanceKPIs.debtSalesTotal }
+                              ]}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={45}
+                              outerRadius={60}
+                              paddingAngle={4}
+                              dataKey="value"
+                            >
+                              <Cell fill="#10b981" />
+                              <Cell fill="#f59e0b" />
+                            </Pie>
+                          ) : (
+                            <Pie
+                              data={[
+                                { name: 'المتوفر كاش بالصندوق', value: performanceKPIs.absoluteActualCashInDrawer },
+                                { name: 'المسحوبات المعلقة', value: performanceKPIs.totalWithdrawals },
+                                { name: 'المستلم التصفية', value: performanceKPIs.totalSettledAmount },
+                                { name: 'غير محصل (ذمم العملاء)', value: performanceKPIs.debtSalesTotal }
+                              ]}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={45}
+                              outerRadius={60}
+                              paddingAngle={4}
+                              dataKey="value"
+                            >
+                              <Cell fill="#3b82f6" />
+                              <Cell fill="#f43f5e" />
+                              <Cell fill="#8b5cf6" />
+                              <Cell fill="#d97706" />
+                            </Pie>
+                          )}
+                          <Tooltip 
+                            contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '12px', fontSize: '10px' }}
+                            formatter={(value: any) => formatPrice(value)} 
+                          />
                         </RechartsPieChart>
                       </ResponsiveContainer>
                     )}
                     <div className="absolute flex flex-col items-center">
-                      <span className="text-[8px] text-slate-400 font-extrabold uppercase">إجمالي المبيعات</span>
-                      <span className="text-xs font-black font-mono text-slate-700">{formatPrice(performanceKPIs.salesTotal)}</span>
+                      <span className="text-[7px] text-slate-400 font-extrabold uppercase">إجمالي المحرك</span>
+                      <span className="text-[11px] font-black font-mono text-slate-700">
+                        {liquidityDonutType === 'revenue_mix' 
+                          ? formatPrice(performanceKPIs.salesTotal) 
+                          : formatPrice(performanceKPIs.absoluteActualCashInDrawer + performanceKPIs.totalWithdrawals + performanceKPIs.totalSettledAmount + performanceKPIs.debtSalesTotal)
+                        }
+                      </span>
                     </div>
                   </div>
 
-                  <div className="space-y-2 border-t border-slate-150 pt-3 text-xs">
-                    <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-100 shadow-xs">
-                      <span className="flex items-center gap-1.5 text-slate-600 font-bold">
-                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 block"></span>
-                        المقاومة النقدية الصافية (الكاش):
-                      </span>
-                      <span className="font-bold text-emerald-800 font-mono">{formatPrice(performanceKPIs.cashSalesTotal)} ({((performanceKPIs.cashSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)</span>
-                    </div>
-                    <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-100 shadow-xs">
-                      <span className="flex items-center gap-1.5 text-slate-600 font-bold">
-                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500 block"></span>
-                        مبيعات الذمم والديون:
-                      </span>
-                      <span className="font-bold text-amber-800 font-mono">{formatPrice(performanceKPIs.debtSalesTotal)} ({((performanceKPIs.debtSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)</span>
-                    </div>
+                  {/* Legends and breakdowns */}
+                  <div className="space-y-1.5 border-t border-slate-150 pt-2 text-[11px]">
+                    {liquidityDonutType === 'revenue_mix' ? (
+                      <>
+                        <div className="flex justify-between items-center bg-white p-2 border border-slate-100 rounded-xl leading-none">
+                          <span className="flex items-center gap-1.5 font-bold text-slate-600">
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 block"></span>
+                            المقبوض المباشر (كاش):
+                          </span>
+                          <span className="font-extrabold text-emerald-800 font-mono">
+                            {formatPrice(performanceKPIs.cashSalesTotal)} ({((performanceKPIs.cashSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center bg-white p-2 border border-slate-100 rounded-xl leading-none">
+                          <span className="flex items-center gap-1.5 font-bold text-slate-600">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 block"></span>
+                            مبيعات بالآجل (الديون):
+                          </span>
+                          <span className="font-extrabold text-amber-800 font-mono">
+                            {formatPrice(performanceKPIs.debtSalesTotal)} ({((performanceKPIs.debtSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)
+                          </span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-1.5 text-[9px] font-bold">
+                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
+                          <span className="text-blue-500">🔵 كاش الصندوق:</span>
+                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.absoluteActualCashInDrawer)}</span>
+                        </div>
+                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
+                          <span className="text-rose-500">🔴 مسحوبات ونفقات:</span>
+                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.totalWithdrawals)}</span>
+                        </div>
+                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
+                          <span className="text-purple-500">🟣 كاش مصفى مسلّم:</span>
+                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.totalSettledAmount)}</span>
+                        </div>
+                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
+                          <span className="text-amber-600">🟠 ديون بالذمة:</span>
+                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.debtSalesTotal)}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
+
+              </div>
+              
+              {/* Note on automatic feeds to provide ultimate clarity */}
+              <div className="bg-slate-50 p-4 border-t border-slate-100 text-[11px] sm:text-xs text-slate-500 flex items-center gap-2 font-medium">
+                <HelpCircle className="w-4 h-4 text-indigo-500 shrink-0" />
+                <span>
+                  <strong>مؤشرات تفاعلية شاملة:</strong> الرسوم البيانية بالأعلى مترابطة بشكل حي وتلقائي مع كشوفات حساب الذمم، صندوق سلفيات وسحبيات الموظفين، وتسويات الجرد اليومي بالدرج لتمنحك رؤية فورية دقيقة لنمو راس المال.
+                </span>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Accordion List 3: Daily Sales Table ("جدول المبيعات اليومية التفصيلية لكل يوم") */}
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-        <button 
-          onClick={() => setIsDailySalesOpen(!isDailySalesOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors pointer-cursor text-right"
-        >
-          <div className="flex items-center gap-2 font-black text-sm text-slate-800">
-            <Calendar className="w-4 h-4 text-indigo-500" />
-            <span>📆 جدول حركة المبيعات التفصيلية لجميع الأيام (Daily Sales Balance Sheet)</span>
-            {searchedDailySales.length > 0 && (
-              <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black px-2 py-0.5 rounded-full">
-                {searchedDailySales.length} أيام مسجلة
-              </span>
-            )}
+      {/* Accordion List 3: The Ultimate Tabbed Ledger Explorer */}
+      <div className="bg-white border border-slate-150/60 rounded-3xl overflow-hidden shadow-sm">
+        {/* Ledger Header with Tab Switcher */}
+        <div className="p-4 sm:p-5 bg-slate-50/70 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+              <Database className="w-4.5 h-4.5 text-indigo-500" />
+              <span>مركز تتبع سجلات الحركة والمحاسبة المتكامل (Ledger Explorer Dashboard)</span>
+            </h3>
+            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+              اختر التبويب بالأسفل لعرض الدفتر اليومي الصافي، حسابات وأرصدة العملاء، أو تتبع ريادة مبيعات السلع والرفوف في مكان واحد
+            </p>
           </div>
-          {isDailySalesOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-        </button>
 
-        <AnimatePresence initial={false}>
-          {isDailySalesOpen && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden border-t border-slate-100"
+          {/* Core Tab Switches */}
+          <div className="flex bg-slate-100 p-1 rounded-2xl text-xs font-black w-full sm:w-auto">
+            <button
+              onClick={() => setActiveExplorerTab('daily')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer ${
+                activeExplorerTab === 'daily' 
+                  ? 'bg-white text-indigo-600 shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
             >
-              <div className="p-5 space-y-4">
-                {/* Search Day Filter */}
-                <div className="relative max-w-sm">
-                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Search className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="ابحث بالتاريخ كـ (02 / 06 / 2026)..."
-                    value={dailySearchKey}
-                    onChange={(e) => setDailySearchKey(e.target.value)}
-                    className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200/80 rounded-2xl pr-10 pl-4 py-2 text-xs font-bold text-slate-700 leading-none focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 grow shadow-2xs transition-all"
-                  />
+              <Calendar className="w-3.5 h-3.5" />
+              <span>📆 السجل اليومي</span>
+            </button>
+            <button
+              onClick={() => setActiveExplorerTab('customers')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer ${
+                activeExplorerTab === 'customers' 
+                  ? 'bg-white text-indigo-600 shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>👤 ذمم العملاء</span>
+            </button>
+            <button
+              onClick={() => setActiveExplorerTab('products')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer ${
+                activeExplorerTab === 'products' 
+                  ? 'bg-white text-indigo-600 shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>🏆 الرفوف والسلع</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tab Content Panels */}
+        <div className="p-5">
+          <AnimatePresence mode="wait">
+            {activeExplorerTab === 'daily' && (
+              <motion.div
+                key="daily_panel"
+                initial={{ opacity: 0, x: 15 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -15 }}
+                transition={{ duration: 0.15 }}
+                className="space-y-4"
+              >
+                {/* Search / Filters on table */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div className="relative w-full sm:max-w-xs">
+                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
+                      <Search className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="ابحث بالتاريخ كـ (05 / 06 / 2026)..."
+                      value={dailySearchKey}
+                      onChange={(e) => setDailySearchKey(e.target.value)}
+                      className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200/80 rounded-2xl pr-10 pl-4 py-2.5 text-xs font-bold text-slate-700 leading-none focus:outline-hidden focus:ring-2 focus:ring-indigo-500/35 shadow-153 px-3 py-1 scale-95 transition-all"
+                    />
+                  </div>
+                  {searchedDailySales.length > 0 && (
+                    <span className="text-[10px] font-black bg-indigo-50 border border-indigo-150 text-indigo-700 px-3 py-1 rounded-full shrink-0">
+                      إجمالي الأيام تحت التصفية: {searchedDailySales.length} يوماً مسجلاً
+                    </span>
+                  )}
                 </div>
 
-                {/* Table structure */}
                 {searchedDailySales.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-slate-400 bg-slate-50 rounded-2xl">
-                    لا توجد أي سجلات يومية مطابقة لمدخلات البحث الحالي.
+                  <div className="text-center py-10 text-xs text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    لا توجد أي حركات يومية مسجلة للتواريخ الحالية أو مدخلات البحث.
                   </div>
                 ) : (
-                  <div className="border border-slate-150/50 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                  <div className="border border-slate-150/55 rounded-2xl overflow-hidden shadow-2xs bg-white">
                     <div className="overflow-x-auto">
                       <table className="w-full text-right border-collapse text-xs">
                         <thead>
-                          <tr className="bg-slate-50 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
-                            <th className="p-4">اليوم وتاريخ الحركة الحسابية</th>
-                            <th className="p-4 text-center">عدد فواتير البيع</th>
-                            <th className="p-4">المبيعات النقدية (كاش)</th>
-                            <th className="p-4">المبيعات الآجلة (ديون)</th>
-                            <th className="p-4">صافي إجمالي المبيعات</th>
-                            <th className="p-4 text-amber-700">المبيعات بالتكلفة (للمورد)</th>
-                            <th className="p-4 text-emerald-800">الأرباح التقريبية لليوم</th>
+                          <tr className="bg-slate-50/80 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
+                            <th className="p-4">تاريخ الحركة</th>
+                            <th className="p-4 text-center">الفواتير المصدرة</th>
+                            <th className="p-4">كاش وشبكة (فوري)</th>
+                            <th className="p-4">آجل (ديون وذمم)</th>
+                            <th className="p-4">المبيعات الإجمالية</th>
+                            <th className="p-4 text-amber-700">التكلفة (للمورد)</th>
+                            <th className="p-4 text-emerald-800">الأرباح الصافية</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {searchedDailySales.map((day, index) => (
-                            <tr key={index} className="hover:bg-slate-50/50 transition-colors">
+                          {searchedDailySales.map((day, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
                               <td className="p-4 font-black text-slate-800 font-mono text-[13px] whitespace-nowrap">
                                 {day.dateStr}
                               </td>
-                              <td className="p-4 text-center font-bold text-slate-700">
-                                {day.count} فواتير
+                              <td className="p-4 text-center font-bold text-slate-600">
+                                {day.count} مبيعات
                               </td>
-                              <td className="p-4 font-semibold text-slate-600 font-mono">
+                              <td className="p-4 font-bold text-slate-650 font-mono">
                                 {formatPrice(day.cashAmount)}
                               </td>
-                              <td className="p-4 font-semibold text-amber-700 font-mono">
+                              <td className="p-4 font-bold text-amber-600 font-mono">
                                 {formatPrice(day.debtAmount)}
                               </td>
                               <td className="p-4 font-black text-indigo-600 font-mono text-[13px] whitespace-nowrap">
@@ -1154,71 +1509,56 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                     </div>
                   </div>
                 )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Accordion List 4: Customer / Person Specific Sales ("جدول التحليل التفصيلي لكل شخص و عميل للديون والمبيعات") */}
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-        <button 
-          onClick={() => setIsCustomerSalesOpen(!isCustomerSalesOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors pointer-cursor text-right"
-        >
-          <div className="flex items-center gap-2 font-black text-sm text-slate-800">
-            <Users className="w-4 h-4 text-indigo-500" />
-            <span>👥 كشوفات مبيعات وحركة حساب الأشخاص والعملاء بالتفصيل (Individual Sales Ledger)</span>
-            {searchedCustomerSales.length > 0 && (
-              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-full">
-                {searchedCustomerSales.length} شخص مسجل
-              </span>
+              </motion.div>
             )}
-          </div>
-          {isCustomerSalesOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-        </button>
 
-        <AnimatePresence initial={false}>
-          {isCustomerSalesOpen && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden border-t border-slate-100"
-            >
-              <div className="p-5 space-y-4">
-                {/* Search Customer Input */}
-                <div className="relative max-w-sm">
-                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Search className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="ابحث باسم الشخص أو العميل هنا..."
-                    value={customerSearchKey}
-                    onChange={(e) => setCustomerSearchKey(e.target.value)}
-                    className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200/80 rounded-2xl pr-10 pl-4 py-2 text-xs font-bold text-slate-700 leading-none focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30 grow shadow-2xs transition-all"
-                  />
+            {activeExplorerTab === 'customers' && (
+              <motion.div
+                key="customers_panel"
+                initial={{ opacity: 0, x: 15 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -15 }}
+                transition={{ duration: 0.15 }}
+                className="space-y-4"
+              >
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div className="relative w-full sm:max-w-xs">
+                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
+                      <Search className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="text"
+                      placeholder="ابحث باسم وسجل العميل..."
+                      value={customerSearchKey}
+                      onChange={(e) => setCustomerSearchKey(e.target.value)}
+                      className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200/80 rounded-2xl pr-10 pl-4 py-2.5 text-xs font-bold text-slate-700 leading-none focus:outline-hidden focus:ring-2 focus:ring-indigo-500/35 shadow-2xs transition-all"
+                    />
+                  </div>
+                  {searchedCustomerSales.length > 0 && (
+                    <span className="text-[10px] font-black bg-emerald-50 border border-emerald-150 text-emerald-700 px-3 py-1 rounded-full shrink-0">
+                      أشخاص مسجلين بالحسابات: {searchedCustomerSales.length} شخص
+                    </span>
+                  )}
                 </div>
 
-                {/* Customers Table wrapper */}
                 {searchedCustomerSales.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-slate-400 bg-slate-50 rounded-2xl">
-                    لا تتوفر مبيعات لأي أشخاص مطابقة للبحث تحت هذه الفلترة الحالية.
+                  <div className="text-center py-10 text-xs text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    لا تتوفر مبيعات أو أشخاص مسجلين مطابقة للبحث الحالي.
                   </div>
                 ) : (
-                  <div className="border border-slate-150/50 rounded-2xl overflow-hidden shadow-2xs bg-white">
+                  <div className="border border-slate-150/55 rounded-2xl overflow-hidden shadow-2xs bg-white">
                     <div className="overflow-x-auto">
                       <table className="w-full text-right border-collapse text-xs">
                         <thead>
-                          <tr className="bg-slate-50 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
-                            <th className="p-4">الشخص / اسم العميل بالمتجر</th>
+                          <tr className="bg-slate-50/80 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
+                            <th className="p-4">اسم الشخص / العميل بالدفتر</th>
                             <th className="p-4 text-center">الفواتير المنفذة</th>
-                            <th className="p-4">إجمالي السداد كاش</th>
+                            <th className="p-4">نقد مسدد (كاش)</th>
                             <th className="p-4">ذمم آجلة (دين)</th>
-                            <th className="p-4 font-bold text-slate-700">مجموع المشتريات مبيعات</th>
-                            <th className="p-4 text-purple-800">الرصيد الحالي المتبقي بالذمة</th>
-                            <th className="p-4">حصة المساهمة (%)</th>
+                            <th className="p-4">مجموع مشترياته الكلية</th>
+                            <th className="p-4 text-rose-700">الرصيد الحالي المتبقي بالذمة</th>
+                            <th className="p-4 text-center">حالة الحساب المالي</th>
+                            <th className="p-4">مساهمة المشتريات (%)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -1229,31 +1569,41 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
                             return (
                               <tr key={cust.id || idx} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-4 font-bold text-slate-800 whitespace-nowrap">
+                                <td className="p-4 font-black text-slate-800 whitespace-nowrap">
                                   {cust.name}
                                 </td>
-                                <td className="p-4 text-center font-semibold text-slate-700 font-mono">
+                                <td className="p-4 text-center font-bold text-slate-600 font-mono">
                                   {cust.count} فواتير
                                 </td>
-                                <td className="p-4 text-slate-600 font-mono whitespace-nowrap">
+                                <td className="p-4 font-bold text-slate-600 font-mono whitespace-nowrap">
                                   {formatPrice(cust.cashAmount)}
                                 </td>
-                                <td className="p-4 text-amber-700 font-mono whitespace-nowrap">
+                                <td className="p-4 font-bold text-amber-700 font-mono whitespace-nowrap">
                                   {formatPrice(cust.debtAmount)}
                                 </td>
-                                <td className="p-4 font-black text-indigo-600 text-[13px] font-mono whitespace-nowrap">
+                                <td className="p-4 font-black text-indigo-600 font-mono text-[13px] whitespace-nowrap">
                                   {formatPrice(cust.totalAmount)}
                                 </td>
-                                <td className={`p-4 font-black font-mono text-[13px] whitespace-nowrap ${cust.balance > 0 ? 'text-rose-600 bg-rose-50/40' : 'text-slate-650'}`}>
+                                <td className={`p-4 font-black font-mono text-[13.5px] whitespace-nowrap ${cust.balance > 0 ? 'text-rose-700 bg-rose-50/40 font-extrabold' : 'text-slate-600'}`}>
                                   {formatPrice(cust.balance)}
                                 </td>
+                                <td className="p-4 text-center whitespace-nowrap">
+                                  {cust.balance > 0 ? (
+                                    <span className="bg-rose-50 border border-rose-100 text-rose-700 leading-none text-[10px] font-black px-2.5 py-1 rounded-full">
+                                      ⚠️ بالذمة: عجز مالي بقيمة المعلقة
+                                    </span>
+                                  ) : (
+                                    <span className="bg-emerald-50 border border-emerald-100 text-emerald-700 leading-none text-[10px] font-black px-2.5 py-1 rounded-full">
+                                      ✅ خالٍ من العجز والذمم ومسدد
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="p-4 whitespace-nowrap">
-                                  {/* Sleek inline progress bar share */}
-                                  <div className="flex items-center gap-2 min-w-[100px]">
+                                  <div className="flex items-center gap-2 min-w-[90px]">
                                     <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                                       <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, pct)}%` }}></div>
                                     </div>
-                                    <span className="text-[10px] font-bold text-slate-500 font-mono">{pct.toFixed(0)}%</span>
+                                    <span className="text-[10px] font-black text-slate-500 font-mono">{pct.toFixed(0)}%</span>
                                   </div>
                                 </td>
                               </tr>
@@ -1264,76 +1614,60 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                     </div>
                   </div>
                 )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+              </motion.div>
+            )}
 
-      {/* Accordion List 5: Category and Products Performance (interactive layout) */}
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-        <button 
-          onClick={() => setIsCategoryPerformanceOpen(!isCategoryPerformanceOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors pointer-cursor text-right"
-        >
-          <div className="flex items-center gap-2 font-black text-sm text-slate-800">
-            <Layers className="w-4 h-4 text-indigo-500" />
-            <span>🏆 ريادة السلع والأصناف الأكثر مبيعاً وأرباحاً (Product & Class Leadership Charts)</span>
-          </div>
-          {isCategoryPerformanceOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-        </button>
-
-        <AnimatePresence initial={false}>
-          {isCategoryPerformanceOpen && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden border-t border-slate-100"
-            >
-              <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-6">
-                
-                {/* Rated products bar lists */}
-                <div className="space-y-4">
+            {activeExplorerTab === 'products' && (
+              <motion.div
+                key="products_panel"
+                initial={{ opacity: 0, x: 15 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -15 }}
+                transition={{ duration: 0.15 }}
+                className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+              >
+                {/* Horizontal Top Rated products bar list */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
                   <div>
-                    <h3 className="text-xs font-bold text-slate-500">المنتجات الخمسة الأولى المحققة لأعلى عائد ربحي</h3>
-                    <p className="text-[10px] text-slate-400">قيمة المبيعات الإجمالية مقارنة بهوامش الأرباح المحققة</p>
+                    <h3 className="text-xs font-black text-slate-700">ترتيب مساهمة السلع الفردية</h3>
+                    <p className="text-[10px] text-slate-400 mt-0.5">المنتجات الخمسة الأولى المحققة لأعلى عائد مالي وأرباح</p>
                   </div>
 
-                  <div className="h-60 sm:h-64 w-full bg-slate-50/50 rounded-2xl p-2 border border-slate-100/60">
+                  <div className="h-64 w-full bg-white rounded-2xl p-2 border border-slate-100">
                     {topProductsChart.length === 0 ? (
                       <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                        لم يتم تسجيل أي منتجات مباعة في هذا النطاق.
+                        لم يتم تسجيل أي بضائع مباعة بالتصفية المحددة.
                       </div>
                     ) : (
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={topProductsChart} layout="vertical" margin={{ top: 10, right: 30, left: -20, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                           <XAxis type="number" stroke="#94a3b8" fontSize={9} fontWeight="bold" />
-                          <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={9} fontWeight="bold" width={100} tickLine={false} />
+                          <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={9} fontWeight="extrabold" width={110} tickLine={false} />
                           <Tooltip 
                             contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', fontSize: '11px' }}
-                            formatter={(value: any) => [formatPrice(value), 'العائد المالي']}
+                            formatter={(value: any, name: any) => [formatPrice(value), name === 'revenue' ? 'المبيعات' : 'الأرباح']}
                           />
-                          <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={10} />
-                          <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={10} />
+                          <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
+                          <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={9} />
+                          <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={9} />
                         </BarChart>
                       </ResponsiveContainer>
                     )}
                   </div>
                 </div>
 
-                {/* Ranked category breakdowns list */}
-                <div className="space-y-4">
+                {/* Ranked category shelving share list */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
                   <div>
-                    <h3 className="text-xs font-bold text-slate-500">ترتيب مساهمة السلع حسب تصنيفات الرفوف</h3>
-                    <p className="text-[10px] text-slate-400">قائمة الأصناف الحسابية مساهمة في تعزيز مبيعات المتجر</p>
+                    <h3 className="text-xs font-black text-slate-700">نسبة مساهمة السلع حسب تصنيفات الرفوف</h3>
+                    <p className="text-[10px] text-slate-400 mt-0.5">قوة ومبيعات فئات المخزن وتأثيرها على العوائد المالية الكلية</p>
                   </div>
 
-                  <div className="space-y-2 max-h-[250px] overflow-y-auto custom-scrollbar pr-1">
+                  <div className="space-y-2 max-h-[256px] overflow-y-auto custom-scrollbar pr-1">
                     {categorySalesChart.length === 0 ? (
                       <div className="text-center py-10 text-xs text-slate-400">
-                        لا توجد فئات للبيع حالياً.
+                        لا توجد فئات رفوف مباعة ملموسة تحت تاريخ التصفية.
                       </div>
                     ) : (
                       categorySalesChart.map((cat, idx) => {
@@ -1341,29 +1675,29 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                         const percentage = ((cat.sales / totalSalesForPercentage) * 100);
                         
                         return (
-                          <div key={idx} className="p-3 bg-slate-50 rounded-2xl border border-slate-100/60 flex items-center justify-between gap-3 text-right">
+                          <div key={idx} className="p-3 bg-white rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-right">
                             <div className="space-y-1 w-full">
                               <div className="flex justify-between items-center">
-                                <span className="font-bold text-xs text-slate-800">{cat.name}</span>
+                                <span className="font-extrabold text-xs text-slate-800">{cat.name}</span>
                                 <span className="font-extrabold text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
-                                  ربح: {formatPrice(cat.profit)}
+                                  الصافي: {formatPrice(cat.profit)}
                                 </span>
                               </div>
                               
                               <div className="flex items-center gap-2">
-                                <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                                   <div 
                                     className="h-full bg-indigo-500 rounded-full" 
                                     style={{ width: `${Math.min(100, percentage)}%` }}
                                   ></div>
                                 </div>
-                                <span className="text-[9px] font-mono font-bold text-slate-500 shrink-0">
+                                <span className="text-[9px] font-mono font-black text-slate-500 shrink-0">
                                   {percentage.toFixed(0)}%
                                 </span>
                               </div>
                               
-                              <p className="text-[10px] text-slate-400">
-                                مجموع مبيعات فواتير: <span className="font-mono text-slate-650 font-bold">{formatPrice(cat.sales)}</span>
+                              <p className="text-[10px] text-slate-400 font-bold">
+                                مجموع مبيعات الرف: <span className="font-mono text-slate-600 font-black">{formatPrice(cat.sales)}</span>
                               </p>
                             </div>
                           </div>
@@ -1372,24 +1706,23 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                     )}
                   </div>
                 </div>
-
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
       {/* Accordion List 6: AI Intelligent Insights & Guidance */}
       <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
         <button 
           onClick={() => setIsInsightsOpen(!isInsightsOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors pointer-cursor text-right"
+          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer text-right"
         >
           <div className="flex items-center gap-2 font-black text-sm text-slate-800">
-            <Sparkles className="w-4 h-4 text-indigo-500" />
+            <Sparkles className="w-4.5 h-4.5 text-indigo-500" />
             <span>🤖 الذكاء التحليلي والتوصيات الحسابية الموجهة (Robotic Advisor System)</span>
           </div>
-          {isInsightsOpen ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+          {isInsightsOpen ? <ChevronUp className="w-4.5 h-4.5 text-slate-500" /> : <ChevronDown className="w-4.5 h-4.5 text-slate-500" />}
         </button>
 
         <AnimatePresence initial={false}>
@@ -1402,19 +1735,19 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
             >
               <div className="p-5">
                 <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 border border-slate-800 rounded-3xl p-6 shadow-md text-white overflow-hidden relative">
-                  {/* Subtle bubble light design decoration */}
+                  {/* Bubble light design decor */}
                   <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl"></div>
                   <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
 
                   <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-3">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-yellow-300 animate-pulse" />
-                      <h3 className="text-sm font-extrabold">موجز تقرير الذكاء والحلول المالية الذكية</h3>
+                      <h3 className="text-sm font-extrabold text-white">موجز تقرير الذكاء والحلول المالية الذكية</h3>
                     </div>
-                    <span className="text-[9px] bg-white/10 px-2.5 py-0.5 rounded-full font-bold">بذات الدورة الحالية</span>
+                    <span className="text-[9px] bg-white/10 px-2.5 py-0.5 rounded-full font-bold">بموجب الدورة والفلترة الحالية</span>
                   </div>
 
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto custom-scrollbar pr-1">
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto custom-scrollbar pr-1 animate-none">
                     {smartAIRecommendations.map((insight) => (
                       <div 
                         key={insight.id} 

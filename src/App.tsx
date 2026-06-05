@@ -172,16 +172,22 @@ export default function App() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [addProfitPercent, setAddProfitPercent] = useState<string>('');
   const [editProfitPercent, setEditProfitPercent] = useState<string>('');
+  const [editCostStr, setEditCostStr] = useState<string>('');
+  const [editSaleStr, setEditSaleStr] = useState<string>('');
 
   useEffect(() => {
     if (editingProduct) {
-      if (editingProduct.cost_price > 0 && editingProduct.sale_price >= 0) {
-        const pct = Math.round(((editingProduct.sale_price - editingProduct.cost_price) / editingProduct.cost_price) * 100);
+      setEditCostStr(editingProduct.cost_price === 0 ? '' : editingProduct.cost_price.toString());
+      setEditSaleStr(editingProduct.sale_price === 0 ? '' : editingProduct.sale_price.toString());
+      if (editingProduct.cost_price > 0 && editingProduct.sale_price > 0) {
+        const pct = Math.round(((editingProduct.sale_price - editingProduct.cost_price) / editingProduct.sale_price) * 100);
         setEditProfitPercent(pct.toString());
       } else {
         setEditProfitPercent('');
       }
     } else {
+      setEditCostStr('');
+      setEditSaleStr('');
       setEditProfitPercent('');
     }
   }, [editingProduct?.id]);
@@ -198,7 +204,7 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [storeName, setStoreName] = useState('النظام المحاسبي');
   const [currency, setCurrency] = useState('ر.ي');
-  const [roundingFactor, setRoundingFactor] = useState<number | null>(50);
+  const [roundingFactor, setRoundingFactor] = useState<number | null>(null);
   const [showReceipt, setShowReceipt] = useState<any>(null);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
@@ -457,7 +463,11 @@ export default function App() {
     return Number(price.toFixed(2));
   };
 
-  const formatPrice = (price: number) => `${price} ${currency}`;
+  const formatPrice = (price: number) => {
+    const val = typeof price === 'number' && !isNaN(price) ? price : 0;
+    const roundedPrice = applyCurrencyRounding(val);
+    return `${roundedPrice} ${currency}`;
+  };
 
   const customerStats = React.useMemo(() => {
     if (!showCustomerDetails) return { totalPurchased: 0, totalPaid: 0 };
@@ -926,111 +936,162 @@ export default function App() {
     });
   };
 
+  const formatCalculatedValue = (val: number): string => {
+    if (isNaN(val) || !isFinite(val)) return '';
+    return Number(val.toFixed(2)).toString();
+  };
+
   const handleAddCostChange = (costStr: string) => {
-    const cost = parseFloat(costStr) || 0;
-    let saleStr = newProduct.sale;
-    let computedPercent = addProfitPercent;
+    setNewProduct(prev => ({ ...prev, cost: costStr }));
+    const cost = parseFloat(costStr);
+    if (isNaN(cost) || cost <= 0) return;
 
-    if (cost > 0 && addProfitPercent !== '') {
-      const pct = parseFloat(addProfitPercent) || 0;
-      const computedSale = cost * (1 + pct / 100);
-      saleStr = applyCurrencyRounding(computedSale).toString();
-    } else if (cost > 0 && newProduct.sale !== '') {
-      const sale = parseFloat(newProduct.sale) || 0;
-      computedPercent = Math.round(((sale - cost) / cost) * 100).toString();
+    const pct = parseFloat(addProfitPercent);
+    const sale = parseFloat(newProduct.sale);
+
+    if (!isNaN(pct) && addProfitPercent !== '') {
+      let computedSale = 0;
+      if (pct < 100) {
+        computedSale = cost / (1 - pct / 100);
+      } else {
+        computedSale = cost * (1 + pct / 100);
+      }
+      setNewProduct(prev => ({ ...prev, sale: formatCalculatedValue(applyCurrencyRounding(computedSale)) }));
+    } else if (!isNaN(sale) && sale > 0) {
+      const computedPct = ((sale - cost) / sale) * 100;
+      setAddProfitPercent(formatCalculatedValue(computedPct));
     }
-
-    setAddProfitPercent(computedPercent);
-    setNewProduct(prev => ({ ...prev, cost: costStr, sale: saleStr }));
   };
 
   const handleAddProfitPercentChange = (pctStr: string) => {
     setAddProfitPercent(pctStr);
-    const pct = parseFloat(pctStr) || 0;
-    const cost = parseFloat(newProduct.cost) || 0;
-    const sale = parseFloat(newProduct.sale) || 0;
+    const pct = parseFloat(pctStr);
+    if (isNaN(pct)) return;
 
-    if (cost > 0) {
-      if (pctStr !== '') {
-        const computedSale = cost * (1 + pct / 100);
-        setNewProduct(prev => ({ ...prev, sale: applyCurrencyRounding(computedSale).toString() }));
+    const cost = parseFloat(newProduct.cost);
+    const sale = parseFloat(newProduct.sale);
+
+    if (!isNaN(cost) && cost > 0) {
+      let computedSale = 0;
+      if (pct < 100) {
+        computedSale = cost / (1 - pct / 100);
       } else {
-        setNewProduct(prev => ({ ...prev, sale: '' }));
+        computedSale = cost * (1 + pct / 100);
       }
-    } else if (sale > 0 && pctStr !== '') {
-      const computedCost = sale / (1 + pct / 100);
-      setNewProduct(prev => ({ ...prev, cost: Number(computedCost.toFixed(2)).toString() }));
+      setNewProduct(prev => ({ ...prev, sale: formatCalculatedValue(applyCurrencyRounding(computedSale)) }));
+    } else if (!isNaN(sale) && sale > 0) {
+      const computedCost = sale * (1 - pct / 100);
+      setNewProduct(prev => ({ ...prev, cost: formatCalculatedValue(computedCost) }));
     }
   };
 
   const handleAddSaleChange = (saleStr: string) => {
-    const sale = parseFloat(saleStr) || 0;
-    const cost = parseFloat(newProduct.cost) || 0;
-    const pct = parseFloat(addProfitPercent) || 0;
-
-    if (cost > 0 && saleStr !== '') {
-      const computedPct = Math.round(((sale - cost) / cost) * 100);
-      setAddProfitPercent(computedPct.toString());
-    } else if (addProfitPercent !== '' && saleStr !== '') {
-      const computedCost = sale / (1 + pct / 100);
-      setNewProduct(prev => ({ ...prev, cost: Number(computedCost.toFixed(2)).toString() }));
-    }
     setNewProduct(prev => ({ ...prev, sale: saleStr }));
+    const sale = parseFloat(saleStr);
+    if (isNaN(sale) || sale <= 0) return;
+
+    const cost = parseFloat(newProduct.cost);
+    const pct = parseFloat(addProfitPercent);
+
+    if (!isNaN(cost) && cost > 0) {
+      const computedPct = ((sale - cost) / sale) * 100;
+      setAddProfitPercent(formatCalculatedValue(computedPct));
+    } else if (!isNaN(pct) && addProfitPercent !== '') {
+      const computedCost = sale * (1 - pct / 100);
+      setNewProduct(prev => ({ ...prev, cost: formatCalculatedValue(computedCost) }));
+    }
   };
 
-  const handleEditCostChange = (costPriceNum: number) => {
+  const handleEditCostChange = (costStr: string) => {
+    setEditCostStr(costStr);
     if (!editingProduct) return;
-    const cost = costPriceNum;
+
+    const cost = parseFloat(costStr);
     let computedSalePrice = editingProduct.sale_price;
     let computedPercent = editProfitPercent;
 
-    if (cost > 0 && editProfitPercent !== '') {
-      const pct = parseFloat(editProfitPercent) || 0;
-      const computedSale = cost * (1 + pct / 100);
-      computedSalePrice = applyCurrencyRounding(computedSale);
-    } else if (cost > 0 && editingProduct.sale_price > 0) {
-      computedPercent = Math.round(((editingProduct.sale_price - cost) / cost) * 100).toString();
+    if (!isNaN(cost) && cost > 0) {
+      const pct = parseFloat(editProfitPercent);
+      const sale = parseFloat(editSaleStr);
+
+      if (!isNaN(pct) && editProfitPercent !== '') {
+        let computedSale = 0;
+        if (pct < 100) {
+          computedSale = cost / (1 - pct / 100);
+        } else {
+          computedSale = cost * (1 + pct / 100);
+        }
+        computedSalePrice = applyCurrencyRounding(computedSale);
+        setEditSaleStr(formatCalculatedValue(computedSalePrice));
+      } else if (!isNaN(sale) && sale > 0) {
+        const computedPct = ((sale - cost) / sale) * 100;
+        computedPercent = formatCalculatedValue(computedPct);
+        setEditProfitPercent(computedPercent);
+      }
     }
 
-    setEditProfitPercent(computedPercent);
-    setEditingProduct(prev => prev ? { ...prev, cost_price: cost, sale_price: computedSalePrice } : null);
+    setEditingProduct(prev => prev ? { 
+      ...prev, 
+      cost_price: isNaN(cost) ? 0 : cost, 
+      sale_price: computedSalePrice 
+    } : null);
   };
 
   const handleEditProfitPercentChange = (pctStr: string) => {
     setEditProfitPercent(pctStr);
     if (!editingProduct) return;
-    const pct = parseFloat(pctStr) || 0;
-    let cost = editingProduct.cost_price;
-    let salePrice = editingProduct.sale_price;
 
-    if (cost > 0) {
-      if (pctStr !== '') {
-        salePrice = applyCurrencyRounding(cost * (1 + pct / 100));
+    const pct = parseFloat(pctStr);
+    let cost = parseFloat(editCostStr);
+    let salePrice = parseFloat(editSaleStr);
+
+    if (isNaN(pct)) return;
+
+    if (!isNaN(cost) && cost > 0) {
+      let computedSale = 0;
+      if (pct < 100) {
+        computedSale = cost / (1 - pct / 100);
       } else {
-        salePrice = 0;
+        computedSale = cost * (1 + pct / 100);
       }
-      setEditingProduct(prev => prev ? { ...prev, sale_price: salePrice } : null);
-    } else if (salePrice > 0 && pctStr !== '') {
-      cost = Number((salePrice / (1 + pct / 100)).toFixed(2));
-      setEditingProduct(prev => prev ? { ...prev, cost_price: cost } : null);
+      salePrice = applyCurrencyRounding(computedSale);
+      setEditSaleStr(formatCalculatedValue(salePrice));
+    } else if (!isNaN(salePrice) && salePrice > 0) {
+      cost = salePrice * (1 - pct / 100);
+      setEditCostStr(formatCalculatedValue(cost));
     }
+
+    setEditingProduct(prev => prev ? { 
+      ...prev, 
+      cost_price: isNaN(cost) ? prev.cost_price : cost, 
+      sale_price: isNaN(salePrice) ? prev.sale_price : salePrice 
+    } : null);
   };
 
-  const handleEditSaleChange = (salePriceNum: number) => {
+  const handleEditSaleChange = (saleStr: string) => {
+    setEditSaleStr(saleStr);
     if (!editingProduct) return;
-    const sale = salePriceNum;
-    let cost = editingProduct.cost_price;
+
+    const sale = parseFloat(saleStr);
+    let cost = parseFloat(editCostStr);
     let pctStr = editProfitPercent;
 
-    if (cost > 0 && sale > 0) {
-      pctStr = Math.round(((sale - cost) / cost) * 100).toString();
-    } else if (editProfitPercent !== '' && sale > 0) {
-      const pct = parseFloat(editProfitPercent) || 0;
-      cost = Number((sale / (1 + pct / 100)).toFixed(2));
+    if (!isNaN(sale) && sale > 0) {
+      if (!isNaN(cost) && cost > 0) {
+        pctStr = formatCalculatedValue(((sale - cost) / sale) * 100);
+        setEditProfitPercent(pctStr);
+      } else if (!isNaN(parseFloat(editProfitPercent)) && editProfitPercent !== '') {
+        const pct = parseFloat(editProfitPercent);
+        cost = sale * (1 - pct / 100);
+        setEditCostStr(formatCalculatedValue(cost));
+      }
     }
 
-    setEditProfitPercent(pctStr);
-    setEditingProduct(prev => prev ? { ...prev, cost_price: cost, sale_price: sale } : null);
+    setEditingProduct(prev => prev ? { 
+      ...prev, 
+      cost_price: isNaN(cost) ? prev.cost_price : cost, 
+      sale_price: isNaN(sale) ? 0 : sale 
+    } : null);
   };
 
   const handleAddProduct = async () => {
@@ -1223,10 +1284,6 @@ export default function App() {
       await db.settings.add({ key: 'currency', value: newCurrency });
     }
     setCurrency(newCurrency);
-    
-    // Automatically adjust rounding based on currency
-    const newRounding = newCurrency === 'ر.ي' ? 50 : null;
-    await updateRoundingFactor(newRounding, true);
 
     showNotification('تم تحديث العملة');
   };
@@ -3885,8 +3942,8 @@ export default function App() {
                       type="number" 
                       placeholder="التكلفة" 
                       className="w-full p-2.5 bg-slate-100 rounded-xl text-center text-sm font-semibold" 
-                      value={editingProduct.cost_price === 0 ? '' : editingProduct.cost_price} 
-                      onChange={e => handleEditCostChange(Number(e.target.value))} 
+                      value={editCostStr} 
+                      onChange={e => handleEditCostChange(e.target.value)} 
                     />
                   </div>
                   <div className="space-y-1">
@@ -3905,8 +3962,8 @@ export default function App() {
                       type="number" 
                       placeholder="البيع" 
                       className="w-full p-2.5 bg-emerald-50 text-emerald-700 placeholder-emerald-300 rounded-xl text-center text-sm font-bold border border-emerald-100 focus:outline-none focus:ring-1 focus:ring-emerald-400" 
-                      value={editingProduct.sale_price === 0 ? '' : editingProduct.sale_price} 
-                      onChange={e => handleEditSaleChange(Number(e.target.value))} 
+                      value={editSaleStr} 
+                      onChange={e => handleEditSaleChange(e.target.value)} 
                     />
                   </div>
                 </div>
