@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import BarcodeScanner from './components/BarcodeScanner';
@@ -118,7 +118,11 @@ export default function App() {
     }));
   }, [sales, customers]);
 
-  const [summary, setSummary] = useState<Summary>({ totalSales: 0, totalCostOfSales: 0, totalDebts: 0, lowStock: 0, totalProfit: 0, totalInventoryCost: 0, monthlySales: 0, todaySales: 0, weeklySales: 0 });
+  const [summary, setSummary] = useState<Summary>(() => {
+    const cached = localStorage.getItem('cached_summary');
+    return cached ? JSON.parse(cached) : { totalSales: 0, totalCostOfSales: 0, totalDebts: 0, lowStock: 0, totalProfit: 0, totalInventoryCost: 0, monthlySales: 0, todaySales: 0, weeklySales: 0 };
+  });
+
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [historyFilter, setHistoryFilter] = useState<'all' | 'cash' | 'debt'>('all');
   const [expandedSaleId, setExpandedSaleId] = useState<number | null>(null);
@@ -150,6 +154,7 @@ export default function App() {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined as number | undefined });
+
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product'>('pos');
   const [scannedProductInfo, setScannedProductInfo] = useState<Product | null>(null);
@@ -167,6 +172,7 @@ export default function App() {
   const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
   const [showSupplierDetails, setShowSupplierDetails] = useState<Supplier | null>(null);
   const [showSupplierPaymentModal, setShowSupplierPaymentModal] = useState<Supplier | null>(null);
+  const [selectedSupplierPayment, setSelectedSupplierPayment] = useState<any | null>(null);
   const [supplierPaymentAmount, setSupplierPaymentAmount] = useState('');
   const [supplierPaymentNotes, setSupplierPaymentNotes] = useState('');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -466,7 +472,7 @@ export default function App() {
   const formatPrice = (price: number) => {
     const val = typeof price === 'number' && !isNaN(price) ? price : 0;
     const roundedPrice = applyCurrencyRounding(val);
-    return `${roundedPrice} ${currency}`;
+    return `${roundedPrice.toLocaleString('en-US')} ${currency}`;
   };
 
   const customerStats = React.useMemo(() => {
@@ -554,7 +560,7 @@ export default function App() {
 
     const totalSupplierBalances = (await db.suppliers.toArray()).reduce((sum, s) => sum + (s.balance || 0), 0);
 
-    setSummary({
+    const summaryData = {
       totalSales,
       totalCostOfSales: totalSupplierBalances,
       totalDebts,
@@ -564,7 +570,9 @@ export default function App() {
       monthlySales,
       todaySales,
       weeklySales
-    });
+    };
+    setSummary(summaryData);
+    localStorage.setItem('cached_summary', JSON.stringify(summaryData));
   };
 
   const handleDeleteSupplier = async (id: number) => {
@@ -942,64 +950,72 @@ export default function App() {
   };
 
   const handleAddCostChange = (costStr: string) => {
-    setNewProduct(prev => ({ ...prev, cost: costStr }));
     const cost = parseFloat(costStr);
-    if (isNaN(cost) || cost <= 0) return;
+    setNewProduct(prev => {
+      const pct = parseFloat(addProfitPercent);
+      const sale = parseFloat(prev.sale);
+      let nextProduct = { ...prev, cost: costStr };
 
-    const pct = parseFloat(addProfitPercent);
-    const sale = parseFloat(newProduct.sale);
-
-    if (!isNaN(pct) && addProfitPercent !== '') {
-      let computedSale = 0;
-      if (pct < 100) {
-        computedSale = cost / (1 - pct / 100);
-      } else {
-        computedSale = cost * (1 + pct / 100);
+      if (!isNaN(cost) && cost > 0) {
+        if (!isNaN(pct) && addProfitPercent !== '') {
+          let computedSale = 0;
+          if (pct < 100) {
+            computedSale = cost / (1 - pct / 100);
+          } else {
+            computedSale = cost * (1 + pct / 100);
+          }
+          nextProduct.sale = formatCalculatedValue(applyCurrencyRounding(computedSale));
+        } else if (!isNaN(sale) && sale > 0) {
+          const computedPct = ((sale - cost) / sale) * 100;
+          setAddProfitPercent(formatCalculatedValue(computedPct));
+        }
       }
-      setNewProduct(prev => ({ ...prev, sale: formatCalculatedValue(applyCurrencyRounding(computedSale)) }));
-    } else if (!isNaN(sale) && sale > 0) {
-      const computedPct = ((sale - cost) / sale) * 100;
-      setAddProfitPercent(formatCalculatedValue(computedPct));
-    }
+      return nextProduct;
+    });
   };
 
   const handleAddProfitPercentChange = (pctStr: string) => {
     setAddProfitPercent(pctStr);
     const pct = parseFloat(pctStr);
-    if (isNaN(pct)) return;
+    setNewProduct(prev => {
+      const cost = parseFloat(prev.cost);
+      const sale = parseFloat(prev.sale);
+      let nextProduct = { ...prev };
 
-    const cost = parseFloat(newProduct.cost);
-    const sale = parseFloat(newProduct.sale);
-
-    if (!isNaN(cost) && cost > 0) {
-      let computedSale = 0;
-      if (pct < 100) {
-        computedSale = cost / (1 - pct / 100);
-      } else {
-        computedSale = cost * (1 + pct / 100);
+      if (!isNaN(pct)) {
+        if (!isNaN(sale) && sale > 0) {
+          nextProduct.cost = formatCalculatedValue(sale * (1 - pct / 100));
+        } else if (!isNaN(cost) && cost > 0) {
+          let computedSale = 0;
+          if (pct < 100) {
+            computedSale = cost / (1 - pct / 100);
+          } else {
+            computedSale = cost * (1 + pct / 100);
+          }
+          nextProduct.sale = formatCalculatedValue(applyCurrencyRounding(computedSale));
+        }
       }
-      setNewProduct(prev => ({ ...prev, sale: formatCalculatedValue(applyCurrencyRounding(computedSale)) }));
-    } else if (!isNaN(sale) && sale > 0) {
-      const computedCost = sale * (1 - pct / 100);
-      setNewProduct(prev => ({ ...prev, cost: formatCalculatedValue(computedCost) }));
-    }
+      return nextProduct;
+    });
   };
 
   const handleAddSaleChange = (saleStr: string) => {
-    setNewProduct(prev => ({ ...prev, sale: saleStr }));
     const sale = parseFloat(saleStr);
-    if (isNaN(sale) || sale <= 0) return;
+    setNewProduct(prev => {
+      const pct = parseFloat(addProfitPercent);
+      const cost = parseFloat(prev.cost);
+      let nextProduct = { ...prev, sale: saleStr };
 
-    const cost = parseFloat(newProduct.cost);
-    const pct = parseFloat(addProfitPercent);
-
-    if (!isNaN(cost) && cost > 0) {
-      const computedPct = ((sale - cost) / sale) * 100;
-      setAddProfitPercent(formatCalculatedValue(computedPct));
-    } else if (!isNaN(pct) && addProfitPercent !== '') {
-      const computedCost = sale * (1 - pct / 100);
-      setNewProduct(prev => ({ ...prev, cost: formatCalculatedValue(computedCost) }));
-    }
+      if (!isNaN(sale) && sale > 0) {
+        if (!isNaN(pct) && addProfitPercent !== '') {
+          nextProduct.cost = formatCalculatedValue(sale * (1 - pct / 100));
+        } else if (!isNaN(cost) && cost > 0) {
+          const computedPct = ((sale - cost) / sale) * 100;
+          setAddProfitPercent(formatCalculatedValue(computedPct));
+        }
+      }
+      return nextProduct;
+    });
   };
 
   const handleEditCostChange = (costStr: string) => {
@@ -1728,6 +1744,7 @@ export default function App() {
       if (showSupplierDetails && showSupplierDetails.id === showSupplierPaymentModal.id) {
         fetchSupplierHistory(showSupplierPaymentModal);
       }
+      fetchSummary();
     } catch (err) {
       console.error("Failed to record supplier payment:", err);
       showNotification('خطأ في تسجيل الدفعة', 'error');
@@ -1955,6 +1972,7 @@ export default function App() {
     setSelectedCustomer(null);
     setPaymentType('cash');
     setSaleNotes('');
+    fetchSummary();
   };
 
   const requestGlobalCameraPermission = async () => {
@@ -4095,7 +4113,7 @@ export default function App() {
                     </h4>
                     <div className="space-y-2">
                       {supplierHistory.payments.length > 0 ? supplierHistory.payments.map(py => (
-                        <div key={py.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-xs">
+                        <div key={py.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-xs cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => setSelectedSupplierPayment(py)}>
                           <div>
                             <p className="text-xs font-bold text-emerald-700">تم تسديد مبلغ: {formatPrice(py.amount)}</p>
                             <p className="text-[10px] text-slate-400 font-bold">{new Date(py.payment_date).toLocaleString('ar-SA')}</p>
@@ -4108,6 +4126,20 @@ export default function App() {
                     </div>
                   </div>
                 </div>
+              </motion.div>
+            </div>
+          )}
+
+          {selectedSupplierPayment && (
+            <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-xl">
+                <h3 className="text-xl font-black text-slate-800">تفاصيل الدفعة</h3>
+                <div className="space-y-3">
+                  <p className="text-sm text-slate-500 font-medium">المبلغ: <span className="font-bold text-emerald-700">{formatPrice(selectedSupplierPayment.amount)}</span></p>
+                  <p className="text-sm text-slate-500 font-medium">التاريخ: <span className="font-bold">{new Date(selectedSupplierPayment.payment_date).toLocaleString('ar-SA')}</span></p>
+                  {selectedSupplierPayment.notes && <p className="text-sm text-slate-500 font-medium break-words">الملاحظات: <span className="font-bold">{selectedSupplierPayment.notes}</span></p>}
+                </div>
+                <Button className="w-full rounded-2xl py-3" onClick={() => setSelectedSupplierPayment(null)}>إغلاق</Button>
               </motion.div>
             </div>
           )}
