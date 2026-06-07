@@ -73,6 +73,13 @@ interface Summary {
   monthlySales: number;
   todaySales: number;
   weeklySales: number;
+  totalCostOfSoldItems: number;
+  totalOriginalInventoryCost: number;
+  totalSaleValueOfRemainingInventory: number;
+  totalOriginalInventorySaleValue: number;
+  expectedRemainingProfit: number;
+  totalStockQuantity: number;
+  totalItemsSold: number;
 }
 
 // --- Components ---
@@ -120,8 +127,27 @@ export default function App() {
 
   const [summary, setSummary] = useState<Summary>(() => {
     const cached = localStorage.getItem('cached_summary');
-    return cached ? JSON.parse(cached) : { totalSales: 0, totalCostOfSales: 0, totalDebts: 0, lowStock: 0, totalProfit: 0, totalInventoryCost: 0, monthlySales: 0, todaySales: 0, weeklySales: 0 };
+    return cached ? JSON.parse(cached) : {
+      totalSales: 0,
+      totalCostOfSales: 0,
+      totalDebts: 0,
+      lowStock: 0,
+      totalProfit: 0,
+      totalInventoryCost: 0,
+      monthlySales: 0,
+      todaySales: 0,
+      weeklySales: 0,
+      totalCostOfSoldItems: 0,
+      totalOriginalInventoryCost: 0,
+      totalSaleValueOfRemainingInventory: 0,
+      totalOriginalInventorySaleValue: 0,
+      expectedRemainingProfit: 0,
+      totalStockQuantity: 0,
+      totalItemsSold: 0
+    };
   });
+
+  const [showInventoryDetailsModal, setShowInventoryDetailsModal] = useState(false);
 
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [historyFilter, setHistoryFilter] = useState<'all' | 'cash' | 'debt'>('all');
@@ -180,6 +206,8 @@ export default function App() {
   const [editProfitPercent, setEditProfitPercent] = useState<string>('');
   const [editCostStr, setEditCostStr] = useState<string>('');
   const [editSaleStr, setEditSaleStr] = useState<string>('');
+  const [addLastModified, setAddLastModified] = useState<'cost' | 'sale' | 'percent'>('sale');
+  const [editLastModified, setEditLastModified] = useState<'cost' | 'sale' | 'percent'>('sale');
 
   useEffect(() => {
     if (editingProduct) {
@@ -191,10 +219,12 @@ export default function App() {
       } else {
         setEditProfitPercent('');
       }
+      setEditLastModified('sale');
     } else {
       setEditCostStr('');
       setEditSaleStr('');
       setEditProfitPercent('');
+      setEditLastModified('sale');
     }
   }, [editingProduct?.id]);
   const [customerHistory, setCustomerHistory] = useState<{ sales: any[], debts: any[] }>({ sales: [], debts: [] });
@@ -528,49 +558,74 @@ export default function App() {
     const allProducts = await db.products.toArray();
     const productMap = new Map(allProducts.map(p => [p.id, p]));
     
-    let totalInventoryCost = 0;
-    allProducts.forEach(p => {
-      totalInventoryCost += (p.cost_price * p.stock_quantity);
-    });
+     let totalInventoryCost = 0;
+     let totalStockQuantity = 0;
+     let totalSaleValueOfRemainingInventory = 0;
+     allProducts.forEach(p => {
+       totalInventoryCost += (p.cost_price * p.stock_quantity);
+       totalStockQuantity += p.stock_quantity;
+       totalSaleValueOfRemainingInventory += (p.sale_price * p.stock_quantity);
+     });
 
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfWeek = new Date(startOfDay);
-    startOfWeek.setDate(startOfDay.getDate() - startOfDay.getDay()); // Start of week (Sunday)
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+     const now = new Date();
+     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+     const startOfWeek = new Date(startOfDay);
+     startOfWeek.setDate(startOfDay.getDate() - startOfDay.getDay()); // Start of week (Sunday)
+     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    let todaySales = 0;
-    let weeklySales = 0;
-    let monthlySales = 0;
+     let todaySales = 0;
+     let weeklySales = 0;
+     let monthlySales = 0;
 
-    allSales.forEach(s => {
-      const d = new Date(s.created_at);
-      if (d >= startOfDay) todaySales += s.total_amount;
-      if (d >= startOfWeek) weeklySales += s.total_amount;
-      if (d >= startOfMonth) monthlySales += s.total_amount;
-    });
+     allSales.forEach(s => {
+       const d = new Date(s.created_at);
+       if (d >= startOfDay) todaySales += s.total_amount;
+       if (d >= startOfWeek) weeklySales += s.total_amount;
+       if (d >= startOfMonth) monthlySales += s.total_amount;
+     });
 
-    const totalProfit = allSaleItems.reduce((sum, item) => {
-      const product = productMap.get(item.product_id);
-      if (product) {
-        return sum + (item.price_at_sale - product.cost_price) * item.quantity;
-      }
-      return sum;
-    }, 0);
+     const totalProfit = allSaleItems.reduce((sum, item) => {
+       const product = productMap.get(item.product_id);
+       if (product) {
+         return sum + (item.price_at_sale - product.cost_price) * item.quantity;
+       }
+       return sum;
+     }, 0);
 
-    const totalSupplierBalances = (await db.suppliers.toArray()).reduce((sum, s) => sum + (s.balance || 0), 0);
+     const totalCostOfSoldItems = allSaleItems.reduce((sum, item) => {
+       const product = productMap.get(item.product_id);
+       if (product) {
+         return sum + (product.cost_price * item.quantity);
+       }
+       return sum;
+     }, 0);
 
-    const summaryData = {
-      totalSales,
-      totalCostOfSales: totalSupplierBalances,
-      totalDebts,
-      lowStock: lowStockCount,
-      totalProfit,
-      totalInventoryCost,
-      monthlySales,
-      todaySales,
-      weeklySales
-    };
+     const totalItemsSold = allSaleItems.reduce((sum, item) => sum + item.quantity, 0);
+
+     const totalOriginalInventoryCost = totalInventoryCost + totalCostOfSoldItems;
+     const totalOriginalInventorySaleValue = totalSaleValueOfRemainingInventory + totalSales;
+     const expectedRemainingProfit = totalSaleValueOfRemainingInventory - totalInventoryCost;
+
+     const totalSupplierBalances = (await db.suppliers.toArray()).reduce((sum, s) => sum + (s.balance || 0), 0);
+
+     const summaryData = {
+       totalSales,
+       totalCostOfSales: totalSupplierBalances,
+       totalDebts,
+       lowStock: lowStockCount,
+       totalProfit,
+       totalInventoryCost,
+       monthlySales,
+       todaySales,
+       weeklySales,
+       totalCostOfSoldItems,
+       totalOriginalInventoryCost,
+       totalSaleValueOfRemainingInventory,
+       totalOriginalInventorySaleValue,
+       expectedRemainingProfit,
+       totalStockQuantity,
+       totalItemsSold
+     };
     setSummary(summaryData);
     localStorage.setItem('cached_summary', JSON.stringify(summaryData));
   };
@@ -957,7 +1012,7 @@ export default function App() {
       let nextProduct = { ...prev, cost: costStr };
 
       if (!isNaN(cost) && cost > 0) {
-        if (!isNaN(pct) && addProfitPercent !== '') {
+        if (addLastModified === 'percent' && !isNaN(pct)) {
           let computedSale = 0;
           if (pct < 100) {
             computedSale = cost / (1 - pct / 100);
@@ -972,6 +1027,7 @@ export default function App() {
       }
       return nextProduct;
     });
+    setAddLastModified('cost');
   };
 
   const handleAddProfitPercentChange = (pctStr: string) => {
@@ -983,9 +1039,7 @@ export default function App() {
       let nextProduct = { ...prev };
 
       if (!isNaN(pct)) {
-        if (!isNaN(sale) && sale > 0) {
-          nextProduct.cost = formatCalculatedValue(sale * (1 - pct / 100));
-        } else if (!isNaN(cost) && cost > 0) {
+        if (addLastModified === 'cost' && !isNaN(cost) && cost > 0) {
           let computedSale = 0;
           if (pct < 100) {
             computedSale = cost / (1 - pct / 100);
@@ -993,10 +1047,13 @@ export default function App() {
             computedSale = cost * (1 + pct / 100);
           }
           nextProduct.sale = formatCalculatedValue(applyCurrencyRounding(computedSale));
+        } else if (!isNaN(sale) && sale > 0) {
+          nextProduct.cost = formatCalculatedValue(sale * (1 - pct / 100));
         }
       }
       return nextProduct;
     });
+    setAddLastModified('percent');
   };
 
   const handleAddSaleChange = (saleStr: string) => {
@@ -1007,7 +1064,7 @@ export default function App() {
       let nextProduct = { ...prev, sale: saleStr };
 
       if (!isNaN(sale) && sale > 0) {
-        if (!isNaN(pct) && addProfitPercent !== '') {
+        if (addLastModified === 'percent' && !isNaN(pct)) {
           nextProduct.cost = formatCalculatedValue(sale * (1 - pct / 100));
         } else if (!isNaN(cost) && cost > 0) {
           const computedPct = ((sale - cost) / sale) * 100;
@@ -1016,6 +1073,7 @@ export default function App() {
       }
       return nextProduct;
     });
+    setAddLastModified('sale');
   };
 
   const handleEditCostChange = (costStr: string) => {
@@ -1030,7 +1088,7 @@ export default function App() {
       const pct = parseFloat(editProfitPercent);
       const sale = parseFloat(editSaleStr);
 
-      if (!isNaN(pct) && editProfitPercent !== '') {
+      if (editLastModified === 'percent' && !isNaN(pct)) {
         let computedSale = 0;
         if (pct < 100) {
           computedSale = cost / (1 - pct / 100);
@@ -1051,6 +1109,7 @@ export default function App() {
       cost_price: isNaN(cost) ? 0 : cost, 
       sale_price: computedSalePrice 
     } : null);
+    setEditLastModified('cost');
   };
 
   const handleEditProfitPercentChange = (pctStr: string) => {
@@ -1063,7 +1122,7 @@ export default function App() {
 
     if (isNaN(pct)) return;
 
-    if (!isNaN(cost) && cost > 0) {
+    if (editLastModified === 'cost' && !isNaN(cost) && cost > 0) {
       let computedSale = 0;
       if (pct < 100) {
         computedSale = cost / (1 - pct / 100);
@@ -1082,6 +1141,7 @@ export default function App() {
       cost_price: isNaN(cost) ? prev.cost_price : cost, 
       sale_price: isNaN(salePrice) ? prev.sale_price : salePrice 
     } : null);
+    setEditLastModified('percent');
   };
 
   const handleEditSaleChange = (saleStr: string) => {
@@ -1093,13 +1153,13 @@ export default function App() {
     let pctStr = editProfitPercent;
 
     if (!isNaN(sale) && sale > 0) {
-      if (!isNaN(cost) && cost > 0) {
-        pctStr = formatCalculatedValue(((sale - cost) / sale) * 100);
-        setEditProfitPercent(pctStr);
-      } else if (!isNaN(parseFloat(editProfitPercent)) && editProfitPercent !== '') {
+      if (editLastModified === 'percent' && !isNaN(parseFloat(editProfitPercent)) && editProfitPercent !== '') {
         const pct = parseFloat(editProfitPercent);
         cost = sale * (1 - pct / 100);
         setEditCostStr(formatCalculatedValue(cost));
+      } else if (!isNaN(cost) && cost > 0) {
+        pctStr = formatCalculatedValue(((sale - cost) / sale) * 100);
+        setEditProfitPercent(pctStr);
       }
     }
 
@@ -1108,6 +1168,7 @@ export default function App() {
       cost_price: isNaN(cost) ? prev.cost_price : cost, 
       sale_price: isNaN(sale) ? 0 : sale 
     } : null);
+    setEditLastModified('sale');
   };
 
   const handleAddProduct = async () => {
@@ -2297,10 +2358,14 @@ export default function App() {
                   <p className="text-lg font-bold text-white">{formatPrice(summary.totalProfit)}</p>
                 </motion.div>
 
-                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                <motion.div 
+                  whileHover={{ scale: 1.02 }} 
+                  className="p-3 rounded-2xl bg-white border border-slate-100 shadow-sm cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all"
+                  onClick={() => setShowInventoryDetailsModal(true)}
+                >
                   <div className="flex justify-between items-start mb-1">
                     <Database className="w-4 h-4 text-emerald-500" />
-                    <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md">تقييم</span>
+                    <span className="text-[9px] font-bold bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-md">تفاصيل كاملة 🛈</span>
                   </div>
                   <p className="text-[10px] text-slate-400 mt-1">تكلفة المخزون</p>
                   <p className="text-lg font-bold text-slate-800">{formatPrice(summary.totalInventoryCost)}</p>
@@ -2963,7 +3028,7 @@ export default function App() {
                           </div>
                         </div>
                         
-                        <div className="mb-4 text-slate-600 text-xs whitespace-pre-wrap min-h-[50px] line-clamp-4 leading-relaxed text-right">
+                        <div className="mb-4 text-slate-600 text-xs whitespace-pre-wrap break-words min-h-[50px] line-clamp-4 leading-relaxed text-right">
                           {note.content}
                         </div>
                         
@@ -4140,6 +4205,117 @@ export default function App() {
                   {selectedSupplierPayment.notes && <p className="text-sm text-slate-500 font-medium break-words">الملاحظات: <span className="font-bold">{selectedSupplierPayment.notes}</span></p>}
                 </div>
                 <Button className="w-full rounded-2xl py-3" onClick={() => setSelectedSupplierPayment(null)}>إغلاق</Button>
+              </motion.div>
+            </div>
+          )}
+
+          {showInventoryDetailsModal && (
+            <div key="modal-inventory-details" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-white w-full max-w-lg rounded-3xl p-5 space-y-4 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto"
+                dir="rtl"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="bg-emerald-100 p-3 rounded-2xl">
+                    <Database className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <button onClick={() => setShowInventoryDetailsModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-400" />
+                  </button>
+                </div>
+                
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">تفاصيل رأس المال والمخزون</h3>
+                  <p className="text-xs text-slate-500 font-bold">شرح مبسط لقيمة بضائعك وما يخصها من تكاليف</p>
+                </div>
+
+                <div className="space-y-4 mt-2">
+                  
+                  {/* --- Section 1: Overview --- */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-800 border-r-4 border-indigo-500 pr-2">نظرة عامة على الإجمالي</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-indigo-50/70 border border-indigo-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
+                        <p className="text-[10px] text-indigo-700 font-bold">رأس المال الإجمالي (المدفوع)</p>
+                        <p className="text-lg font-black font-mono text-indigo-900">{formatPrice(summary.totalOriginalInventoryCost ?? 0)}</p>
+                        <p className="text-[9px] text-slate-600 font-bold leading-snug">
+                          جميع البضائع (الحالية + المباعة)
+                        </p>
+                      </div>
+
+                      <div className="bg-fuchsia-50/70 border border-fuchsia-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
+                        <p className="text-[10px] text-fuchsia-700 font-bold">إجمالي المخزون بسعر البيع</p>
+                        <p className="text-lg font-black font-mono text-fuchsia-900">{formatPrice(summary.totalOriginalInventorySaleValue ?? 0)}</p>
+                        <p className="text-[9px] text-slate-600 font-bold leading-snug">
+                          المباعة والمتبقية إذا بيعت بالكامل
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* --- Section 2: Current Inventory --- */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-800 border-r-4 border-emerald-500 pr-2">حالة البضائع المتبقية بالمحل</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-emerald-50/70 border border-emerald-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
+                        <p className="text-[10px] text-emerald-700 font-bold">كلفة البضائع المتبقية</p>
+                        <p className="text-base font-black font-mono text-emerald-900">{formatPrice(summary.totalInventoryCost ?? 0)}</p>
+                        <p className="text-[8px] text-slate-500 font-bold">رأس مال البضائع غير المباعة</p>
+                      </div>
+
+                      <div className="bg-amber-50/70 border border-amber-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
+                        <p className="text-[10px] text-amber-700 font-bold">المبيعات المتوقعة</p>
+                        <p className="text-base font-black font-mono text-amber-900">{formatPrice(summary.totalSaleValueOfRemainingInventory ?? 0)}</p>
+                        <p className="text-[8px] text-slate-500 font-bold">قيمة المتبقي بسعر البيع</p>
+                      </div>
+                      
+                      <div className="col-span-2 bg-rose-50/70 border border-rose-100 p-3 rounded-2xl flex justify-between items-center transition-all hover:shadow-sm">
+                        <div>
+                          <p className="text-[10px] text-rose-700 font-bold">الأرباح المتوقعة للمتبقي</p>
+                          <p className="text-[9px] text-slate-600 font-bold mt-0.5">الربح إذا تم بيع المتبقي</p>
+                        </div>
+                        <p className="text-xl font-black font-mono text-rose-900">{formatPrice(summary.expectedRemainingProfit ?? 0)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* --- Section 3: Sold Info --- */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-800 border-r-4 border-blue-500 pr-2">العمليات السابقة والأداء</h4>
+                    <div className="bg-blue-50/70 border border-blue-100 p-3 rounded-2xl flex justify-between items-center transition-all hover:shadow-sm">
+                      <div>
+                        <p className="text-[10px] text-blue-700 font-bold">رأس المال المسترد (المُباع)</p>
+                        <p className="text-[9px] text-slate-600 font-bold mt-0.5">تكلفة شراء البضائع المباعة</p>
+                      </div>
+                      <p className="text-lg font-black font-mono text-blue-900">{formatPrice(summary.totalCostOfSoldItems ?? 0)}</p>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-100 p-3 rounded-2xl text-xs text-slate-600 font-bold space-y-2 transition-all hover:shadow-sm">
+                      <div className="flex justify-between items-center">
+                        <span className="flex items-center gap-1.5 text-slate-700 text-[10px]"><Package className="w-3.5 h-3.5 text-slate-400"/> المتبقية:</span>
+                        <span className="font-extrabold text-slate-800 font-mono text-xs bg-white px-2 py-0.5 rounded shadow-sm border border-slate-200">{(summary.totalStockQuantity ?? 0)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="flex items-center gap-1.5 text-slate-700 text-[10px]"><ShoppingCart className="w-3.5 h-3.5 text-slate-400"/> المباعة:</span>
+                        <span className="font-extrabold text-slate-800 font-mono text-xs bg-white px-2 py-0.5 rounded shadow-sm border border-slate-200">{(summary.totalItemsSold ?? 0)}</span>
+                      </div>
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                        <span className="text-slate-700">النسبة المباعة:</span>
+                        <span className="font-extrabold text-emerald-800 font-mono text-xs bg-emerald-100 px-2 py-0.5 rounded shadow-sm">
+                          {((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0)) > 0 
+                            ? `${(((summary.totalItemsSold ?? 0) / ((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0))) * 100).toFixed(1)}%`
+                            : '0%'
+                          }
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <Button className="w-full py-3 rounded-2xl text-sm font-extrabold shadow-md hover:shadow-lg active:scale-95 transition-all mt-2" onClick={() => setShowInventoryDetailsModal(false)}>إغلاق النافذة</Button>
               </motion.div>
             </div>
           )}
