@@ -25,6 +25,7 @@ import {
   Database,
   RefreshCw,
   Settings,
+  Settings2,
   Cloud,
   ShieldCheck,
   FileText,
@@ -80,6 +81,8 @@ interface Summary {
   expectedRemainingProfit: number;
   totalStockQuantity: number;
   totalItemsSold: number;
+  totalSupplierPayments: number;
+  totalOriginalSupplierCost: number;
 }
 
 // --- Components ---
@@ -115,8 +118,149 @@ export default function App() {
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
   const suppliers = useLiveQuery(() => db.suppliers.toArray()) || [];
+  const supplierPayments = useLiveQuery(() => db.supplierPayments.toArray()) || [];
   const sales = useLiveQuery(() => db.sales.orderBy('created_at').reverse().limit(50).toArray()) || [];
   
+  // Queries for comprehensive sales details reports
+  const allSalesForDetails = useLiveQuery(() => db.sales.toArray()) || [];
+  const allSaleItemsForDetails = useLiveQuery(() => db.saleItems.toArray()) || [];
+  
+  const salesDetailsStats = React.useMemo(() => {
+    if (!allSalesForDetails.length) {
+      return { days: [], weeks: [], months: [], productStats: [] };
+    }
+
+    // Map sale items by sale_id
+    const itemsBySaleId = new Map<number, any[]>();
+    allSaleItemsForDetails.forEach(item => {
+      const list = itemsBySaleId.get(item.sale_id) || [];
+      list.push(item);
+      itemsBySaleId.set(item.sale_id, list);
+    });
+
+    // Map products for fast name/category lookups
+    const prodMap = new Map<number, any>();
+    products.forEach(p => {
+      if (p.id !== undefined) prodMap.set(p.id, p);
+    });
+
+    const dayGroups: { [key: string]: { total: number; count: number; itemsCount: number; cash: number; debt: number } } = {};
+    const weekGroups: { [key: string]: { total: number; count: number; itemsCount: number; cash: number; debt: number } } = {};
+    const monthGroups: { [key: string]: { total: number; count: number; itemsCount: number; cash: number; debt: number } } = {};
+
+    // For products breakdown
+    const productSalesMap = new Map<number, { id: number; name: string; category: string; soldQty: number; revenue: number; transactions: number }>();
+
+    allSalesForDetails.forEach(sale => {
+      if (!sale.created_at) return;
+      const date = new Date(sale.created_at);
+      if (isNaN(date.getTime())) return;
+
+      const yyyy = date.getFullYear();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      const dayKey = `${yyyy}-${mm}-${dd}`;
+
+      // Calculate Sunday as day 0
+      const dayOffset = date.getDay();
+      const startOfWeekDate = new Date(date);
+      startOfWeekDate.setDate(date.getDate() - dayOffset);
+      const wY = startOfWeekDate.getFullYear();
+      const wM = String(startOfWeekDate.getMonth() + 1).padStart(2, '0');
+      const wD = String(startOfWeekDate.getDate()).padStart(2, '0');
+      const weekKey = `${wY}-${wM}-${wD}`;
+
+      const monthKey = `${yyyy}-${mm}`;
+
+      // Sum quantities of items
+      const saleId = sale.id;
+      const items = saleId !== undefined ? (itemsBySaleId.get(saleId) || []) : [];
+      const itemsCount = items.reduce((sum, it) => sum + (it.quantity || 0), 0);
+
+      // Group Day
+      if (!dayGroups[dayKey]) dayGroups[dayKey] = { total: 0, count: 0, itemsCount: 0, cash: 0, debt: 0 };
+      dayGroups[dayKey].total += sale.total_amount || 0;
+      dayGroups[dayKey].count += 1;
+      dayGroups[dayKey].itemsCount += itemsCount;
+      if (sale.payment_type === 'cash') dayGroups[dayKey].cash += sale.total_amount || 0;
+      else dayGroups[dayKey].debt += sale.total_amount || 0;
+
+      // Group Week
+      if (!weekGroups[weekKey]) weekGroups[weekKey] = { total: 0, count: 0, itemsCount: 0, cash: 0, debt: 0 };
+      weekGroups[weekKey].total += sale.total_amount || 0;
+      weekGroups[weekKey].count += 1;
+      weekGroups[weekKey].itemsCount += itemsCount;
+      if (sale.payment_type === 'cash') weekGroups[weekKey].cash += sale.total_amount || 0;
+      else weekGroups[weekKey].debt += sale.total_amount || 0;
+
+      // Group Month
+      if (!monthGroups[monthKey]) monthGroups[monthKey] = { total: 0, count: 0, itemsCount: 0, cash: 0, debt: 0 };
+      monthGroups[monthKey].total += sale.total_amount || 0;
+      monthGroups[monthKey].count += 1;
+      monthGroups[monthKey].itemsCount += itemsCount;
+      if (sale.payment_type === 'cash') monthGroups[monthKey].cash += sale.total_amount || 0;
+      else monthGroups[monthKey].debt += sale.total_amount || 0;
+
+      // Product sales breakdown
+      items.forEach(item => {
+        const prod = prodMap.get(item.product_id);
+        const prodName = prod ? prod.name : `منتج ${item.product_id}`;
+        const prodCat = prod ? (prod.category || 'عام') : 'عام';
+        
+        const existing = productSalesMap.get(item.product_id) || {
+          id: item.product_id,
+          name: prodName,
+          category: prodCat,
+          soldQty: 0,
+          revenue: 0,
+          transactions: 0
+        };
+
+        existing.soldQty += item.quantity || 0;
+        existing.revenue += (item.price_at_sale || 0) * (item.quantity || 0);
+        existing.transactions += 1;
+        productSalesMap.set(item.product_id, existing);
+      });
+    });
+
+    const daysList = Object.keys(dayGroups).sort((a,b) => b.localeCompare(a)).map(key => ({
+      label: key,
+      ...dayGroups[key]
+    }));
+
+    const weeksList = Object.keys(weekGroups).sort((a,b) => b.localeCompare(a)).map(key => {
+      const start = new Date(key);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      const formattedRange = `إسبوع ${start.toLocaleDateString('ar-SA', { month: 'numeric', day: 'numeric' })} - ${end.toLocaleDateString('ar-SA', { month: 'numeric', day: 'numeric' })}`;
+      return {
+        label: formattedRange,
+        rawDate: key,
+        ...weekGroups[key]
+      };
+    });
+
+    const monthsList = Object.keys(monthGroups).sort((a,b) => b.localeCompare(a)).map(key => {
+      const [y, m] = key.split('-');
+      const d = new Date(parseInt(y), parseInt(m) - 1, 1);
+      const niceLabel = d.toLocaleDateString('ar-SA', { year: 'numeric', month: 'long' });
+      return {
+        label: niceLabel,
+        rawKey: key,
+        ...monthGroups[key]
+      };
+    });
+
+    const productStatsList = Array.from(productSalesMap.values()).sort((a,b) => b.soldQty - a.soldQty);
+
+    return {
+      days: daysList,
+      weeks: weeksList,
+      months: monthsList,
+      productStats: productStatsList
+    };
+  }, [allSalesForDetails, allSaleItemsForDetails, products]);
+
   const enrichedSales = React.useMemo(() => {
     const customerMap = new Map(customers.map(c => [c.id, c.name]));
     return sales.map(s => ({
@@ -124,6 +268,16 @@ export default function App() {
       customer_name: s.customer_id ? customerMap.get(s.customer_id) : 'زبون نقدي'
     }));
   }, [sales, customers]);
+
+  const enrichedSupplierPayments = React.useMemo(() => {
+    const supplierMap = new Map(suppliers.map(s => [s.id, s.name]));
+    return [...supplierPayments]
+      .map(p => ({
+        ...p,
+        supplier_name: supplierMap.get(p.supplier_id) || 'مورد مجهول'
+      }))
+      .sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime());
+  }, [supplierPayments, suppliers]);
 
   const [summary, setSummary] = useState<Summary>(() => {
     const cached = localStorage.getItem('cached_summary');
@@ -143,11 +297,24 @@ export default function App() {
       totalOriginalInventorySaleValue: 0,
       expectedRemainingProfit: 0,
       totalStockQuantity: 0,
-      totalItemsSold: 0
+      totalItemsSold: 0,
+      totalSupplierPayments: 0,
+      totalOriginalSupplierCost: 0
     };
   });
 
   const [showInventoryDetailsModal, setShowInventoryDetailsModal] = useState(false);
+  const [showSupplierSummaryModal, setShowSupplierSummaryModal] = useState(false);
+  const [showSalesSummaryModal, setShowSalesSummaryModal] = useState(false);
+  const [showProfitSummaryModal, setShowProfitSummaryModal] = useState(false);
+  const [showMonthlySalesDetailsModal, setShowMonthlySalesDetailsModal] = useState(false);
+  const [salesDetailsTab, setSalesDetailsTab] = useState<'days' | 'weeks' | 'months'>('days');
+
+  // Customer Adjustments
+  const [showCustomerAdjustmentModal, setShowCustomerAdjustmentModal] = useState<Customer | null>(null);
+  const [adjustmentType, setAdjustmentType] = useState<'add_debt' | 'add_credit' | 'note'>('note');
+  const [adjustmentAmount, setAdjustmentAmount] = useState('');
+  const [adjustmentNotes, setAdjustmentNotes] = useState('');
 
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [historyFilter, setHistoryFilter] = useState<'all' | 'cash' | 'debt'>('all');
@@ -197,6 +364,7 @@ export default function App() {
   const [newSupplier, setNewSupplier] = useState({ name: '', phone: '', initialBalance: '' });
   const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
   const [showSupplierDetails, setShowSupplierDetails] = useState<Supplier | null>(null);
+  const [supplierDetailsTab, setSupplierDetailsTab] = useState<'payments' | 'products'>('payments');
   const [showSupplierPaymentModal, setShowSupplierPaymentModal] = useState<Supplier | null>(null);
   const [selectedSupplierPayment, setSelectedSupplierPayment] = useState<any | null>(null);
   const [supplierPaymentAmount, setSupplierPaymentAmount] = useState('');
@@ -326,6 +494,18 @@ export default function App() {
     return currentCycleDebtPayments.reduce((sum, d) => sum + d.amount, 0);
   }, [currentCycleDebtPayments]);
 
+  const currentCycleSupplierPayments = useLiveQuery(async () => {
+    const allSPayments = await db.supplierPayments.toArray();
+    if (lastSettleDate) {
+      return allSPayments.filter(p => !p.payment_date || p.payment_date > lastSettleDate);
+    }
+    return allSPayments;
+  }, [lastSettleDate]) || [];
+
+  const currentCycleSupplierPaymentsTotal = React.useMemo(() => {
+    return currentCycleSupplierPayments.reduce((sum, p) => sum + p.amount, 0);
+  }, [currentCycleSupplierPayments]);
+
   // 5. Total cash actually received both from direct cash sales and customer debt payments
   const allTimeReceivedCash = React.useMemo(() => {
     return allTimeCashSalesTotal + allTimeDebtPaymentsTotal;
@@ -347,9 +527,13 @@ export default function App() {
     return salesSettlements.reduce((sum, s) => sum + s.delivered_amount, 0);
   }, [salesSettlements]);
 
+  const allTimeSupplierPaymentsTotal = React.useMemo(() => {
+    return supplierPayments.reduce((sum, p) => sum + p.amount, 0);
+  }, [supplierPayments]);
+
   const activeOutstandingCash = React.useMemo(() => {
-    return allTimeReceivedCash - allTimeDeliveredTotal;
-  }, [allTimeReceivedCash, allTimeDeliveredTotal]);
+    return allTimeReceivedCash - allTimeDeliveredTotal - allTimeSupplierPaymentsTotal;
+  }, [allTimeReceivedCash, allTimeDeliveredTotal, allTimeSupplierPaymentsTotal]);
 
   const carriedForwardDeficit = React.useMemo(() => {
     return Math.max(0, activeOutstandingCash - currentCycleCashTotal);
@@ -515,7 +699,7 @@ export default function App() {
   const ledgerEntries = React.useMemo(() => {
     const entries = [
       ...customerHistory.sales.map(s => ({ ...s, entryType: 'sale' })),
-      ...customerHistory.debts.filter(d => d.type === 'payment').map(d => ({ ...d, entryType: 'payment' }))
+      ...customerHistory.debts.filter(d => !d.sale_id).map(d => ({ ...d, entryType: 'debt_entry' }))
     ];
     return entries.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [customerHistory]);
@@ -607,6 +791,9 @@ export default function App() {
      const expectedRemainingProfit = totalSaleValueOfRemainingInventory - totalInventoryCost;
 
      const totalSupplierBalances = (await db.suppliers.toArray()).reduce((sum, s) => sum + (s.balance || 0), 0);
+     const allSupplierPayments = await db.supplierPayments.toArray();
+     const totalSupplierPayments = allSupplierPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+     const totalOriginalSupplierCost = totalSupplierBalances + totalSupplierPayments;
 
      const summaryData = {
        totalSales,
@@ -624,7 +811,9 @@ export default function App() {
        totalOriginalInventorySaleValue,
        expectedRemainingProfit,
        totalStockQuantity,
-       totalItemsSold
+       totalItemsSold,
+       totalSupplierPayments,
+       totalOriginalSupplierCost
      };
     setSummary(summaryData);
     localStorage.setItem('cached_summary', JSON.stringify(summaryData));
@@ -814,6 +1003,54 @@ export default function App() {
     setShowPaymentModal(null);
     setPaymentAmount('');
     setPaymentNotes('');
+  };
+
+  const handleCustomerAdjustmentSubmit = async () => {
+    if (!showCustomerAdjustmentModal || !showCustomerAdjustmentModal.id) return;
+    const amount = Number(adjustmentAmount) || 0;
+    
+    try {
+      let updatedCustomer: Customer | undefined;
+      // Update local DB
+      await db.transaction('rw', [db.customers, db.debts], async () => {
+        const targetCustomer = await db.customers.get(showCustomerAdjustmentModal.id!);
+        if (targetCustomer) {
+          let newBalance = targetCustomer.balance;
+          if (adjustmentType === 'add_debt') {
+             newBalance += amount;
+          } else if (adjustmentType === 'add_credit') {
+             newBalance -= amount;
+          }
+          await db.customers.update(showCustomerAdjustmentModal.id!, {
+            balance: newBalance
+          });
+          updatedCustomer = { ...targetCustomer, balance: newBalance };
+        }
+        await db.debts.add({
+          customer_id: showCustomerAdjustmentModal.id!,
+          amount: adjustmentType === 'note' ? 0 : amount,
+          type: adjustmentType === 'add_debt' ? 'purchase' : 'payment',
+          created_at: new Date().toISOString(),
+          notes: adjustmentNotes.trim() || undefined
+        });
+      });
+      
+      showNotification('تم حفظ التعديل بنجاح', 'success');
+      
+      if (updatedCustomer) {
+        if (showCustomerDetails && showCustomerDetails.id === updatedCustomer.id) {
+          await fetchCustomerHistory(updatedCustomer);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to process adjustment:", err);
+      showNotification('خطأ في حفظ التعديل', 'error');
+    }
+
+    setShowCustomerAdjustmentModal(null);
+    setAdjustmentAmount('');
+    setAdjustmentNotes('');
+    setAdjustmentType('note');
   };
 
   const handleSaveSettlement = async () => {
@@ -1586,25 +1823,41 @@ export default function App() {
           <tbody>
             ${ledgerEntries.map(entry => {
               let itemsHtml = '';
-              if (entry.entryType === 'sale' && entry.items) {
-                try {
-                  const items = JSON.parse(entry.items);
-                  itemsHtml = `<div style="font-size: 0.85em; color: #555; margin-top: 5px; border-top: 1px solid #eee; padding-top: 5px;">
-                    ${items.map((item: any) => `${item.name} (${item.quantity} ${item.unit || ''} × ${item.price})`).join('<br/>')}
-                  </div>`;
-                } catch (e) {
-                  itemsHtml = '<div style="font-size: 0.8em; color: red;">خطأ في عرض المنتجات</div>';
+              let title = '';
+              let debit = '-';
+              let credit = '-';
+
+              if (entry.entryType === 'sale') {
+                if (entry.items) {
+                  try {
+                    const items = JSON.parse(entry.items);
+                    itemsHtml = `<div style="font-size: 0.85em; color: #555; margin-top: 5px; border-top: 1px solid #eee; padding-top: 5px;">
+                      ${items.map((item: any) => `${item.name} (${item.quantity} ${item.unit || ''} × ${item.price})`).join('<br/>')}
+                    </div>`;
+                  } catch (e) {
+                    itemsHtml = '<div style="font-size: 0.8em; color: red;">خطأ في عرض المنتجات</div>';
+                  }
+                }
+                title = 'فاتورة مشتريات #' + entry.id + itemsHtml;
+                debit = entry.total_amount;
+              } else {
+                if (entry.amount === 0) {
+                  title = entry.notes || 'ملاحظة عامة';
+                } else if (entry.type === 'purchase') {
+                  title = entry.notes ? `زيادة مديونية: ${entry.notes}` : 'زيادة مديونية';
+                  debit = entry.amount;
+                } else {
+                  title = entry.notes ? `دفعة: ${entry.notes}` : 'تسديد مبلغ';
+                  credit = entry.amount;
                 }
               }
-              
+
               return `
                 <tr>
                   <td style="border: 1px solid #000; padding: 8px; text-align: right;">${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">
-                    ${entry.entryType === 'sale' ? 'فاتورة مشتريات #' + entry.id + itemsHtml : 'تسديد مبلغ'}
-                  </td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'sale' ? entry.total_amount : '-'}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${entry.entryType === 'payment' ? entry.amount : '-'}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${title}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${debit}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${credit}</td>
                 </tr>
               `;
             }).join('')}
@@ -1729,14 +1982,35 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              ${ledgerEntries.map(entry => `
-                <tr>
-                  <td>${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
-                  <td>${entry.entryType === 'sale' ? 'فاتورة مشتريات #' + entry.id : 'تسديد مبلغ'}</td>
-                  <td>${entry.entryType === 'sale' ? entry.total_amount : '-'}</td>
-                  <td>${entry.entryType === 'payment' ? entry.amount : '-'}</td>
-                </tr>
-              `).join('')}
+              ${ledgerEntries.map(entry => {
+                let title = '';
+                let debit: string | number = '-';
+                let credit: string | number = '-';
+
+                if (entry.entryType === 'sale') {
+                  title = 'فاتورة مشتريات #' + entry.id;
+                  debit = entry.total_amount;
+                } else {
+                  if (entry.amount === 0) {
+                    title = entry.notes || 'ملاحظة عامة';
+                  } else if (entry.type === 'purchase') {
+                    title = entry.notes ? `زيادة مديونية: ${entry.notes}` : 'زيادة مديونية';
+                    debit = entry.amount;
+                  } else {
+                    title = entry.notes ? `دفعة: ${entry.notes}` : 'تسديد مبلغ';
+                    credit = entry.amount;
+                  }
+                }
+
+                return `
+                  <tr>
+                    <td>${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
+                    <td>${title}</td>
+                    <td>${debit}</td>
+                    <td>${credit}</td>
+                  </tr>
+                `;
+              }).join('')}
             </tbody>
           </table>
           <div class="summary">
@@ -2322,39 +2596,61 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-md shadow-emerald-100/50 border border-emerald-400/20 col-span-2 md:col-span-1">
+                <motion.div 
+                  whileHover={{ scale: 1.02 }} 
+                  className="p-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-md shadow-emerald-100/50 border border-emerald-400/20 col-span-2 md:col-span-1 cursor-pointer hover:shadow-lg transition-all duration-300"
+                  onClick={() => {
+                    setSalesDetailsTab('days');
+                    setShowMonthlySalesDetailsModal(true);
+                  }}
+                >
                   <div className="flex justify-between items-start mb-1">
                     <ShoppingCart className="w-4 h-4 opacity-80" />
-                    <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-md">اليوم</span>
+                    <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.5 rounded-md text-emerald-100">اليوم 🛈</span>
                   </div>
                   <p className="text-[10px] opacity-80 mt-1">المبيعات اليومية</p>
                   <p className="text-xl font-bold">{formatPrice(summary.todaySales)}</p>
                 </motion.div>
 
-                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                <motion.div 
+                  whileHover={{ scale: 1.02 }} 
+                  className="p-3 rounded-2xl bg-white border border-slate-100 shadow-sm cursor-pointer hover:border-indigo-300 hover:shadow-md transition-all duration-300"
+                  onClick={() => {
+                    setSalesDetailsTab('months');
+                    setShowMonthlySalesDetailsModal(true);
+                  }}
+                >
                   <div className="flex justify-between items-start mb-1">
                     <TrendingUp className="w-4 h-4 text-indigo-500" />
-                    <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md">الأسبوع</span>
+                    <span className="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded-md">الشهر 🛈</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1">مبيعات الأسبوع</p>
-                  <p className="text-lg font-bold text-slate-800">{formatPrice(summary.weeklySales)}</p>
-                </motion.div>
-
-                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
-                  <div className="flex justify-between items-start mb-1">
-                    <ShoppingCart className="w-4 h-4 text-blue-500" />
-                    <span className="text-[9px] font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-md">الشهر</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-1">مبيعات الشهر</p>
+                  <p className="text-[10px] text-slate-400 mt-1">مبيعات الشهر بسعر البيع</p>
                   <p className="text-lg font-bold text-slate-800">{formatPrice(summary.monthlySales)}</p>
                 </motion.div>
 
-                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-slate-800 text-white shadow-sm">
+                <motion.div 
+                  whileHover={{ scale: 1.02 }} 
+                  className="p-3 rounded-2xl bg-white border border-slate-100 shadow-sm cursor-pointer hover:border-blue-300 hover:shadow-md transition-all"
+                  onClick={() => setShowSalesSummaryModal(true)}
+                >
+                  <div className="flex justify-between items-start mb-1">
+                    <ShoppingCart className="w-4 h-4 text-blue-500" />
+                    <span className="text-[9px] font-bold bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md">الكلي 🛈</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">إجمالي المبيعات بسعر البيع</p>
+                  <p className="text-lg font-bold text-slate-800">{formatPrice(summary.totalSales)}</p>
+                </motion.div>
+
+                <motion.div 
+                  whileHover={{ scale: 1.02 }} 
+                  className="p-3 rounded-2xl bg-slate-800 text-white shadow-sm cursor-pointer hover:bg-slate-700/80 hover:border-emerald-500/50 border border-transparent hover:shadow-md transition-all duration-300"
+                  onClick={() => setShowProfitSummaryModal(true)}
+                >
                   <div className="flex justify-between items-start mb-1">
                     <PieChart className="w-4 h-4 text-emerald-400" />
-                    <span className="text-[9px] font-bold bg-white/10 px-1.5 py-0.5 rounded-md">توقعات</span>
+                    <span className="text-[9px] font-bold bg-white/10 px-1.5 py-0.5 rounded-md text-emerald-300">تفاصيل 🛈</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1">الأرباح المتوقعة</p>
+                  <p className="text-[10px] text-slate-200 mt-1">صافي الأرباح المحققة</p>
                   <p className="text-lg font-bold text-white">{formatPrice(summary.totalProfit)}</p>
                 </motion.div>
 
@@ -2371,10 +2667,14 @@ export default function App() {
                   <p className="text-lg font-bold text-slate-800">{formatPrice(summary.totalInventoryCost)}</p>
                 </motion.div>
 
-                <motion.div whileHover={{ scale: 1.02 }} className="p-3 rounded-2xl bg-amber-50 border border-amber-100 shadow-sm">
+                <motion.div 
+                  whileHover={{ scale: 1.02 }} 
+                  className="p-3 rounded-2xl bg-amber-50 border border-amber-100 shadow-sm cursor-pointer hover:bg-amber-100/50 hover:border-amber-300 transition-all"
+                  onClick={() => setShowSupplierSummaryModal(true)}
+                >
                   <div className="flex justify-between items-start mb-1">
                     <Briefcase className="w-4 h-4 text-amber-600" />
-                    <span className="text-[9px] font-bold bg-amber-100/50 text-amber-700 px-1.5 py-0.5 rounded-md">تسوية</span>
+                    <span className="text-[9px] font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-md">تسوية 🛈</span>
                   </div>
                   <p className="text-[10px] text-amber-600/70 mt-1">مستحق المورد (بالتكلفة)</p>
                   <p className="text-lg font-bold text-amber-900">{formatPrice(summary.totalCostOfSales)}</p>
@@ -3223,9 +3523,12 @@ export default function App() {
                     <p className="text-white/70 text-[10px] font-bold">عجز مرحل من سابق</p>
                     <p className="font-bold text-sm sm:text-base font-mono text-rose-200">{formatPrice(carriedForwardDeficit)}</p>
                   </div>
-                  <div className="bg-white/15 rounded-2xl p-3 border border-white/10 md:scale-[1.03] shadow-md ring-1 ring-white/20 bg-indigo-500/30">
+                  <div className="bg-white/15 rounded-2xl p-3 border border-white/10 md:scale-[1.03] shadow-md ring-1 ring-white/20 bg-indigo-500/30 relative">
                     <p className="text-yellow-250 text-[10px] font-extrabold text-cyan-205">🎯 المستهدف الكلي للتسوية</p>
                     <p className="font-extrabold text-sm sm:text-base font-mono text-yellow-200">{formatPrice(activeOutstandingCash)}</p>
+                    {currentCycleSupplierPaymentsTotal > 0 && (
+                      <span className="text-[8px] text-white/50 block leading-tight font-bold">تتضمن خصم {formatPrice(currentCycleSupplierPaymentsTotal)}<br/>دفعات للموردين بالدورة</span>
+                    )}
                   </div>
                   <div className="bg-white/10 rounded-2xl p-3 border border-white/5 col-span-2 sm:col-span-1">
                     <p className="text-white/70 text-[10px] font-bold">مبيعات لم تسدد بعد</p>
@@ -3652,9 +3955,9 @@ export default function App() {
                     return matchesSearch && matchesFilter;
                   })
                   .map((s, idx) => (
-                  <div key={`sale-card-${s.id ?? 'no-id'}-${idx}`} className="relative group">
+                  <div key={`sale-card-${s.id ?? 'no-id'}-${idx}`} className={`relative group ${expandedSaleId === s.id ? 'z-30' : 'z-10'} transition-all duration-200`}>
                     <div className="absolute left-6 top-6 bottom-[-1.5rem] w-0.5 bg-slate-100 -z-10 group-last:hidden" />
-                    <Card className="overflow-hidden border border-slate-100/60 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] transition-all hover:border-emerald-200">
+                    <Card className={`overflow-hidden border transition-all duration-300 ${expandedSaleId === s.id ? 'border-emerald-400 bg-white shadow-xl scale-[1.01]' : 'border-slate-100/60 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] hover:border-emerald-200 bg-white'}`}>
                       <div 
                         className={`flex flex-col sm:flex-row sm:items-center justify-between p-3 cursor-pointer ${expandedSaleId === s.id ? 'bg-slate-50/50' : 'bg-white'}`}
                         onClick={() => handleExpandSale(s.id!)}
@@ -3895,7 +4198,7 @@ export default function App() {
           )}
 
           {showProductDetails && (
-            <div key="modal-product-details" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div key="modal-product-details" className="fixed inset-0 bg-black/60 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-slate-50 w-full max-w-md rounded-t-3xl sm:rounded-3xl flex flex-col max-h-[90vh] overflow-hidden"
@@ -4115,96 +4418,324 @@ export default function App() {
           )}
 
           {showSupplierDetails && (
-            <div key="modal-supplier-details" className="fixed inset-0 bg-black/50 z-50 flex flex-col justify-end p-0">
+            <div key="modal-supplier-details" className="fixed inset-0 bg-black/60 z-[70] flex flex-col justify-end p-0 whitespace-normal backdrop-blur-sm">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-slate-50 w-full rounded-t-3xl sm:max-w-2xl sm:mx-auto max-h-[95vh] overflow-hidden flex flex-col"
               >
-                <div className="bg-white p-6 border-b border-slate-100">
-                  <div className="flex justify-between items-start mb-6">
+                {/* Header */}
+                <div className="bg-white p-6 border-b border-slate-100 shadow-sm">
+                  <div className="flex justify-between items-start mb-4">
                     <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center font-bold text-2xl">
-                        {showSupplierDetails.name.charAt(0)}
+                      <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
+                        <Briefcase className="text-amber-600 w-6 h-6" />
                       </div>
-                      <div>
-                        <h3 className="text-2xl font-black text-slate-800">{showSupplierDetails.name}</h3>
-                        <p className="text-sm text-slate-400 font-bold">{showSupplierDetails.phone || 'بدون هاتف'}</p>
+                      <div className="text-right">
+                        <h3 className="text-2xl font-bold text-slate-800 leading-tight">{showSupplierDetails.name}</h3>
+                        <p className="text-slate-500 text-sm">
+                          رقم الهاتف: {showSupplierDetails.phone || 'بدون هاتف'}
+                        </p>
                       </div>
                     </div>
-                    <div className="flex gap-2">
-                       <button onClick={() => handleDeleteSupplier(showSupplierDetails.id!)} className="p-2 bg-red-50 hover:bg-red-100 rounded-full transition-colors">
-                        <Trash2 className="w-5 h-5 text-red-500" />
-                      </button>
-                      <button onClick={() => setShowSupplierDetails(null)} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors">
-                        <X className="w-6 h-6 text-slate-500" />
-                      </button>
+                    <button 
+                      onClick={() => setShowSupplierDetails(null)}
+                      className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+                    >
+                      <ChevronLeft className="w-6 h-6 rotate-180 text-slate-400" />
+                    </button>
+                  </div>
+
+                  {/* Stats Cards */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100 text-right">
+                      <p className="text-[10px] text-amber-600 font-bold uppercase mb-1">المستحق الحالي (المتبقي)</p>
+                      <p className="text-lg font-bold text-amber-900">{formatPrice(showSupplierDetails.balance)}</p>
+                    </div>
+                    <div className="bg-blue-50 p-3 rounded-2xl border border-blue-100 text-right">
+                      <p className="text-[10px] text-blue-600 font-bold uppercase mb-1">عدد المنتجات الموردة</p>
+                      <p className="text-lg font-bold text-blue-900">{(supplierHistory.products || []).length} صنف</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-amber-50 p-4 rounded-3xl border border-amber-100 flex justify-between items-center">
-                      <div>
-                        <p className="text-[10px] text-amber-600 font-extrabold uppercase">صافي المستحق للمورد (بالتكلفة)</p>
-                        <p className="text-2xl font-black font-mono text-amber-900">{formatPrice(showSupplierDetails.balance)}</p>
-                      </div>
-                      <Briefcase className="w-8 h-8 text-amber-400 opacity-50" />
-                    </div>
-                    <Button onClick={() => setShowSupplierPaymentModal(showSupplierDetails)} className="py-4 rounded-3xl font-black flex items-center justify-center gap-2">
-                       <Wallet className="w-5 h-5" /> تسديد دفعة للمورد
-                    </Button>
+                  {/* Tab Selectors */}
+                  <div className="flex gap-2 mt-4 bg-slate-100 p-1 rounded-xl">
+                    <button
+                      onClick={() => setSupplierDetailsTab('payments')}
+                      className={`flex-1 py-2 text-center text-xs font-bold rounded-lg transition-all ${
+                        supplierDetailsTab === 'payments'
+                          ? 'bg-white text-slate-800 shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      سجل الدفعات المقبوضة
+                    </button>
+                    <button
+                      onClick={() => setSupplierDetailsTab('products')}
+                      className={`flex-1 py-2 text-center text-xs font-bold rounded-lg transition-all ${
+                        supplierDetailsTab === 'products'
+                          ? 'bg-white text-slate-800 shadow-xs'
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      سجل المنتجات الموردة
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                  <div className="space-y-3">
-                    <h4 className="font-black text-slate-700 text-sm flex items-center gap-2">
-                      <Package className="w-4 h-4 text-slate-400" /> منتجات هذا المورد
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {supplierHistory.products.length > 0 ? supplierHistory.products.map(p => (
-                        <div key={p.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-xs">
-                          <span className="font-bold text-sm text-slate-700">{p.name}</span>
-                          <span className="text-xs bg-slate-50 px-2 py-1 rounded-lg font-mono font-bold text-slate-500">تكلفة: {formatPrice(p.cost_price)}</span>
-                        </div>
-                      )) : (
-                        <p className="text-xs text-slate-400 p-2 italic">لم يتم ربط أي منتجات بهذا المورد حالياً.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <h4 className="font-black text-slate-700 text-sm flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-slate-400" /> سجل المدفوعات للتاجر
-                    </h4>
-                    <div className="space-y-2">
-                      {supplierHistory.payments.length > 0 ? supplierHistory.payments.map(py => (
-                        <div key={py.id} className="bg-white p-3 rounded-2xl border border-slate-100 flex justify-between items-center shadow-xs cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => setSelectedSupplierPayment(py)}>
-                          <div>
-                            <p className="text-xs font-bold text-emerald-700">تم تسديد مبلغ: {formatPrice(py.amount)}</p>
-                            <p className="text-[10px] text-slate-400 font-bold">{new Date(py.payment_date).toLocaleString('ar-SA')}</p>
+                {/* Ledger Content */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 text-right" dir="rtl">
+                  {supplierDetailsTab === 'payments' ? (
+                    <div className="space-y-3">
+                      {(!supplierHistory.payments || supplierHistory.payments.length === 0) ? (
+                        <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-slate-200">
+                          <div className="bg-slate-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <Wallet className="text-slate-300 w-6 h-6" />
                           </div>
-                          {py.notes && <span className="text-[10px] bg-slate-50 px-2 py-1 rounded-lg text-slate-500 italic max-w-[120px] truncate">{py.notes}</span>}
+                          <p className="text-slate-400 text-sm">لا توجد دفعات مالية مسجلة لهذا المورد</p>
                         </div>
-                      )) : (
-                        <p className="text-xs text-slate-400 p-2 italic text-center">لا توجد مدفوعات مسجلة سابقاً.</p>
+                      ) : (
+                        supplierHistory.payments.map((pay, idx) => (
+                          <div 
+                            key={`supp-payment-${pay.id ?? idx}`} 
+                            onClick={() => setSelectedSupplierPayment({ ...pay, supplier_name: showSupplierDetails.name })}
+                            className="bg-white p-4 rounded-2xl border-r-4 border-r-emerald-500 shadow-xs flex flex-col gap-2 cursor-pointer hover:bg-slate-50/80 active:scale-[0.99] transition-all"
+                          >
+                            <div className="flex justify-between items-center gap-2">
+                              {/* Date and neat notes preview badge if notes exist */}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs text-slate-400 font-mono">
+                                  {pay.payment_date ? new Date(pay.payment_date).toLocaleDateString('ar-SA') : ''}
+                                </span>
+                                {pay.notes && (
+                                  <span className="inline-flex items-center gap-1.5 text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-0.5 rounded-full font-bold max-w-[130px] sm:max-w-[220px] truncate" title={pay.notes}>
+                                    <FileText className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                    <span className="truncate">{pay.notes}</span>
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <span className="font-extrabold text-emerald-700 font-mono text-base whitespace-nowrap">
+                                {formatPrice(pay.amount)}
+                              </span>
+                            </div>
+                            {pay.notes ? (
+                              <p className="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 mt-1 line-clamp-1 hover:line-clamp-none transition-all">
+                                {pay.notes}
+                              </p>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 mt-1 italic">اضغط لمشاهدة تفاصيل السند...</span>
+                            )}
+                          </div>
+                        ))
                       )}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {(!supplierHistory.products || supplierHistory.products.length === 0) ? (
+                        <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-slate-200">
+                          <div className="bg-slate-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <Package className="text-slate-300 w-6 h-6" />
+                          </div>
+                          <p className="text-slate-400 text-sm">لا توجد منتجات مسجلة تتبع هذا المورد</p>
+                        </div>
+                      ) : (
+                        supplierHistory.products.map((prod, idx) => (
+                          <div key={`supp-prod-${prod.id ?? idx}`} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-100 flex justify-between items-center">
+                            <div className="space-y-1">
+                              <p className="font-extrabold text-slate-800 text-sm">{prod.name}</p>
+                              <div className="flex gap-2 text-[10px] text-slate-400">
+                                <span>سعر الشراء: <strong className="text-slate-600 font-mono">{formatPrice(prod.cost_price)}</strong></span>
+                                <span>•</span>
+                                <span>سعر البيع: <strong className="text-emerald-600 font-mono">{formatPrice(prod.sale_price)}</strong></span>
+                              </div>
+                            </div>
+                            <span className="text-xs font-bold font-mono bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-1 rounded-lg">
+                              الكمية: {prod.stock_quantity}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer Action */}
+                <div className="p-4 bg-white border-t border-slate-100">
+                  <Button 
+                    className="w-full py-4 rounded-2xl shadow-lg shadow-amber-100 cursor-pointer text-center font-bold"
+                    onClick={() => {
+                      setShowSupplierPaymentModal(showSupplierDetails);
+                      setShowSupplierDetails(null);
+                    }}
+                  >
+                    تسديد دفعة مالية للمورد
+                  </Button>
                 </div>
               </motion.div>
             </div>
           )}
 
-          {selectedSupplierPayment && (
-            <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
-              <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-xl">
-                <h3 className="text-xl font-black text-slate-800">تفاصيل الدفعة</h3>
-                <div className="space-y-3">
-                  <p className="text-sm text-slate-500 font-medium">المبلغ: <span className="font-bold text-emerald-700">{formatPrice(selectedSupplierPayment.amount)}</span></p>
-                  <p className="text-sm text-slate-500 font-medium">التاريخ: <span className="font-bold">{new Date(selectedSupplierPayment.payment_date).toLocaleString('ar-SA')}</span></p>
-                  {selectedSupplierPayment.notes && <p className="text-sm text-slate-500 font-medium break-words">الملاحظات: <span className="font-bold">{selectedSupplierPayment.notes}</span></p>}
+          {showSupplierSummaryModal && (
+            <div key="modal-supplier-summary" className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-slate-50 w-full max-w-3xl rounded-[2.5rem] p-6 space-y-5 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto border border-white"
+                dir="rtl"
+              >
+                {/* Header */}
+                <div className="flex justify-between items-center pb-4 border-b border-slate-200/60">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-amber-500 text-white p-3 rounded-2xl shadow-md shadow-amber-500/10">
+                      <Briefcase className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800">مستحقات الموردين وتفاصيل رأس المال</h3>
+                      <p className="text-xs text-slate-500 font-bold">ملخص مالي للمستحقات، الدفعات المسلمة للتجار، وأرصدتهم</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowSupplierSummaryModal(false)} className="p-2.5 hover:bg-slate-200/50 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-500" />
+                  </button>
                 </div>
-                <Button className="w-full rounded-2xl py-3" onClick={() => setSelectedSupplierPayment(null)}>إغلاق</Button>
+
+                <div className="space-y-5">
+                  
+                  {/* --- Section 1: Financial Summary General Cards --- */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                      الملخص المالي العام للموردين
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 border border-indigo-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full font-bold">المطلوب قبل السداد</span>
+                        <p className="text-xs text-indigo-700/80 font-bold mt-2">إجمالي مستحقات الموردين</p>
+                        <p className="text-xl font-black font-mono text-indigo-900">{formatPrice(summary.totalOriginalSupplierCost ?? 0)}</p>
+                        <p className="text-[9px] text-indigo-600 font-bold leading-tight pt-1">المستحقات الكليّة لجميع التجار قبل أي مدفوعات</p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold">المبالغ المسلمة</span>
+                        <p className="text-xs text-emerald-700/80 font-bold mt-2">رأس المال المسلّم للتجار</p>
+                        <p className="text-xl font-black font-mono text-emerald-900">{formatPrice(summary.totalSupplierPayments ?? 0)}</p>
+                        <p className="text-[9px] text-emerald-600 font-bold leading-tight pt-1">إجمالي الدفعات المسددة والمسجلة للموردين</p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 border border-amber-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <span className="text-[10px] bg-amber-100 text-amber-800 px-2.5 py-0.5 rounded-full font-bold">المطلوب حالياً</span>
+                        <p className="text-xs text-amber-700/80 font-bold mt-2">المستحق الحالي المتبقي</p>
+                        <p className="text-xl font-black font-mono text-amber-900">{formatPrice(summary.totalCostOfSales ?? 0)}</p>
+                        <p className="text-[9px] text-amber-600 font-bold leading-tight pt-1">صافي الديون المعلقة في حسابات التجار</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* --- Section 2 & 3: Side-by-Side Bento Grid --- */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    
+                    {/* Right Bento Column: Suppliers Balances */}
+                    <div className="bg-white border border-slate-200 rounded-[2rem] p-4 flex flex-col justify-between shadow-xs space-y-3">
+                      <div>
+                        <div className="flex justify-between items-center pr-2 border-r-4 border-blue-500 pb-0.5 mb-2">
+                          <h4 className="text-xs font-black text-slate-800">أرصدة التجار المتبقية</h4>
+                          <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
+                            {suppliers.length} موردين
+                          </span>
+                        </div>
+                        
+                        <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                          {suppliers.length > 0 ? (
+                            suppliers.map(s => (
+                              <div 
+                                key={s.id} 
+                                onClick={() => {
+                                  setShowSupplierSummaryModal(false);
+                                  fetchSupplierHistory(s);
+                                }}
+                                className="bg-slate-50 p-2.5 rounded-xl shadow-xs border border-slate-100 flex justify-between items-center hover:bg-slate-100/80 cursor-pointer transition-all active:scale-[0.98]"
+                              >
+                                <div className="space-y-0.5 text-right">
+                                  <span className="font-extrabold text-slate-800 text-xs flex items-center gap-1.5">
+                                    <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+                                    {s.name}
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 block pr-3">{s.phone || 'بدون رقم هاتف'}</span>
+                                </div>
+                                <span className="font-extrabold text-amber-800 font-mono text-xs bg-amber-50 px-2 py-1 rounded-lg border border-amber-100">
+                                  {formatPrice(s.balance)}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-center text-slate-400 py-6 italic text-[11px] font-bold">لا يوجد موردين مسجلين حالياً.</p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="text-[10px] text-slate-400 font-medium pt-2 border-t border-slate-100 text-center">
+                        * إضغط على إسم التاجر المورد لمراجعة تفاصيل كشف الحساب الكلي.
+                      </div>
+                    </div>
+
+                    {/* Left Bento Column: Payment Logs */}
+                    <div className="bg-white border border-slate-200 rounded-[2rem] p-4 flex flex-col justify-between shadow-xs space-y-3">
+                      <div>
+                        <div className="flex justify-between items-center pr-2 border-r-4 border-violet-500 pb-0.5 mb-2">
+                          <h4 className="text-xs font-black text-slate-800">تفاصيل وسجل الدفعات السابقة</h4>
+                          <span className="text-[9px] bg-violet-50 text-violet-700 px-2 py-0.5 rounded-full font-bold">
+                            {enrichedSupplierPayments.length} سداد
+                          </span>
+                        </div>
+
+                        <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                          {enrichedSupplierPayments.length > 0 ? (
+                            enrichedSupplierPayments.map(p => (
+                              <div 
+                                key={p.id} 
+                                onClick={() => setSelectedSupplierPayment(p)}
+                                className="bg-slate-50 p-2.5 rounded-xl shadow-xs border border-slate-100 flex justify-between items-center hover:bg-violet-50/50 cursor-pointer transition-all active:scale-[0.98] gap-3"
+                              >
+                                <div className="space-y-1 text-right flex-1 min-w-0">
+                                  <div className="flex flex-wrap items-center gap-1.5 leading-tight">
+                                    <span className="font-extrabold text-slate-800 text-xs">
+                                      دفعة سداد لـ <span className="text-violet-700">{p.supplier_name}</span>
+                                    </span>
+                                    {p.notes && (
+                                      <span className="inline-flex items-center gap-1 text-[9px] bg-slate-200/60 text-slate-600 px-1.5 py-0.5 rounded-full font-bold max-w-[120px] truncate" title={p.notes}>
+                                        <FileText className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                                        <span className="truncate">{p.notes}</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[9px] text-slate-400 block font-mono">
+                                    {new Date(p.payment_date).toLocaleDateString('ar-SA')}
+                                  </span>
+                                </div>
+                                <span className="font-extrabold text-emerald-800 font-mono text-xs bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 whitespace-nowrap shrink-0">
+                                  {formatPrice(p.amount)}
+                                </span>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-center text-slate-400 py-6 italic text-[11px] font-bold">لا توجد دفعات أو سدادات مسجلة سلفاً.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-[10px] text-slate-400 font-medium pt-2 border-t border-slate-100 text-center">
+                        * إضغط على الدفعة لعرض تفاصيلها وملاحظاتها المسجلة بوضوح.
+                      </div>
+                    </div>
+
+                  </div>
+
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-slate-200">
+                  <Button className="w-full py-3 rounded-2xl text-sm font-extrabold shadow-md hover:shadow-lg active:scale-95 transition-all" onClick={() => setShowSupplierSummaryModal(false)}>إغلاق النافذة</Button>
+                </div>
               </motion.div>
             </div>
           )}
@@ -4212,110 +4743,491 @@ export default function App() {
           {showInventoryDetailsModal && (
             <div key="modal-inventory-details" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
               <motion.div 
-                initial={{ scale: 0.9, opacity: 0 }} 
+                initial={{ scale: 0.95, opacity: 0 }} 
                 animate={{ scale: 1, opacity: 1 }}
-                className="bg-white w-full max-w-lg rounded-3xl p-5 space-y-4 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto"
+                className="bg-slate-50 w-full max-w-2xl rounded-[2.5rem] p-6 space-y-5 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto border border-white"
                 dir="rtl"
               >
-                <div className="flex justify-between items-start mb-2">
-                  <div className="bg-emerald-100 p-3 rounded-2xl">
-                    <Database className="w-6 h-6 text-emerald-600" />
+                {/* Header */}
+                <div className="flex justify-between items-center pb-4 border-b border-slate-200/60">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-emerald-500 text-white p-3 rounded-2xl shadow-md shadow-emerald-500/10">
+                      <Database className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800">تفاصيل رأس المال وتكاليف المخزون</h3>
+                      <p className="text-xs text-slate-500 font-bold">ملخص مالي دقيق مبني على سعر التكلفة (سعر الشراء الفعلي)</p>
+                    </div>
                   </div>
-                  <button onClick={() => setShowInventoryDetailsModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition-colors">
+                  <button onClick={() => setShowInventoryDetailsModal(false)} className="p-2.5 hover:bg-slate-200/50 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-500" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  
+                  {/* --- Section 1: Overview (Cost price focus) --- */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      تحليل تكاليف رأس المال (سعر التكلفة)
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 border border-indigo-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <p className="text-[10px] text-indigo-700 font-extrabold">رأس المال الكلي</p>
+                        <p className="text-lg font-black font-mono text-indigo-900 mt-1">{formatPrice(summary.totalOriginalInventoryCost ?? 0)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
+                          إجمالي كلفة جميع البضائع المسجلة بالمحل (الحالية + المباعة)
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <p className="text-[10px] text-emerald-700 font-extrabold">كلفة البضائع المتبقية</p>
+                        <p className="text-lg font-black font-mono text-emerald-900 mt-1">{formatPrice(summary.totalInventoryCost ?? 0)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
+                          رأس المال المعلق بالمحل ويمثل البضاعة المتواجدة حالياً بالرفوف
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <p className="text-[10px] text-blue-700 font-extrabold">رأس المال المسترد</p>
+                        <p className="text-lg font-black font-mono text-blue-900 mt-1">{formatPrice(summary.totalCostOfSoldItems ?? 0)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
+                          قيمة كلفة شراء البضائع التي تم بيعها وخرجت من ذمة المحل
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* --- Section 2: Stock Quantities & Rates --- */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+                      <span className="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                      القطع والمخزون الفعلي ومعدل التصفية
+                    </h4>
+                    
+                    <div className="bg-white border border-slate-200 rounded-[2rem] p-5 shadow-xs space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex justify-between items-center">
+                          <span className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                            <Package className="w-3.5 h-3.5 text-slate-400" />
+                            القطع المتبقية بالرفوف:
+                          </span>
+                          <span className="font-extrabold text-slate-800 font-mono text-sm bg-white px-3 py-1 rounded-lg shadow-xs border border-slate-200">
+                            {(summary.totalStockQuantity ?? 0)} قطعة
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex justify-between items-center">
+                          <span className="text-[11px] text-slate-500 font-bold flex items-center gap-1">
+                            <ShoppingCart className="w-3.5 h-3.5 text-slate-400" />
+                            القطع المباعة للعملاء:
+                          </span>
+                          <span className="font-extrabold text-slate-800 font-mono text-sm bg-white px-3 py-1 rounded-lg shadow-xs border border-slate-200">
+                            {(summary.totalItemsSold ?? 0)} قطعة
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Styled Progress Bar representing liquidation progress */}
+                      <div className="space-y-2 pt-2">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-slate-600 font-black">معدل تصفية المخزون (النسبة المباعة)</span>
+                          <span className="font-black text-sm text-emerald-800 font-mono">
+                            {((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0)) > 0 
+                              ? `${(((summary.totalItemsSold ?? 0) / ((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0))) * 100).toFixed(1)}%`
+                              : '0%'
+                            }
+                          </span>
+                        </div>
+                        
+                        <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden border border-slate-200/50">
+                          <div 
+                            className="h-full bg-gradient-to-l from-emerald-500 to-indigo-500 rounded-full transition-all duration-1000"
+                            style={{ 
+                              width: `${((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0)) > 0 
+                                ? (((summary.totalItemsSold ?? 0) / ((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0))) * 100).toFixed(1)
+                                : 0}%` 
+                            }}
+                          ></div>
+                        </div>
+
+                        <div className="flex justify-between text-[9px] text-slate-400 font-bold">
+                          <span>طريق الاسترداد الكامل</span>
+                          <span>مجموع قطع البضائع الكليّة: {((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0))} قطعة</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-slate-200">
+                  <Button className="w-full py-3 rounded-2xl text-sm font-extrabold shadow-md hover:shadow-lg active:scale-95 transition-all" onClick={() => setShowInventoryDetailsModal(false)}>إغلاق النافذة</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showSalesSummaryModal && (
+            <div key="modal-sales-summary" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-slate-50 w-full max-w-2xl rounded-[2.5rem] p-6 space-y-5 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto border border-white"
+                dir="rtl"
+              >
+                {/* Header */}
+                <div className="flex justify-between items-center pb-4 border-b border-slate-200/60">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-blue-600 text-white p-3 rounded-2xl shadow-md shadow-blue-500/10">
+                      <ShoppingCart className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800">تفاصيل وتحليل المبيعات</h3>
+                      <p className="text-xs text-slate-500 font-bold">تحليل كامل لعمليات البيع المحققة وتوقعات المبيعات المتبقية بالمتجر</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowSalesSummaryModal(false)} className="p-2.5 hover:bg-slate-200/50 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-500" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  
+                  {/* --- Section 1: Sales / Projections (Sale price focus) --- */}
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+                      <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                      تحليل المبيعات (بسعر البيع الكلي)
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <p className="text-[10px] text-blue-700 font-extrabold">المبيعات المحققة بالفعل</p>
+                        <p className="text-lg font-black font-mono text-blue-900 mt-1">{formatPrice(summary.totalSales ?? 0)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
+                          قيمة ما تم تسييله وبيعه واستلامه نقداً أو كديون محتسبة للعملاء
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 border border-amber-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <p className="text-[10px] text-amber-700 font-extrabold">مبيعات المتبقي المتوقعة</p>
+                        <p className="text-lg font-black font-mono text-amber-900 mt-1">{formatPrice(summary.totalSaleValueOfRemainingInventory ?? 0)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
+                          العائد البيعي المقدر للبضائع المعروضة حالياً عند بيعها بالكامل
+                        </p>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-fuchsia-50 to-fuchsia-100/50 border border-fuchsia-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
+                        <p className="text-[10px] text-fuchsia-700 font-extrabold">القيمة البيعية الكليّة</p>
+                        <p className="text-lg font-black font-mono text-fuchsia-900 mt-1">{formatPrice(summary.totalOriginalInventorySaleValue ?? 0)}</p>
+                        <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
+                          مجموع قيمة البضائع (المباعة والمتبقية معاً) بأسعار البيع الكلية
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+
+                <div className="flex gap-2 pt-3 border-t border-slate-200">
+                  <Button className="w-full py-3 rounded-2xl text-sm font-extrabold shadow-md hover:shadow-lg active:scale-95 transition-all" onClick={() => setShowSalesSummaryModal(false)}>إغلاق النافذة</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showProfitSummaryModal && (
+            <div key="modal-profit-summary" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-slate-900 text-white w-full max-w-2xl rounded-[2.5rem] p-6 space-y-5 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto border border-slate-800"
+                dir="rtl"
+              >
+                {/* Header */}
+                <div className="flex justify-between items-center pb-4 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-emerald-600 text-white p-3 rounded-2xl shadow-md shadow-emerald-500/20 animate-pulse">
+                      <PieChart className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white">تفاصيل وتحليل الأرباح</h3>
+                      <p className="text-xs text-slate-400 font-bold">تحليل دقيق لصافي أرباح المتجر المحققة فعلياً والتوقعات المستقبلية</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowProfitSummaryModal(false)} className="p-2.5 hover:bg-slate-800 rounded-full transition-colors">
                     <X className="w-5 h-5 text-slate-400" />
                   </button>
                 </div>
-                
-                <div>
-                  <h3 className="text-xl font-black text-slate-800">تفاصيل رأس المال والمخزون</h3>
-                  <p className="text-xs text-slate-500 font-bold">شرح مبسط لقيمة بضائعك وما يخصها من تكاليف</p>
-                </div>
 
-                <div className="space-y-4 mt-2">
-                  
-                  {/* --- Section 1: Overview --- */}
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-black text-slate-800 border-r-4 border-indigo-500 pr-2">نظرة عامة على الإجمالي</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="bg-indigo-50/70 border border-indigo-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
-                        <p className="text-[10px] text-indigo-700 font-bold">رأس المال الإجمالي (المدفوع)</p>
-                        <p className="text-lg font-black font-mono text-indigo-900">{formatPrice(summary.totalOriginalInventoryCost ?? 0)}</p>
-                        <p className="text-[9px] text-slate-600 font-bold leading-snug">
-                          جميع البضائع (الحالية + المباعة)
+                <div className="space-y-4">
+                  {/* --- Section: Profit Projections --- */}
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                      تحليل الأرباح الاستثمارية الصافية
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl space-y-1 hover:border-emerald-500/30 hover:bg-slate-850 transition-all text-right">
+                        <p className="text-[10px] text-emerald-400 font-extrabold">صافي الأرباح المحققة</p>
+                        <p className="text-xl font-black font-mono text-emerald-350">{formatPrice(summary.totalProfit ?? 0)}</p>
+                        <p className="text-[9px] text-slate-400 font-bold leading-tight pt-1">
+                          الأرباح الحقيقية المجناة والداخلة فعلياً في الصندوق بعد خصم رأس المال (التكلفة)
                         </p>
                       </div>
 
-                      <div className="bg-fuchsia-50/70 border border-fuchsia-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
-                        <p className="text-[10px] text-fuchsia-700 font-bold">إجمالي المخزون بسعر البيع</p>
-                        <p className="text-lg font-black font-mono text-fuchsia-900">{formatPrice(summary.totalOriginalInventorySaleValue ?? 0)}</p>
-                        <p className="text-[9px] text-slate-600 font-bold leading-snug">
-                          المباعة والمتبقية إذا بيعت بالكامل
+                      <div className="bg-slate-800/80 border border-slate-700 p-4 rounded-2xl space-y-1 hover:border-rose-500/30 hover:bg-slate-850 transition-all text-right">
+                        <p className="text-[10px] text-rose-400 font-extrabold">الربح المتوقع للمخزون المتبقي</p>
+                        <p className="text-xl font-black font-mono text-rose-300">{formatPrice(summary.expectedRemainingProfit ?? 0)}</p>
+                        <p className="text-[9px] text-slate-400 font-bold leading-tight pt-1">
+                          هامش الأرباح المنتظر والتقديري عند تصريف كل القطع المتبقية بالرفوف
                         </p>
                       </div>
-                    </div>
-                  </div>
 
-                  {/* --- Section 2: Current Inventory --- */}
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-black text-slate-800 border-r-4 border-emerald-500 pr-2">حالة البضائع المتبقية بالمحل</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="bg-emerald-50/70 border border-emerald-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
-                        <p className="text-[10px] text-emerald-700 font-bold">كلفة البضائع المتبقية</p>
-                        <p className="text-base font-black font-mono text-emerald-900">{formatPrice(summary.totalInventoryCost ?? 0)}</p>
-                        <p className="text-[8px] text-slate-500 font-bold">رأس مال البضائع غير المباعة</p>
-                      </div>
-
-                      <div className="bg-amber-50/70 border border-amber-100 p-3 rounded-2xl space-y-1 transition-all hover:shadow-sm">
-                        <p className="text-[10px] text-amber-700 font-bold">المبيعات المتوقعة</p>
-                        <p className="text-base font-black font-mono text-amber-900">{formatPrice(summary.totalSaleValueOfRemainingInventory ?? 0)}</p>
-                        <p className="text-[8px] text-slate-500 font-bold">قيمة المتبقي بسعر البيع</p>
-                      </div>
-                      
-                      <div className="col-span-2 bg-rose-50/70 border border-rose-100 p-3 rounded-2xl flex justify-between items-center transition-all hover:shadow-sm">
-                        <div>
-                          <p className="text-[10px] text-rose-700 font-bold">الأرباح المتوقعة للمتبقي</p>
-                          <p className="text-[9px] text-slate-600 font-bold mt-0.5">الربح إذا تم بيع المتبقي</p>
+                      {/* Highlight summary banner with sleek premium design */}
+                      <div className="sm:col-span-2 bg-gradient-to-r from-emerald-950 via-slate-900 to-emerald-950 border border-emerald-800/40 p-5 rounded-[2rem] flex justify-between items-center transition-all shadow-md text-right relative overflow-hidden">
+                        <div className="absolute -left-4 -bottom-4 opacity-10">
+                          <Sparkles className="w-32 h-32 text-emerald-400" />
                         </div>
-                        <p className="text-xl font-black font-mono text-rose-900">{formatPrice(summary.expectedRemainingProfit ?? 0)}</p>
+                        <div className="relative z-10 space-y-1">
+                          <span className="text-[9px] bg-emerald-500/20 text-emerald-300 font-black px-3 py-1 rounded-full border border-emerald-500/20 shadow-xs">إسقاط بيعي متوقع</span>
+                          <p className="text-xs text-slate-200 font-black pt-2">إجمالي الأرباح الكلية المتوقعة</p>
+                          <p className="text-[9px] text-slate-400 font-bold">المجموع المقدر (الأرباح المحققة جراء البيع + ربح المتبقي) بعد نفاذ البضاعة</p>
+                        </div>
+                        <div className="relative z-10 text-left">
+                          <p className="text-[10px] text-emerald-400 font-bold">الربح الإجمالي المرتقب</p>
+                          <p className="text-2xl font-black font-mono text-emerald-400">
+                            {formatPrice((summary.totalProfit ?? 0) + (summary.expectedRemainingProfit ?? 0))}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {/* --- Section 3: Sold Info --- */}
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-black text-slate-800 border-r-4 border-blue-500 pr-2">العمليات السابقة والأداء</h4>
-                    <div className="bg-blue-50/70 border border-blue-100 p-3 rounded-2xl flex justify-between items-center transition-all hover:shadow-sm">
-                      <div>
-                        <p className="text-[10px] text-blue-700 font-bold">رأس المال المسترد (المُباع)</p>
-                        <p className="text-[9px] text-slate-600 font-bold mt-0.5">تكلفة شراء البضائع المباعة</p>
-                      </div>
-                      <p className="text-lg font-black font-mono text-blue-900">{formatPrice(summary.totalCostOfSoldItems ?? 0)}</p>
-                    </div>
-
-                    <div className="bg-slate-50 border border-slate-100 p-3 rounded-2xl text-xs text-slate-600 font-bold space-y-2 transition-all hover:shadow-sm">
-                      <div className="flex justify-between items-center">
-                        <span className="flex items-center gap-1.5 text-slate-700 text-[10px]"><Package className="w-3.5 h-3.5 text-slate-400"/> المتبقية:</span>
-                        <span className="font-extrabold text-slate-800 font-mono text-xs bg-white px-2 py-0.5 rounded shadow-sm border border-slate-200">{(summary.totalStockQuantity ?? 0)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="flex items-center gap-1.5 text-slate-700 text-[10px]"><ShoppingCart className="w-3.5 h-3.5 text-slate-400"/> المباعة:</span>
-                        <span className="font-extrabold text-slate-800 font-mono text-xs bg-white px-2 py-0.5 rounded shadow-sm border border-slate-200">{(summary.totalItemsSold ?? 0)}</span>
-                      </div>
-                      <div className="flex justify-between items-center pt-2 border-t border-slate-200">
-                        <span className="text-slate-700">النسبة المباعة:</span>
-                        <span className="font-extrabold text-emerald-800 font-mono text-xs bg-emerald-100 px-2 py-0.5 rounded shadow-sm">
-                          {((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0)) > 0 
-                            ? `${(((summary.totalItemsSold ?? 0) / ((summary.totalItemsSold ?? 0) + (summary.totalStockQuantity ?? 0))) * 100).toFixed(1)}%`
-                            : '0%'
-                          }
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
                 </div>
 
-                <Button className="w-full py-3 rounded-2xl text-sm font-extrabold shadow-md hover:shadow-lg active:scale-95 transition-all mt-2" onClick={() => setShowInventoryDetailsModal(false)}>إغلاق النافذة</Button>
+                <div className="flex gap-2 pt-3 border-t border-slate-800">
+                  <Button className="w-full py-3 rounded-2xl text-sm font-extrabold shadow-md bg-emerald-600 text-white hover:bg-emerald-500 transition-colors" onClick={() => setShowProfitSummaryModal(false)}>إغلاق النافذة</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {showMonthlySalesDetailsModal && (
+            <div key="modal-monthly-sales-details" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-white text-slate-800 w-full max-w-2xl rounded-[2.5rem] p-6 space-y-5 shadow-2xl relative text-right max-h-[90vh] overflow-y-auto border border-slate-100"
+                dir="rtl"
+              >
+                {/* Header */}
+                <div className="flex justify-between items-center pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-indigo-600 text-white p-3 rounded-2xl shadow-md shadow-indigo-500/20">
+                      <BarChart3 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900">سجل وتحليلات المبيعات التفصيلية</h3>
+                      <p className="text-xs text-slate-500 font-bold">مراجعة شاملة لمبيعات الأيام والأسابيع والأشهر والمنتجات الأكثر طلباً</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setShowMonthlySalesDetailsModal(false)} className="p-2.5 hover:bg-slate-100 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-400" />
+                  </button>
+                </div>
+
+                {/* Main Stats Aggregation */}
+                <div className="grid grid-cols-3 gap-3 bg-slate-50 p-4 rounded-3xl border border-slate-100/80">
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 font-bold block">إجمالي مبيعات المتجر</span>
+                    <span className="text-base font-black text-slate-800 font-mono">
+                      {formatPrice(salesDetailsStats.days.reduce((sum, d) => sum + d.total, 0))}
+                    </span>
+                  </div>
+                  <div className="text-right border-r border-slate-200/60 pr-3">
+                    <span className="text-[10px] text-slate-400 font-bold block">القطع المباعة الكلية</span>
+                    <span className="text-base font-black text-indigo-700 font-mono">
+                      {salesDetailsStats.days.reduce((sum, d) => sum + d.itemsCount, 0)} قطعة
+                    </span>
+                  </div>
+                  <div className="text-right border-r border-slate-200/60 pr-3">
+                    <span className="text-[10px] text-slate-400 font-bold block">إجمالي الفواتير</span>
+                    <span className="text-base font-black text-emerald-700 font-mono">
+                      {salesDetailsStats.days.reduce((sum, d) => sum + d.count, 0)} عملية
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tab select Buttons */}
+                <div className="flex bg-slate-100 p-1 rounded-2xl gap-1">
+                  <button
+                    onClick={() => setSalesDetailsTab('days')}
+                    className={`flex-1 py-1.5 sm:py-2 text-[11px] sm:text-xs font-extrabold rounded-xl transition-all duration-300 ${salesDetailsTab === 'days' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    مبيعات الأيام
+                  </button>
+                  <button
+                    onClick={() => setSalesDetailsTab('weeks')}
+                    className={`flex-1 py-1.5 sm:py-2 text-[11px] sm:text-xs font-extrabold rounded-xl transition-all duration-300 ${salesDetailsTab === 'weeks' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    مبيعات الأسابيع
+                  </button>
+                  <button
+                    onClick={() => setSalesDetailsTab('months')}
+                    className={`flex-1 py-1.5 sm:py-2 text-[11px] sm:text-xs font-extrabold rounded-xl transition-all duration-300 ${salesDetailsTab === 'months' ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    مبيعات الأشهر
+                  </button>
+                  <button
+                    onClick={() => setSalesDetailsTab('products_breakdown' as any)}
+                    className={`flex-1 py-1.5 sm:py-2 text-[11px] sm:text-xs font-extrabold rounded-xl transition-all duration-300 ${salesDetailsTab === ('products_breakdown' as any) ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-500 hover:text-slate-800'}`}
+                  >
+                    المنتجات المباعة
+                  </button>
+                </div>
+
+                {/* Content Area */}
+                <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
+                  {salesDetailsTab === 'days' && (
+                    <div className="space-y-2">
+                      {salesDetailsStats.days.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-8 font-bold">لا توجد مبيعات مسجلة حتى الآن.</p>
+                      ) : (
+                        salesDetailsStats.days.map((item, idx) => (
+                          <div key={`day-detail-${idx}`} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-2xs hover:shadow-xs transition-all flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-xs text-slate-800 font-mono">{item.label}</span>
+                                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
+                                  {item.count} فواتير
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-bold block">
+                                كمية القطع المباعة اليوم: <strong className="text-slate-600">{item.itemsCount} قطعة</strong>
+                              </span>
+                            </div>
+                            
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="font-mono font-black text-sm text-slate-800">{formatPrice(item.total)}</span>
+                              <div className="flex items-center gap-2 text-[9px] font-bold">
+                                <span className="text-emerald-600 font-mono">نقداً: {formatPrice(item.cash)}</span>
+                                <span className="text-slate-300">|</span>
+                                <span className="text-red-500 font-mono">دين: {formatPrice(item.debt)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {salesDetailsTab === 'weeks' && (
+                    <div className="space-y-2 font-sans">
+                      {salesDetailsStats.weeks.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-8 font-bold">لا توجد مبيعات مسجلة حتى الآن.</p>
+                      ) : (
+                        salesDetailsStats.weeks.map((item, idx) => (
+                          <div key={`week-detail-${idx}`} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-2xs hover:shadow-xs transition-all flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-xs text-slate-800">{item.label}</span>
+                                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
+                                  {item.count} فواتير
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-bold block">
+                                إجمالي القطع المباعة بالأسبوع: <strong className="text-slate-600">{item.itemsCount} قطعة</strong>
+                              </span>
+                            </div>
+                            
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="font-mono font-black text-sm text-indigo-700">{formatPrice(item.total)}</span>
+                              <div className="flex items-center gap-2 text-[9px] font-bold">
+                                <span className="text-emerald-600 font-mono">نقداً: {formatPrice(item.cash)}</span>
+                                <span className="text-slate-300">|</span>
+                                <span className="text-red-500 font-mono">دين: {formatPrice(item.debt)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {salesDetailsTab === 'months' && (
+                    <div className="space-y-2 font-sans">
+                      {salesDetailsStats.months.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-8 font-bold">لا توجد مبيعات مسجلة حتى الآن.</p>
+                      ) : (
+                        salesDetailsStats.months.map((item, idx) => (
+                          <div key={`month-detail-${idx}`} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-2xs hover:shadow-xs transition-all flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-xs text-slate-800">{item.label}</span>
+                                <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
+                                  {item.count} فواتير
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-bold block">
+                                إجمالي القطع المباعة بالترميز الشهري: <strong className="text-slate-600">{item.itemsCount} قطعة</strong>
+                              </span>
+                            </div>
+                            
+                            <div className="flex flex-col items-end gap-1">
+                              <span className="font-mono font-black text-sm text-indigo-800">{formatPrice(item.total)}</span>
+                              <div className="flex items-center gap-2 text-[9px] font-bold">
+                                <span className="text-emerald-600 font-mono">نقداً: {formatPrice(item.cash)}</span>
+                                <span className="text-slate-300">|</span>
+                                <span className="text-red-500 font-mono">دين: {formatPrice(item.debt)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {salesDetailsTab === ('products_breakdown' as any) && (
+                    <div className="space-y-2">
+                      {salesDetailsStats.productStats.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-8 font-bold">لا توجد منتجات مباعة ومسجلة بعد.</p>
+                      ) : (
+                        salesDetailsStats.productStats.map((item, idx) => (
+                          <div key={`prod-stat-${idx}`} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-2xs hover:shadow-xs transition-all">
+                            <div className="flex justify-between items-start gap-2 mb-1.5">
+                              <div>
+                                <span className="font-extrabold text-xs text-slate-800 block leading-tight">{item.name}</span>
+                                <span className="text-[9px] font-bold text-slate-400 block mt-0.5 bg-slate-100 px-2 py-0.5 rounded-full w-max">
+                                  تصنيف: {item.category}
+                                </span>
+                              </div>
+                              <div className="text-left font-sans">
+                                <span className="text-xs font-black text-indigo-700 font-mono block">{formatPrice(item.revenue)}</span>
+                                <span className="text-[9px] font-bold text-slate-400 block">العائد المبيعات</span>
+                              </div>
+                            </div>
+
+                            <div className="flex justify-between items-center text-[10px] text-slate-500 font-bold pt-1 border-t border-slate-100 mt-2">
+                              <span>الكمية المباعة: <strong className="text-slate-700 font-mono text-xs">{item.soldQty} قطعة</strong></span>
+                              <span>تكرر في: <strong className="text-slate-700 font-mono text-xs">{item.transactions} عمليات</strong></span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer closed button */}
+                <div className="flex gap-2 pt-3 border-t border-slate-100">
+                  <Button className="w-full py-3.5 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 transition-colors shadow-md" onClick={() => setShowMonthlySalesDetailsModal(false)}>
+                    إغلاق التقارير الشاملة
+                  </Button>
+                </div>
               </motion.div>
             </div>
           )}
@@ -4365,6 +5277,73 @@ export default function App() {
                    </div>
                    <Button className="w-full py-4 rounded-2xl text-lg font-black shadow-lg shadow-emerald-500/20" onClick={handleSupplierPayment}>تأكيد التسديد وحفظ</Button>
                 </div>
+              </motion.div>
+            </div>
+          )}
+
+          {selectedSupplierPayment && (
+            <div key="modal-selected-supplier-payment" className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 space-y-4 shadow-2xl relative text-right"
+                dir="rtl"
+              >
+                {/* Header */}
+                <div className="flex justify-between items-start mb-2">
+                  <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-100">
+                    <FileText className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  <button onClick={() => setSelectedSupplierPayment(null)} className="p-2.5 hover:bg-slate-100 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-400" />
+                  </button>
+                </div>
+
+                {/* Title */}
+                <div>
+                  <h3 className="text-xl font-black text-slate-800">تفاصيل دفعة سداد المورد</h3>
+                  <p className="text-xs text-slate-400 font-bold">مراجعة كاملة لبيانات وملاحظات الدفعة المالية للمورد بالتفصيل</p>
+                </div>
+
+                {/* Details Content */}
+                <div className="space-y-3 bg-slate-50 p-4 rounded-3xl border border-slate-100/80">
+                  <div className="flex justify-between items-center pb-2.5 border-b border-slate-200/60 text-right">
+                    <span className="text-[11px] font-bold text-slate-400 block">اسم التاجر المورد</span>
+                    <span className="text-xs font-extrabold text-slate-800">{selectedSupplierPayment.supplier_name}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center pb-2.5 border-b border-slate-200/60 text-right">
+                    <span className="text-[11px] font-bold text-slate-400 block">تاريخ الدفعة والوقت</span>
+                    <span className="text-xs font-bold text-slate-700 font-mono">
+                      {selectedSupplierPayment.payment_date ? new Date(selectedSupplierPayment.payment_date).toLocaleString('ar-SA') : 'غير متوفر'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center pb-2.5 border-b border-slate-200/60 text-right">
+                    <span className="text-[11px] font-bold text-slate-400 block">المبلغ المدفوع</span>
+                    <span className="text-sm font-black text-emerald-700 font-mono">
+                      {formatPrice(selectedSupplierPayment.amount)}
+                    </span>
+                  </div>
+
+                  <div className="pt-1 text-right">
+                    <span className="text-[11px] font-bold text-slate-400 block mb-1">الملاحظات والبيان المسجل</span>
+                    {selectedSupplierPayment.notes ? (
+                      <p className="text-xs font-medium text-slate-700 bg-white p-3 rounded-xl border border-slate-200 leading-relaxed font-sans shadow-2xs whitespace-pre-line">
+                        {selectedSupplierPayment.notes}
+                      </p>
+                    ) : (
+                      <p className="text-xs italic text-slate-400 bg-white p-3 rounded-xl border border-slate-200">
+                        لا توجد ملاحظات مسجلة لهذه الدفعة.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Footer close button */}
+                <Button className="w-full py-3.5 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 transition-colors shadow-md" onClick={() => setSelectedSupplierPayment(null)}>
+                  إغلاق التفاصيل
+                </Button>
               </motion.div>
             </div>
           )}
@@ -4606,6 +5585,124 @@ export default function App() {
             </div>
           )}
 
+          {showCustomerAdjustmentModal && (
+            <div key="modal-customer-adjustment" className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                className="bg-white w-full max-w-lg rounded-[2.5rem] p-6 shadow-2xl relative text-right border border-slate-100"
+                dir="rtl"
+              >
+                <div className="flex justify-between items-center mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-indigo-100 rounded-2xl flex items-center justify-center">
+                      <Settings2 className="w-6 h-6 text-indigo-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-800 leading-tight">تعديل حساب الزبون</h3>
+                      <p className="text-sm font-bold text-slate-500">إضافة تعديلات أو ملاحظات استثنائية</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => { setShowCustomerAdjustmentModal(null); setAdjustmentAmount(''); setAdjustmentNotes(''); setAdjustmentType('note'); }}
+                    className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
+                  >
+                    <X className="w-5 h-5 text-slate-500" />
+                  </button>
+                </div>
+
+                <div className="space-y-5">
+                  <div className="bg-slate-50 p-4 rounded-3xl border border-slate-100/60 shadow-inner flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase block mb-1">الزبون الحالي</p>
+                      <p className="text-slate-800 font-black text-sm truncate">{showCustomerAdjustmentModal.name}</p>
+                    </div>
+                    <div className="text-left bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase block mb-1">
+                        {showCustomerAdjustmentModal.balance > 0 ? 'عليه دين' : showCustomerAdjustmentModal.balance < 0 ? 'له رصيد' : 'رصيد مصفر'}
+                      </p>
+                      <p className="text-indigo-700 font-black text-sm font-mono leading-tight">{formatPrice(Math.abs(showCustomerAdjustmentModal.balance))}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-extrabold text-slate-700 mb-2">نوع العملية / التعديل</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAdjustmentType('note')}
+                        className={`py-3 px-2 rounded-2xl border transition-all text-xs font-bold ${adjustmentType === 'note' ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm ring-1 ring-indigo-500/20' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        ملاحظة عامة
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdjustmentType('add_debt')}
+                        className={`py-3 px-2 rounded-2xl border transition-all text-xs font-bold ${adjustmentType === 'add_debt' ? 'bg-red-50 border-red-200 text-red-700 shadow-sm ring-1 ring-red-500/20' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        زيادة المُديونية
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdjustmentType('add_credit')}
+                        className={`py-3 px-2 rounded-2xl border transition-all text-xs font-bold ${adjustmentType === 'add_credit' ? 'bg-emerald-50 border-emerald-200 text-emerald-700 shadow-sm ring-1 ring-emerald-500/20' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                      >
+                        إضافة دائن / دفعة
+                      </button>
+                    </div>
+                  </div>
+
+                  {adjustmentType !== 'note' && (
+                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
+                      <label className="block text-sm font-extrabold text-slate-700">المبلغ</label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
+                          <span className="text-slate-400 font-bold">{currency}</span>
+                        </div>
+                        <input
+                          type="number"
+                          value={adjustmentAmount}
+                          onChange={(e) => setAdjustmentAmount(e.target.value)}
+                          className="w-full pr-14 pl-4 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-lg font-black focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-left shadow-inner"
+                          placeholder="0.00"
+                          dir="ltr"
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="block text-sm font-extrabold text-slate-700">ملاحظة أو بيان للعملية</label>
+                    <textarea
+                      value={adjustmentNotes}
+                      onChange={(e) => setAdjustmentNotes(e.target.value)}
+                      className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none shadow-inner"
+                      placeholder="اكتب هنا (مثال: نقود باقية سابقة، تسوية، تصحيح رصيد، إلخ)"
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-6 border-t border-slate-100">
+                    <Button 
+                      variant="primary" 
+                      className={`flex-1 py-4 rounded-2xl text-white font-extrabold cursor-pointer shadow-lg ${adjustmentType === 'add_debt' ? 'bg-red-500 hover:bg-red-600 shadow-red-200' : adjustmentType === 'add_credit' ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-200' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200'}`}
+                      onClick={handleCustomerAdjustmentSubmit}
+                    >
+                      حفظ التعديل في السجل
+                    </Button>
+                    <Button 
+                      variant="secondary" 
+                      className="flex-1 py-4 rounded-2xl border-2 border-slate-100 bg-slate-50 text-slate-600 font-bold hover:bg-white hover:text-slate-800 cursor-pointer"
+                      onClick={() => { setShowCustomerAdjustmentModal(null); setAdjustmentAmount(''); setAdjustmentNotes(''); setAdjustmentType('note'); }}
+                    >
+                      إلغاء
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
           {showSettleModal && (
             <div key="modal-settle" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
               <motion.div 
@@ -4679,6 +5776,9 @@ export default function App() {
                         <div className="flex flex-col text-right">
                           <span className="text-[10px] font-black opacity-85">المستهدف الكلي للتسوية</span>
                           <span className="text-[9px] font-medium opacity-70">إجمالي السيولة المقيدة</span>
+                          {currentCycleSupplierPaymentsTotal > 0 && (
+                            <span className="text-[8px] font-bold text-violet-200 block pt-1 bg-violet-800/30 w-fit px-1.5 py-0.5 rounded-lg mt-1 border border-violet-500/30">خصم لموردين: {formatPrice(currentCycleSupplierPaymentsTotal)}</span>
+                          )}
                         </div>
                         <span className="text-sm font-bold font-mono">{formatPrice(activeOutstandingCash)}</span>
                       </div>
@@ -4791,7 +5891,7 @@ export default function App() {
           )}
 
           {showCustomerDetails && (
-            <div key="modal-customer-details" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div key="modal-customer-details" className="fixed inset-0 bg-black/60 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
               <motion.div 
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-slate-50 w-full max-w-2xl rounded-t-3xl sm:rounded-3xl flex flex-col h-[95vh] sm:h-[85vh] overflow-hidden"
@@ -4885,65 +5985,120 @@ export default function App() {
                       </div>
                     )}
                     
-                    {ledgerEntries.map((entry, idx) => (
-                      <div 
-                        key={`ledger-${entry.entryType}-${entry.id ?? 'no-id'}-${idx}`} 
-                        className={`bg-white p-4 rounded-2xl border-r-4 shadow-sm transition-all hover:shadow-md ${entry.entryType === 'sale' ? 'border-r-red-400' : 'border-r-emerald-400'}`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${entry.entryType === 'sale' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                              {entry.entryType === 'sale' ? 'فاتورة شراء' : 'دفعة مالية'}
-                            </span>
-                            <p className="text-xs text-slate-400 mt-1">{new Date(entry.created_at).toLocaleString('ar-SA')}</p>
+                    {ledgerEntries.map((entry, idx) => {
+                      let typeLabel = '';
+                      let badgeColor = '';
+                      let iconColor = '';
+                      let amountPrefix = '';
+                      let amountText = '';
+                      let showItems = false;
+                      let noteText = '';
+                      
+                      if (entry.entryType === 'sale') {
+                        typeLabel = 'فاتورة شراء';
+                        badgeColor = 'bg-red-50 text-red-600';
+                        amountPrefix = '+';
+                        amountText = formatPrice(entry.total_amount);
+                        iconColor = 'border-r-red-400';
+                        showItems = true;
+                        noteText = entry.notes || '';
+                      } else {
+                        if (entry.amount === 0) {
+                          typeLabel = 'ملاحظة حساب';
+                          badgeColor = 'bg-slate-100 text-slate-600';
+                          amountPrefix = '';
+                          amountText = '0 ر.س';
+                          iconColor = 'border-r-slate-400';
+                          noteText = entry.notes || 'ملاحظة عامة';
+                        } else if (entry.type === 'purchase') {
+                          typeLabel = 'زيادة مديونية';
+                          badgeColor = 'bg-amber-50 text-amber-600';
+                          amountPrefix = '+';
+                          amountText = formatPrice(entry.amount);
+                          iconColor = 'border-r-amber-400';
+                          noteText = entry.notes || 'تعديل بالزيادة';
+                        } else {
+                          typeLabel = 'دفعة مالية';
+                          badgeColor = 'bg-emerald-50 text-emerald-600';
+                          amountPrefix = '-';
+                          amountText = formatPrice(entry.amount);
+                          iconColor = 'border-r-emerald-400';
+                          noteText = entry.notes || '';
+                        }
+                      }
+                      
+                      return (
+                        <div 
+                          key={`ledger-${entry.entryType}-${entry.id ?? 'no-id'}-${idx}`} 
+                          className={`bg-white p-4 rounded-2xl border-r-4 shadow-sm transition-all hover:shadow-md ${iconColor}`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${badgeColor}`}>
+                                {typeLabel}
+                              </span>
+                              <p className="text-xs text-slate-400 mt-1">{new Date(entry.created_at).toLocaleString('ar-SA')}</p>
+                            </div>
+                            <p className="text-lg font-bold font-mono flex items-center gap-1" dir="ltr">
+                              <span className="text-slate-400 text-sm font-sans">{amountPrefix}</span>
+                              {amountText}
+                            </p>
                           </div>
-                          <p className={`text-lg font-bold ${entry.entryType === 'sale' ? 'text-red-600' : 'text-emerald-600'}`}>
-                            {entry.entryType === 'sale' ? '+' : '-'}{formatPrice(entry.entryType === 'sale' ? entry.total_amount : entry.amount)}
-                          </p>
+                          
+                          {noteText && (
+                            <div className="mt-2 text-xs bg-slate-50 text-slate-600 p-2 rounded-xl border border-slate-100/60 font-medium leading-relaxed flex gap-1.5 items-start">
+                              <span>📝</span> <span>{noteText}</span>
+                            </div>
+                          )}
+                          
+                          {showItems && (
+                            <div className="mt-3 pt-3 border-t border-slate-50">
+                              <div className="space-y-1">
+                                {JSON.parse(entry.items || '[]').map((item: any, i: number) => (
+                                  <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-xs text-slate-600">
+                                    <span>{item.name} <span className="text-slate-400">× {item.quantity}</span></span>
+                                    <span>{formatPrice(item.price * item.quantity)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="mt-3 flex justify-end">
+                                <button 
+                                  onClick={() => printReceipt(entry)}
+                                  className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 hover:underline"
+                                >
+                                  <Printer className="w-3 h-3" /> طباعة الفاتورة
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        
-                        {entry.entryType === 'payment' && entry.notes && (
-                          <div className="mt-2 text-xs bg-slate-50 text-slate-600 p-2 rounded-xl border border-slate-100/60 font-medium leading-relaxed">
-                            📝 {entry.notes}
-                          </div>
-                        )}
-                        
-                        {entry.entryType === 'sale' && (
-                          <div className="mt-3 pt-3 border-t border-slate-50">
-                            <div className="space-y-1">
-                              {JSON.parse(entry.items || '[]').map((item: any, i: number) => (
-                                <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-xs text-slate-600">
-                                  <span>{item.name} <span className="text-slate-400">× {item.quantity}</span></span>
-                                  <span>{formatPrice(item.price * item.quantity)}</span>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="mt-3 flex justify-end">
-                              <button 
-                                onClick={() => printReceipt(entry)}
-                                className="text-[10px] text-emerald-600 font-bold flex items-center gap-1 hover:underline"
-                              >
-                                <Printer className="w-3 h-3" /> طباعة الفاتورة
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
                 {/* Quick Action Footer */}
-                <div className="p-4 bg-white border-t border-slate-100">
+                <div className="p-4 bg-white border-t border-slate-100 flex gap-2">
                   <Button 
                     variant="primary" 
-                    className="w-full py-4 rounded-2xl shadow-lg shadow-emerald-100 cursor-pointer"
+                    className="flex-1 py-4 rounded-2xl shadow-lg shadow-emerald-100 cursor-pointer"
                     onClick={() => {
                       setShowCustomerDetails(null);
                       setShowPaymentModal(showCustomerDetails);
                     }}
                   >
                     {showCustomerDetails.balance > 0 ? 'تسجيل سداد دفعة مديونية' : 'إيداع دفعة مقدمة في الرصيد'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="w-14 shrink-0 rounded-2xl flex items-center justify-center border border-slate-200 bg-slate-50 hover:bg-slate-100 shadow-sm"
+                    onClick={() => {
+                      setShowCustomerDetails(null);
+                      setShowCustomerAdjustmentModal(showCustomerDetails);
+                    }}
+                    title="تعديل الحساب أو ملاحظات"
+                  >
+                    <Plus className="w-5 h-5 text-slate-600" />
                   </Button>
                 </div>
               </motion.div>
