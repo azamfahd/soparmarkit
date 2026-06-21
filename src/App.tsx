@@ -2673,7 +2673,7 @@ export default function App() {
             >
               <div className="space-y-3">
                 <h2 className="text-lg font-bold text-slate-800">الوصول السريع</h2>
-                <div className="grid grid-cols-5 sm:grid-cols-5 md:grid-cols-9 gap-2 w-full">
+                <div className="grid grid-cols-5 sm:grid-cols-5 md:grid-cols-10 gap-2 w-full">
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setActiveTab('pos')} 
@@ -2775,6 +2775,17 @@ export default function App() {
                       <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 group-hover:text-white transition-colors" />
                     </div>
                     <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">احتياطية</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setActiveTab('smart-import')} 
+                    className="p-1.5 sm:p-2 rounded-xl bg-violet-50/40 border border-violet-100/60 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-violet-300 hover:bg-violet-100/40 hover:shadow-md transition-all group cursor-pointer"
+                  >
+                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-violet-600 rounded-lg flex items-center justify-center group-hover:bg-violet-700 transition-colors">
+                      <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+                    </div>
+                    <span className="font-extrabold text-[9px] sm:text-[10px] text-violet-705 text-center">استيراد ذكي</span>
                   </motion.button>
                 </div>
               </div>
