@@ -3,6 +3,7 @@ import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import BarcodeScanner from './components/BarcodeScanner';
 import SmartAnalytics from './components/SmartAnalytics';
+import SmartImport from './components/SmartImport';
 import { Scan, QrCode } from 'lucide-react';
 import { 
   LayoutDashboard, 
@@ -405,6 +406,7 @@ export default function App() {
   const [paymentNotes, setPaymentNotes] = useState('');
   const [isCartExpanded, setIsCartExpanded] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCategorySidebarOpen, setIsCategorySidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [storeName, setStoreName] = useState('النظام المحاسبي');
   const [currency, setCurrency] = useState('ر.ي');
@@ -727,6 +729,17 @@ export default function App() {
     'لحوم': <Beef className="w-4 h-4" />,
     'خبز': <Croissant className="w-4 h-4" />,
   };
+
+  const categoryCounts = React.useMemo(() => {
+    const counts: Record<string, number> = {};
+    products.forEach(p => {
+      const cat = p.category || 'عام';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    // For 'الكل', count all products
+    counts['الكل'] = products.length;
+    return counts;
+  }, [products]);
 
   const fetchSummary = async () => {
     // Local DB logic
@@ -2361,61 +2374,105 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="flex-1 p-4 space-y-2">
-          <SidebarButton 
-            active={activeTab === 'dashboard'} 
-            onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
-            icon={<LayoutDashboard />} 
-            label="الرئيسية" 
-          />
-          <SidebarButton 
-            active={activeTab === 'pos'} 
-            onClick={() => { setActiveTab('pos'); setIsSidebarOpen(false); }} 
-            icon={<ShoppingCart />} 
-            label="نقطة البيع" 
-          />
-          <SidebarButton 
-            active={activeTab === 'history'} 
-            onClick={() => { setActiveTab('history'); setIsSidebarOpen(false); }} 
-            icon={<TrendingUp />} 
-            label="سجل المبيعات" 
-          />
-          <SidebarButton 
-            active={activeTab === 'analytics'} 
-            onClick={() => { setActiveTab('analytics'); setIsSidebarOpen(false); }} 
-            icon={<BarChart3 />} 
-            label="التحليل البصري الذكي Power BI" 
-          />
-          <SidebarButton 
-            active={activeTab === 'products'} 
-            onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
-            icon={<Package />} 
-            label="إدارة المخزون" 
-          />
-          <SidebarButton 
-            active={activeTab === 'customers'} 
-            onClick={() => { setActiveTab('customers'); setIsSidebarOpen(false); }} 
-            icon={<Users />} 
-            label="الزبائن والديون" 
-          />
-          <SidebarButton 
-            active={activeTab === 'suppliers'} 
-            onClick={() => { setActiveTab('suppliers'); setIsSidebarOpen(false); }} 
-            icon={<Briefcase />} 
-            label="الموردين والتسويات" 
-          />
-          <SidebarButton 
-            active={activeTab === 'notes'} 
-            onClick={() => { setActiveTab('notes'); setIsSidebarOpen(false); }} 
-            icon={<BookOpen />} 
-            label="تصفية الصندوق والملاحظات" 
-          />
-          <SidebarButton 
-            active={activeTab === 'settings'} 
-            onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
-            icon={<Settings />} 
-            label="الإعدادات" 
-          />
+        <nav className="flex-1 p-4 space-y-4 overflow-y-auto no-scrollbar">
+          {/* المجموعة الأولى: التحليلات والمتابعة */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5 tracking-wide">الرئيسية والتحليل</p>
+            <SidebarButton 
+              active={activeTab === 'dashboard'} 
+              onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
+              icon={<LayoutDashboard />} 
+              label="الرئيسية" 
+            />
+            <SidebarButton 
+              active={activeTab === 'analytics'} 
+              onClick={() => { setActiveTab('analytics'); setIsSidebarOpen(false); }} 
+              icon={<BarChart3 />} 
+              label="التحليل البصري الذكي Power BI" 
+              badge="تقارير"
+              badgeColor="emerald"
+            />
+          </div>
+
+          {/* المجموعة الثانية: الكاونتر والمبيعات */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5 tracking-wide">العمليات والبيع</p>
+            <SidebarButton 
+              active={activeTab === 'pos'} 
+              onClick={() => { setActiveTab('pos'); setIsSidebarOpen(false); }} 
+              icon={<ShoppingCart />} 
+              label="نقطة البيع (الكاشير)" 
+              badge={cart.length > 0 ? `${cart.reduce((sum, item) => sum + (item.cartQty || 1), 0)} قطع` : undefined}
+              badgeColor="amber"
+            />
+            <SidebarButton 
+              active={activeTab === 'history'} 
+              onClick={() => { setActiveTab('history'); setIsSidebarOpen(false); }} 
+              icon={<TrendingUp />} 
+              label="سجل المبيعات اليومية" 
+            />
+          </div>
+
+          {/* المجموعة الثالثة: قواعد البيانات والسلع */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-black text-slate-455 mr-2 mb-1.5 tracking-wide">إحصاءات السلع والحلفاء</p>
+            <SidebarButton 
+              active={activeTab === 'products'} 
+              onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
+              icon={<Package />} 
+              label="إدارة المخزون" 
+              badge={summary.lowStock > 0 ? `${summary.lowStock} تنبيه` : undefined}
+              badgeColor="red"
+            />
+            <SidebarButton 
+              active={activeTab === 'customers'} 
+              onClick={() => { setActiveTab('customers'); setIsSidebarOpen(false); }} 
+              icon={<Users />} 
+              label="الزبائن والديون" 
+              badge={customers.filter(c => c.balance > 0).length > 0 ? `${customers.filter(c => c.balance > 0).length} مدين` : undefined}
+              badgeColor="red"
+            />
+            <SidebarButton 
+              active={activeTab === 'suppliers'} 
+              onClick={() => { setActiveTab('suppliers'); setIsSidebarOpen(false); }} 
+              icon={<Briefcase />} 
+              label="الموردين والتسويات" 
+              badge={suppliers.length > 0 ? `${suppliers.length} مورد` : undefined}
+              badgeColor="violet"
+            />
+          </div>
+
+          {/* المجموعة الرابعة: المحاسبة الذكية والمهام */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5 tracking-wide">الإدارة المالية والذكاء</p>
+            <SidebarButton 
+              active={activeTab === 'notes'} 
+              onClick={() => { setActiveTab('notes'); setIsSidebarOpen(false); }} 
+              icon={<BookOpen />} 
+              label="تصفية الصندوق والملاحظات" 
+              badge={notes.filter(n => !n.is_completed).length > 0 ? `${notes.filter(n => !n.is_completed).length} مهام` : undefined}
+              badgeColor="amber"
+            />
+            <SidebarButton 
+              active={activeTab === 'smart-import'} 
+              onClick={() => { setActiveTab('smart-import'); setIsSidebarOpen(false); }} 
+              icon={<Sparkles className="animate-pulse text-violet-500" />} 
+              label="الاستيراد الذكي (AI) ✨" 
+              badge="محاسب ذكي"
+              badgeColor="violet"
+            />
+          </div>
+
+          {/* المجموعة الخامسة: الإعدادات */}
+          <div className="space-y-1">
+            <p className="text-[10px] font-black text-slate-430 mr-2 mb-1.5 tracking-wide">تفاصيل النظام المعماري</p>
+            <SidebarButton 
+              active={activeTab === 'settings'} 
+              onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
+              icon={<Settings />} 
+              label="الإعدادات العامة" 
+            />
+          </div>
         </nav>
 
         <div className="p-6 border-t border-slate-50">
@@ -2431,17 +2488,144 @@ export default function App() {
           </button>
           
           {deferredPrompt && (
-            <button onClick={handleInstall} className="w-full flex items-center gap-3 p-3 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 rounded-2xl transition-all mt-2">
-              <Download className="w-5 h-5" />
-              <span className="text-sm font-bold">تثبيت التطبيق</span>
+            <button onClick={handleInstall} className="w-full flex items-center gap-2 px-3 py-2.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 rounded-xl transition-all mt-2 cursor-pointer">
+              <Download className="w-4 h-4" />
+              <span className="text-xs font-black">تثبيت التطبيق السريع</span>
             </button>
           )}
           
-          <p className="text-xs text-slate-500 mt-4 px-2 text-center">
-            إذا لم يظهر زر التثبيت، يمكنك تثبيت التطبيق يدوياً من قائمة المتصفح (إضافة إلى الشاشة الرئيسية).
-          </p>
+          <div className="mt-3 p-2.5 bg-slate-100/60 border border-slate-200/40 rounded-xl flex items-start gap-2">
+            <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+            <p className="text-[9px] text-slate-500 font-medium leading-relaxed text-right">
+              لتجربة أفضل، يمكنك تثبيت التطبيق يدوياً من قائمة المتصفح باختيار <span className="text-slate-800 font-bold">"إضافة إلى الشاشة الرئيسية"</span>.
+            </p>
+          </div>
         </div>
       </motion.aside>
+
+      {/* لوحة الأقسام التفصيلية الجانبية المرنة */}
+      <AnimatePresence>
+        {isCategorySidebarOpen && (
+          <>
+            {/* الخلفية المظلمة */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCategorySidebarOpen(false)}
+              className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[80]"
+            />
+
+            {/* ورقة الأقسام الجانبية */}
+            <motion.aside
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 24, stiffness: 220 }}
+              className="fixed top-0 right-0 bottom-0 w-80 sm:w-85 bg-slate-50 z-[90] shadow-2xl border-l border-slate-100 flex flex-col text-right"
+            >
+              {/* هيدر اللوحة */}
+              <div className="p-5 bg-white border-b border-slate-100 flex justify-between items-center shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <div className="bg-emerald-500 p-2 rounded-xl text-white shadow-sm">
+                    <Package className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-xs text-slate-800">أقسام وتصنيفات المتجر</h3>
+                    <p className="text-[10px] text-slate-400 font-bold">جميع أقسام السلع النشطة مع الإحصائيات</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsCategorySidebarOpen(false)} 
+                  className="p-1.5 hover:bg-slate-100 hover:text-rose-500 text-slate-400 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* محتوى الأقسام المرتب احترافياً */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">
+                
+                {/* ملخص إحصاءات الأقسام */}
+                <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm space-y-3">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">ملخص البيانات والرفوف</p>
+                  <div className="grid grid-cols-2 gap-2 text-right">
+                    <div className="bg-slate-50/60 p-3 rounded-xl border border-slate-100">
+                      <p className="text-[10px] text-slate-400 font-bold">إجمالي السلع</p>
+                      <p className="text-sm font-black text-slate-700">{products.length}</p>
+                    </div>
+                    <div className="bg-slate-50/60 p-3 rounded-xl border border-slate-100">
+                      <p className="text-[10px] text-slate-400 font-bold">عدد الأقسام</p>
+                      <p className="text-sm font-black text-slate-700">{categories.length - 1}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* قائمة الأقسام مع البحث السريع والتصفية والفلترة الفورية */}
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black text-slate-400 mr-1.5">اختر القسم لفلترة النتائج فوراً:</p>
+                  
+                  <div className="space-y-2.5">
+                    {categories.map((cat, idx) => {
+                      const itemsCount = categoryCounts[cat] || 0;
+                      const isSelected = (activeTab === 'pos' && selectedCategory === cat) || (activeTab === 'products' && inventoryCategory === cat);
+                      
+                      return (
+                        <motion.button
+                          whileHover={{ x: -2 }}
+                          key={`drawer-cat-${cat}-${idx}`}
+                          onClick={() => {
+                            if (activeTab === 'pos') {
+                              setSelectedCategory(cat);
+                            } else {
+                              setInventoryCategory(cat);
+                            }
+                            setIsCategorySidebarOpen(false);
+                            showNotification(`تصفية المنتجات حسب قسم "${cat}"`, 'success');
+                          }}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl transition-all duration-205 cursor-pointer border ${
+                            isSelected 
+                              ? 'bg-emerald-600 text-white border-transparent shadow-md shadow-emerald-500/10 font-bold' 
+                              : 'bg-white text-slate-700 border-slate-100 hover:border-slate-200 hover:bg-slate-50/50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className={`w-5 h-5 rounded-lg flex items-center justify-center ${
+                              isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                            }`}>
+                              {categoryIcons[cat] || <Package className="w-3.5 h-3.5" />}
+                            </span>
+                            <span className="text-xs font-bold">{cat}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-1.55">
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                              isSelected ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {itemsCount} قطعة
+                            </span>
+                            <ChevronLeft className={`w-3.5 h-3.5 transition-transform ${
+                              isSelected ? 'text-white' : 'text-slate-300'
+                            }`} />
+                          </div>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* ذيل ورقة الأقسام الجانبية */}
+              <div className="p-4 bg-white border-t border-slate-100 text-center">
+                <p className="text-[10px] text-slate-400 font-bold leading-relaxed">
+                  يمكنك إضافة أقسام جديدة ببساطة عن طريق كتابة اسم القسم المطلوب في مربع "تصنيف السلعة" عند إضافتها أو تعديلها.
+                </p>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Header */}
       <header className="p-4 bg-white border-b border-slate-200 sticky top-0 z-30">
@@ -2906,17 +3090,50 @@ export default function App() {
                 )}
               </AnimatePresence>
 
-              <div className="flex gap-2 overflow-x-auto pb-2 mb-4 no-scrollbar">
-                {categories.map((cat, idx) => (
-                  <button
-                    key={`pos-cat-${cat}-${idx}`}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-sm whitespace-nowrap transition-all ${selectedCategory === cat ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100 scale-105' : 'bg-white text-slate-600 border border-slate-100'}`}
-                  >
-                    {categoryIcons[cat] || <Package className="w-4 h-4" />}
-                    {cat}
-                  </button>
-                ))}
+              {/* شريط الأقسام الذكي واللوحة الجانبية */}
+              <div className="flex items-center justify-between gap-2 mb-2 bg-slate-100/40 p-2 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-1 text-slate-700">
+                  <Package className="w-4 h-4 text-emerald-600" />
+                  <span className="text-xs font-black">أقسام المتجر</span>
+                  <span className="text-[10px] bg-slate-200/50 px-1.5 py-0.5 rounded-md font-bold text-slate-600">
+                    {categories.length - 1} نشط
+                  </span>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsCategorySidebarOpen(true)}
+                  className="flex items-center gap-1 text-[10px] font-black text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-xl transition-all cursor-pointer"
+                >
+                  <Menu className="w-3 h-3" />
+                  <span>تصفح الأقسام بالتفصيل</span>
+                </button>
+              </div>
+
+              {/* الشريط الأفقي الافتراضي للأقسام السريعة */}
+              <div className="flex gap-2 overflow-x-auto pb-1.5 mb-3 no-scrollbar">
+                {categories.map((cat, idx) => {
+                  const itemsCount = categoryCounts[cat] || 0;
+                  return (
+                    <button
+                      type="button"
+                      key={`pos-cat-${cat}-${idx}`}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+                        selectedCategory === cat 
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10 font-bold scale-[1.02]' 
+                          : 'bg-white text-slate-600 border border-slate-200/60 hover:border-slate-350'
+                      }`}
+                    >
+                      {categoryIcons[cat] || <Package className="w-3.5 h-3.5" />}
+                      <span>{cat}</span>
+                      <span className={`text-[9px] font-black px-1.5 py-0.2 rounded-md ${
+                        selectedCategory === cat ? 'bg-white/20 text-white' : 'bg-slate-55/70 text-slate-500'
+                      }`}>
+                        {itemsCount}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto pr-1 pb-4">
@@ -3145,16 +3362,50 @@ export default function App() {
                 />
               </div>
 
-              <div className="flex gap-2 overflow-x-auto pb-2 mb-2 no-scrollbar">
-                {categories.map((cat, idx) => (
-                  <button
-                    key={`inv-cat-${cat}-${idx}`}
-                    onClick={() => setInventoryCategory(cat)}
-                    className={`px-4 py-1.5 rounded-full text-sm whitespace-nowrap transition-all ${inventoryCategory === cat ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-200'}`}
-                  >
-                    {cat}
-                  </button>
-                ))}
+              {/* شريط الأقسام الذكي واللوحة الجانبية في إدارة الأصناف */}
+              <div className="flex items-center justify-between gap-2 mb-2 bg-slate-100/40 p-2 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-1 text-slate-700">
+                  <Package className="w-4 h-4 text-emerald-600" />
+                  <span className="text-xs font-black">أقسام المخزن</span>
+                  <span className="text-[10px] bg-slate-200/50 px-1.5 py-0.5 rounded-md font-bold text-slate-600">
+                    {categories.length - 1} نشط
+                  </span>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsCategorySidebarOpen(true)}
+                  className="flex items-center gap-1 text-[10px] font-black text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-xl transition-all cursor-pointer"
+                >
+                  <Menu className="w-3 h-3" />
+                  <span>تصفح الأقسام بالتفصيل</span>
+                </button>
+              </div>
+
+              {/* الشريط الأفقي الافتراضي للأقسام السريعة */}
+              <div className="flex gap-2 overflow-x-auto pb-1.5 mb-3 no-scrollbar">
+                {categories.map((cat, idx) => {
+                  const itemsCount = categoryCounts[cat] || 0;
+                  return (
+                    <button
+                      type="button"
+                      key={`inv-cat-${cat}-${idx}`}
+                      onClick={() => setInventoryCategory(cat)}
+                      className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+                        inventoryCategory === cat 
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10 font-bold scale-[1.02]' 
+                          : 'bg-white text-slate-650 border border-slate-200 hover:border-slate-350'
+                      }`}
+                    >
+                      {categoryIcons[cat] || <Package className="w-3.5 h-3.5" />}
+                      <span>{cat}</span>
+                      <span className={`text-[9px] font-black px-1.5 py-0.2 rounded-md ${
+                        inventoryCategory === cat ? 'bg-white/20 text-white' : 'bg-slate-55/70 text-slate-500'
+                      }`}>
+                        {itemsCount}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -3711,6 +3962,20 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'smart-import' && (
+            <motion.div key="smart-import" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <SmartImport 
+                storeName={storeName}
+                onGoBack={() => setActiveTab('dashboard')}
+                onImported={() => {
+                  setTimeout(() => {
+                    exportData();
+                  }, 800);
+                }}
+              />
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
               <div className="flex justify-between items-center">
@@ -3795,6 +4060,25 @@ export default function App() {
                       </Button>
                     </div>
                   </div>
+                </Card>
+
+                <Card className="space-y-4 border-violet-100 bg-gradient-to-br from-white to-violet-50/20 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center gap-2 text-violet-750">
+                    <div className="p-1.5 bg-violet-50 text-violet-605 rounded-xl border border-violet-100/50">
+                      <Sparkles className="w-5 h-5 text-violet-605 animate-pulse" />
+                    </div>
+                    <h3 className="font-extrabold text-sm sm:text-base text-slate-800">الاستيراد الذكي بالـ AI والملفات 🎯</h3>
+                  </div>
+                  <p className="text-slate-500 text-xs leading-relaxed font-semibold">
+                    هل تمتلك مبيعات، ديون زبائن، أو قوائم بضائع مكتوبة على الدفتر أو في ملفات إكسل؟ قم بالتقاط صورة أو كتابة النص وسيتولى الذكاء الاصطناعي معالجتها وفكها فوراً.
+                  </p>
+                  <Button 
+                    className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold flex items-center justify-center gap-2 rounded-xl transition-all"
+                    onClick={() => setActiveTab('smart-import')}
+                  >
+                    <Sparkles className="w-4 h-4 text-yellow-300" />
+                    تحميل واستيراد البيانات الآن
+                  </Button>
                 </Card>
 
                 <Card className="space-y-4">
@@ -6217,12 +6501,35 @@ export default function App() {
   );
 }
 
-const SidebarButton = ({ active, onClick, icon, label }: any) => (
+const SidebarButton = ({ active, onClick, icon, label, badge, badgeColor = 'emerald' }: any) => (
   <button 
     onClick={onClick}
-    className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${active ? 'bg-emerald-50 text-emerald-600 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+    className={`w-full flex items-center justify-between p-2 rounded-xl transition-all duration-200 cursor-pointer text-right group ${
+      active 
+        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10 font-bold translate-x-[-1px]' 
+        : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 border border-transparent hover:border-slate-100/50'
+    }`}
   >
-    <span className={active ? 'text-emerald-600' : 'text-slate-400'}>{icon}</span>
-    <span className="font-bold text-sm">{label}</span>
+    <div className="flex items-center gap-3">
+      <span className={`w-4 h-4 flex items-center justify-center transition-transform duration-200 group-hover:scale-105 ${active ? 'text-white' : 'text-slate-400 group-hover:text-emerald-600'}`}>
+        {icon}
+      </span>
+      <span className="text-[11px] sm:text-xs font-bold leading-none">{label}</span>
+    </div>
+    {badge && (
+      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
+        active 
+          ? 'bg-white/20 text-white' 
+          : badgeColor === 'red' 
+            ? 'bg-red-50 text-red-650 border border-red-100' 
+            : badgeColor === 'amber'
+              ? 'bg-amber-50 text-amber-650 border border-amber-100'
+              : badgeColor === 'violet'
+                ? 'bg-violet-50 text-violet-650 border border-violet-100'
+                : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+      }`}>
+        {badge}
+      </span>
+    )}
   </button>
 );
