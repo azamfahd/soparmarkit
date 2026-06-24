@@ -47,7 +47,13 @@ import {
   Camera,
   Home,
   BookOpen,
-  Edit2
+  Edit2,
+  Copy,
+  Check,
+  Calendar,
+  Bookmark,
+  Info,
+  AlertTriangle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -420,8 +426,11 @@ export default function App() {
   const salesSettlements = useLiveQuery(() => db.salesSettlements ? db.salesSettlements.orderBy('created_at').reverse().toArray() : Promise.resolve([])) || [];
 
   const [showAddNote, setShowAddNote] = useState(false);
-  const [newNote, setNewNote] = useState({ title: '', content: '', reminder_date: '' });
+  const [newNote, setNewNote] = useState({ title: '', content: '', reminder_date: '', priority: 'normal' as 'normal' | 'high' | 'info' | 'warning' });
   const [editingNoteId, setEditingNoteId] = useState<number | null>(null);
+  const [selectedNote, setSelectedNote] = useState<any | null>(null);
+  const [noteFilter, setNoteFilter] = useState<'all' | 'pending' | 'completed' | 'high'>('all');
+  const [noteSearchQuery, setNoteSearchQuery] = useState('');
 
   // States for Reconciling Sales / تصفية المبيعات
   const [showSettleModal, setShowSettleModal] = useState(false);
@@ -433,6 +442,40 @@ export default function App() {
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawReason, setWithdrawReason] = useState('');
   const [withdrawByWhom, setWithdrawByWhom] = useState('أمين الصندوق');
+
+  // States for Security and Permissions / إدارة الصلاحيات والأمان للمدير
+  const [permissionsEnabled, setPermissionsEnabled] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
+  const [protectedActions, setProtectedActions] = useState<Record<string, boolean>>({
+    analytics: true,
+    settings: true,
+    delete_sale: true,
+    edit_product: true,
+    cash_withdrawal: true,
+    settlement: true,
+    supplier_payment: true,
+    smart_import: true
+  });
+
+  const [pinModal, setPinModal] = useState<{
+    isOpen: boolean;
+    actionType: string;
+    onSuccess: () => void;
+    title: string;
+    description: string;
+    inputVal: string;
+    error: string;
+  }>({
+    isOpen: false,
+    actionType: '',
+    onSuccess: () => {},
+    title: '',
+    description: '',
+    inputVal: '',
+    error: ''
+  });
+
+  const [showPermissionsConfigModal, setShowPermissionsConfigModal] = useState(false);
 
   const allCashWithdrawals = useLiveQuery(() => 
     db.cashWithdrawals ? db.cashWithdrawals.orderBy('created_at').reverse().toArray() : Promise.resolve([])
@@ -645,6 +688,18 @@ export default function App() {
     if (roundingSetting) {
       setRoundingFactor(roundingSetting.value);
     }
+    const permSetting = appSettings.find(s => s.key === 'permissionsEnabled');
+    if (permSetting) {
+      setPermissionsEnabled(permSetting.value);
+    }
+    const pinSetting = appSettings.find(s => s.key === 'adminPin');
+    if (pinSetting) {
+      setAdminPin(pinSetting.value);
+    }
+    const protectedSetting = appSettings.find(s => s.key === 'protectedActions');
+    if (protectedSetting) {
+      setProtectedActions(protectedSetting.value);
+    }
   }, [appSettings]);
 
   useEffect(() => {
@@ -689,6 +744,43 @@ export default function App() {
     const val = typeof price === 'number' && !isNaN(price) ? price : 0;
     const roundedPrice = applyCurrencyRounding(val);
     return `${roundedPrice.toLocaleString('en-US')} ${currency}`;
+  };
+
+  const formatDateTimeWithDay = (dateInput: string | Date | number | undefined | null) => {
+    if (!dateInput) return '';
+    const dateObj = new Date(dateInput);
+    if (isNaN(dateObj.getTime())) return '';
+    
+    const daysOfWeek = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    const dayName = daysOfWeek[dateObj.getDay()];
+    
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const year = dateObj.getFullYear();
+    
+    let hours = dateObj.getHours();
+    const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'م' : 'ص';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    const formattedTime = `${String(hours).padStart(2, '0')}:${minutes} ${ampm}`;
+    
+    return `${dayName}، ${year}/${month}/${day} - ${formattedTime}`;
+  };
+
+  const formatDateWithDay = (dateInput: string | Date | number | undefined | null) => {
+    if (!dateInput) return '';
+    const dateObj = new Date(dateInput);
+    if (isNaN(dateObj.getTime())) return '';
+    
+    const daysOfWeek = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    const dayName = daysOfWeek[dateObj.getDay()];
+    
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const year = dateObj.getFullYear();
+    
+    return `${dayName}، ${year}/${month}/${day}`;
   };
 
   const customerStats = React.useMemo(() => {
@@ -1202,6 +1294,7 @@ export default function App() {
           title: newNote.title.trim(),
           content: newNote.content.trim(),
           reminder_date: newNote.reminder_date || null,
+          priority: newNote.priority || 'normal'
         });
         showNotification('تم تحديث الملاحظة بنجاح');
       } else {
@@ -1210,11 +1303,12 @@ export default function App() {
           content: newNote.content.trim(),
           reminder_date: newNote.reminder_date || null,
           created_at: new Date().toISOString(),
-          is_completed: false
+          is_completed: false,
+          priority: newNote.priority || 'normal'
         });
         showNotification('تم حفظ الملاحظة بنجاح');
       }
-      setNewNote({ title: '', content: '', reminder_date: '' });
+      setNewNote({ title: '', content: '', reminder_date: '', priority: 'normal' });
       setEditingNoteId(null);
       setShowAddNote(false);
     } catch (err) {
@@ -1227,7 +1321,8 @@ export default function App() {
     setNewNote({
       title: note.title,
       content: note.content,
-      reminder_date: note.reminder_date || ''
+      reminder_date: note.reminder_date || '',
+      priority: note.priority || 'normal'
     });
     setEditingNoteId(note.id);
     setShowAddNote(true);
@@ -1241,12 +1336,39 @@ export default function App() {
         try {
           await db.notes.delete(id);
           showNotification('تم حذف الملاحظة بنجاح');
+          if (selectedNote && selectedNote.id === id) {
+            setSelectedNote(null);
+          }
         } catch (err) {
           console.error("Failed to delete note:", err);
           showNotification('حدث خطأ أثناء الحذف', 'error');
         }
       }
     });
+  };
+
+  const handleToggleNoteCompletion = async (note: any) => {
+    try {
+      const updatedStatus = !note.is_completed;
+      await db.notes.update(note.id!, { is_completed: updatedStatus });
+      showNotification(updatedStatus ? 'تم إكمال المهمة بنجاح ✓' : 'تم تفعيل المهمة كغير مكتملة 📝');
+      if (selectedNote && selectedNote.id === note.id) {
+        setSelectedNote({ ...selectedNote, is_completed: updatedStatus });
+      }
+    } catch (err) {
+      console.error("Failed to toggle note completion:", err);
+      showNotification('حدث خطأ أثناء تحديث حالة الملاحظة', 'error');
+    }
+  };
+
+  const handleCopyNoteContent = (content: string) => {
+    try {
+      navigator.clipboard.writeText(content);
+      showNotification('تم نسخ محتوى الملاحظة بنجاح 📋');
+    } catch (err) {
+      console.error("Failed to copy note content: ", err);
+      showNotification('فشل في نسخ النص', 'error');
+    }
   };
 
   const formatCalculatedValue = (val: number): string => {
@@ -1626,6 +1748,132 @@ export default function App() {
     if (!silent) showNotification('تم تحديث إعدادات التقريب');
   };
 
+  const updatePermissionsEnabled = async (enabled: boolean) => {
+    const existing = await db.settings.where('key').equals('permissionsEnabled').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: enabled });
+    } else {
+      await db.settings.add({ key: 'permissionsEnabled', value: enabled });
+    }
+    setPermissionsEnabled(enabled);
+  };
+
+  const updateAdminPin = async (newPin: string) => {
+    const existing = await db.settings.where('key').equals('adminPin').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: newPin });
+    } else {
+      await db.settings.add({ key: 'adminPin', value: newPin });
+    }
+    setAdminPin(newPin);
+  };
+
+  const updateProtectedActions = async (actions: Record<string, boolean>) => {
+    const existing = await db.settings.where('key').equals('protectedActions').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: actions });
+    } else {
+      await db.settings.add({ key: 'protectedActions', value: actions });
+    }
+    setProtectedActions(actions);
+  };
+
+  const verifyAdminPermission = (actionType: string, onSuccess: () => void, title = 'التحقق من صلاحية المدير') => {
+    if (!permissionsEnabled || !protectedActions[actionType]) {
+      onSuccess();
+      return;
+    }
+
+    if (!adminPin) {
+      setPinModal({
+        isOpen: true,
+        actionType: 'setup_first',
+        onSuccess: onSuccess,
+        title: '🔑 إنشاء رمز حماية المدير (لأول مرة)',
+        description: 'الرجاء تعيين رمز مرور رقمي خاص بالمدير لحماية الإجراءات الحساسة والنظام. يرجى حفظ هذا الرمز جيداً.',
+        inputVal: '',
+        error: ''
+      });
+      return;
+    }
+
+    let actionDesc = 'الرجاء إدخال رمز الأمان للمتابعة';
+    if (actionType === 'analytics') actionDesc = 'رؤية الأرباح والتقارير المالية والتحليلات الذكية';
+    else if (actionType === 'settings') actionDesc = 'الوصول لإعدادات النظام والنسخ الاحتياطي وإعادة الضبط';
+    else if (actionType === 'delete_sale') actionDesc = 'تأكيد صلاحية حذف أو تعديل فاتورة بيع من السجل';
+    else if (actionType === 'edit_product') actionDesc = 'تأكيد صلاحية تعديل أسعار المنتجات أو حذف السلع من المخزن';
+    else if (actionType === 'cash_withdrawal') actionDesc = 'الموافقة على سحب مبلغ كاش أو سلفة من الصندوق';
+    else if (actionType === 'settlement') actionDesc = 'صلاحية تصفية وردية الكاش وتسوية المبيعات اليومية';
+    else if (actionType === 'supplier_payment') actionDesc = 'تسجيل دفعة مالية جديدة للمورد أو تسوية حسابه المالي';
+    else if (actionType === 'smart_import') actionDesc = 'الوصول لأداة الاستيراد الذكية لرفع أو استيراد البيانات بالفاتورة والباركود';
+
+    setPinModal({
+      isOpen: true,
+      actionType: actionType,
+      onSuccess: onSuccess,
+      title: title,
+      description: actionDesc,
+      inputVal: '',
+      error: ''
+    });
+  };
+
+  // High-performance physical keyboard PIN input listener
+  useEffect(() => {
+    if (!pinModal.isOpen) return;
+
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault();
+        setPinModal(p => {
+          const newVal = p.inputVal + e.key;
+          if (newVal.length > 8) return p;
+          
+          // Instant auto-unlock upon correct PIN match
+          if (p.actionType !== 'setup_first' && newVal === adminPin) {
+            setTimeout(() => {
+              const successCb = p.onSuccess;
+              setPinModal(prev => ({ ...prev, isOpen: false }));
+              successCb();
+            }, 30);
+          }
+          return { ...p, inputVal: newVal, error: '' };
+        });
+      } else if (e.key === 'Backspace') {
+        e.preventDefault();
+        setPinModal(p => ({ ...p, inputVal: p.inputVal.slice(0, -1), error: '' }));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (pinModal.actionType === 'setup_first') {
+          if (pinModal.inputVal.length < 4) {
+            setPinModal(p => ({ ...p, error: 'يجب أن يكون الرمز من 4 أرقام على الأقل' }));
+            return;
+          }
+          updateAdminPin(pinModal.inputVal);
+          updatePermissionsEnabled(true);
+          showNotification('🔑 تم تعيين رمز أمان المدير وتفعيل نظام الحماية بنجاح!');
+          const successCb = pinModal.onSuccess;
+          setPinModal(p => ({ ...p, isOpen: false }));
+          successCb();
+        } else {
+          if (pinModal.inputVal === adminPin) {
+            const successCb = pinModal.onSuccess;
+            setPinModal(p => ({ ...p, isOpen: false }));
+            successCb();
+          } else {
+            setPinModal(p => ({ ...p, error: '❌ رمز المرور غير صحيح! الرجاء المحاولة مرة أخرى.' }));
+          }
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setPinModal(p => ({ ...p, isOpen: false }));
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [pinModal.isOpen, pinModal.inputVal, pinModal.actionType, pinModal.onSuccess, adminPin]);
+
   const exportData = async () => {
     const data = {
       products: await db.products.toArray(),
@@ -1778,7 +2026,7 @@ export default function App() {
           <div class="header">
             <h1>${storeName}</h1>
             <p>رقم الفاتورة: #${sale.id}</p>
-            <p>التاريخ: ${new Date(sale.created_at).toLocaleString('ar-SA')}</p>
+            <p>التاريخ: ${formatDateTimeWithDay(sale.created_at)}</p>
           </div>
           <p>الزبون: ${sale.customer_name || 'زبون نقدي'}</p>
           <table>
@@ -1818,7 +2066,7 @@ export default function App() {
       <div dir="rtl" style="font-family: Arial, sans-serif; padding: 30px;">
         <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
           <h1>${storeName} - كشف حساب</h1>
-          <p>تاريخ الإصدار: ${new Date().toLocaleString('ar-SA')}</p>
+          <p>تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
         </div>
         <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
           <div><strong>الزبون:</strong> ${customer.name}</div>
@@ -1867,7 +2115,7 @@ export default function App() {
 
               return `
                 <tr>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${formatDateWithDay(entry.created_at)}</td>
                   <td style="border: 1px solid #000; padding: 8px; text-align: right;">${title}</td>
                   <td style="border: 1px solid #000; padding: 8px; text-align: right;">${debit}</td>
                   <td style="border: 1px solid #000; padding: 8px; text-align: right;">${credit}</td>
@@ -1907,7 +2155,7 @@ export default function App() {
       <div dir="rtl" style="font-family: Arial, sans-serif; padding: 30px;">
         <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
           <h1>${storeName} - تقرير المخزون</h1>
-          <p>تاريخ الإصدار: ${new Date().toLocaleString('ar-SA')}</p>
+          <p>تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
         </div>
         <table style="width: 100%; border-collapse: collapse;">
           <thead>
@@ -1979,7 +2227,7 @@ export default function App() {
         <body>
           <div class="header">
             <h1>${storeName} - كشف حساب</h1>
-            <p>تاريخ الإصدار: ${new Date().toLocaleString('ar-SA')}</p>
+            <p>تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
           </div>
           <div class="info">
             <div><strong>الزبون:</strong> ${customer.name}</div>
@@ -2017,7 +2265,7 @@ export default function App() {
 
                 return `
                   <tr>
-                    <td>${new Date(entry.created_at).toLocaleDateString('ar-SA')}</td>
+                    <td>${formatDateWithDay(entry.created_at)}</td>
                     <td>${title}</td>
                     <td>${debit}</td>
                     <td>${credit}</td>
@@ -2386,7 +2634,12 @@ export default function App() {
             />
             <SidebarButton 
               active={activeTab === 'analytics'} 
-              onClick={() => { setActiveTab('analytics'); setIsSidebarOpen(false); }} 
+              onClick={() => {
+                verifyAdminPermission('analytics', () => {
+                  setActiveTab('analytics');
+                  setIsSidebarOpen(false);
+                }, '📊 صلاحية التقارير والتحليلات');
+              }} 
               icon={<BarChart3 />} 
               label="التحليل البصري الذكي Power BI" 
               badge="تقارير"
@@ -2455,7 +2708,12 @@ export default function App() {
             />
             <SidebarButton 
               active={activeTab === 'smart-import'} 
-              onClick={() => { setActiveTab('smart-import'); setIsSidebarOpen(false); }} 
+              onClick={() => {
+                verifyAdminPermission('smart_import', () => {
+                  setActiveTab('smart-import');
+                  setIsSidebarOpen(false);
+                }, '✨ صلاحية الاستيراد الذكي (AI)');
+              }} 
               icon={<Sparkles className="animate-pulse text-violet-500" />} 
               label="الاستيراد الذكي (AI) ✨" 
               badge="محاسب ذكي"
@@ -2463,41 +2721,63 @@ export default function App() {
             />
           </div>
 
-          {/* المجموعة الخامسة: الإعدادات */}
-          <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-430 mr-2 mb-1.5 tracking-wide">تفاصيل النظام المعماري</p>
-            <SidebarButton 
-              active={activeTab === 'settings'} 
-              onClick={() => { setActiveTab('settings'); setIsSidebarOpen(false); }} 
-              icon={<Settings />} 
-              label="الإعدادات العامة" 
-            />
-          </div>
         </nav>
 
-        <div className="p-6 border-t border-slate-50">
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">النظام</p>
-          <button onClick={exportData} className="w-full flex items-center gap-3 p-3 text-slate-600 hover:bg-slate-50 rounded-2xl transition-all">
-            <Download className="w-5 h-5" />
-            <div className="flex flex-col items-start">
-              <span className="text-sm font-bold">نسخة احتياطية</span>
-              <span className="text-[10px] text-slate-400">
-                {lastBackupDate ? `آخر نسخة: ${new Date(lastBackupDate).toLocaleDateString('ar-SA')}` : 'لم يتم أخذ نسخة بعد'}
-              </span>
-            </div>
-          </button>
+        <div className="p-3 border-t border-slate-150/40 bg-slate-50/40 rounded-b-3xl">
+          <p className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-2 pr-1">النظام وأمان البيانات</p>
+          
+          <div className="grid grid-cols-2 gap-1.5">
+            {/* زر الإعدادات العامة */}
+            <button 
+              onClick={() => {
+                verifyAdminPermission('settings', () => {
+                  setActiveTab('settings');
+                  setIsSidebarOpen(false);
+                }, '⚙️ صلاحية إعدادات النظام');
+              }}
+              className={`flex items-center gap-2 p-2 rounded-xl border transition-all text-right cursor-pointer group ${
+                activeTab === 'settings' 
+                  ? 'bg-indigo-600 border-indigo-700 text-white shadow-sm' 
+                  : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100/60 hover:border-slate-300'
+              }`}
+            >
+              <div className={`p-1.5 rounded-lg transition-all shrink-0 ${
+                activeTab === 'settings' 
+                  ? 'bg-indigo-500 text-white' 
+                  : 'bg-indigo-50 text-indigo-600 group-hover:bg-indigo-100'
+              }`}>
+                <Settings className={`w-3.5 h-3.5 ${activeTab === 'settings' ? 'rotate-45' : 'group-hover:rotate-45 transition-transform duration-350'}`} />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-black block truncate leading-tight">الإعدادات</span>
+              </div>
+            </button>
+
+            {/* زر نسخة احتياطية */}
+            <button 
+              onClick={exportData} 
+              className="flex items-center gap-2 p-2 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-100/60 rounded-xl transition-all text-right cursor-pointer group"
+            >
+              <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg group-hover:bg-emerald-100 transition-all shrink-0">
+                <Download className="w-3.5 h-3.5 group-hover:translate-y-0.5 transition-transform" />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-black text-slate-700 block truncate leading-tight">النسخ الاحتياطي</span>
+              </div>
+            </button>
+          </div>
           
           {deferredPrompt && (
-            <button onClick={handleInstall} className="w-full flex items-center gap-2 px-3 py-2.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 rounded-xl transition-all mt-2 cursor-pointer">
-              <Download className="w-4 h-4" />
-              <span className="text-xs font-black">تثبيت التطبيق السريع</span>
+            <button onClick={handleInstall} className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 rounded-lg transition-all mt-2 cursor-pointer">
+              <Download className="w-3 h-3" />
+              <span className="text-[9px] font-black">تثبيت التطبيق السريع</span>
             </button>
           )}
           
-          <div className="mt-3 p-2.5 bg-slate-100/60 border border-slate-200/40 rounded-xl flex items-start gap-2">
-            <AlertCircle className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-            <p className="text-[9px] text-slate-500 font-medium leading-relaxed text-right">
-              لتجربة أفضل، يمكنك تثبيت التطبيق يدوياً من قائمة المتصفح باختيار <span className="text-slate-800 font-bold">"إضافة إلى الشاشة الرئيسية"</span>.
+          <div className="mt-2 p-1.5 bg-slate-100/50 border border-slate-200/20 rounded-lg flex items-center justify-center gap-1">
+            <AlertCircle className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+            <p className="text-[8px] text-slate-400 font-medium leading-none text-center">
+              يمكن تثبيت التطبيق يدوياً من قائمة المتصفح.
             </p>
           </div>
         </div>
@@ -2746,7 +3026,11 @@ export default function App() {
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
-                    onClick={() => setActiveTab('analytics')} 
+                    onClick={() => {
+                      verifyAdminPermission('analytics', () => {
+                        setActiveTab('analytics');
+                      }, '📊 صلاحية التقارير والتحليلات');
+                    }} 
                     className="p-1.5 sm:p-2 rounded-xl bg-indigo-50 border border-indigo-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-indigo-300 hover:bg-indigo-100/50 hover:shadow-md transition-all group"
                   >
                     <div className="w-7 h-7 sm:w-8 sm:h-8 bg-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-700 transition-colors">
@@ -2779,7 +3063,11 @@ export default function App() {
 
                   <motion.button 
                     whileTap={{ scale: 0.95 }}
-                    onClick={() => setActiveTab('smart-import')} 
+                    onClick={() => {
+                      verifyAdminPermission('smart_import', () => {
+                        setActiveTab('smart-import');
+                      }, '✨ صلاحية الاستيراد الذكي (AI)');
+                    }} 
                     className="p-1.5 sm:p-2 rounded-xl bg-violet-50/40 border border-violet-100/60 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-violet-300 hover:bg-violet-100/40 hover:shadow-md transition-all group cursor-pointer"
                   >
                     <div className="w-7 h-7 sm:w-8 sm:h-8 bg-violet-600 rounded-lg flex items-center justify-center group-hover:bg-violet-700 transition-colors">
@@ -3295,35 +3583,157 @@ export default function App() {
                         </div>
                       </div>
                       
-                      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                      <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
                         {cart.length === 0 ? (
-                          <div className="text-center py-10 text-slate-400">السلة فارغة</div>
+                          <div className="text-center py-12 text-slate-400 bg-white rounded-3xl border border-dashed border-slate-200">
+                            <p className="text-sm font-bold">السلة فارغة حالياً</p>
+                            <p className="text-[10px] text-slate-400 mt-1">اضغط على المنتجات لإضافتها إلى السلة والبدء بالبيع</p>
+                          </div>
                         ) : (
-                          cart.map((item, idx) => (
-                            <div key={`cart-item-${item.product_id ?? 'no-id'}-${idx}`} className="bg-white p-3 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
-                              <div>
-                                <p className="font-bold text-slate-800 text-sm">{item.name}</p>
-                                <p className="text-emerald-600 font-bold text-xs">{formatPrice(item.price)}</p>
+                          cart.map((item, idx) => {
+                            const itemQuantity = Number(item.quantity) || 0;
+                            const integerPart = Math.floor(itemQuantity);
+                            const fractionalPart = parseFloat((itemQuantity % 1).toFixed(2));
+
+                            // Determine selected fraction value
+                            let selectedFraction = '0';
+                            if (Math.abs(fractionalPart - 0.5) < 0.05) {
+                              selectedFraction = '0.5';
+                            } else if (Math.abs(fractionalPart - 0.33) < 0.05 || Math.abs(fractionalPart - 0.3) < 0.05) {
+                              selectedFraction = '0.33';
+                            } else if (Math.abs(fractionalPart - 0.25) < 0.05) {
+                              selectedFraction = '0.25';
+                            } else if (Math.abs(fractionalPart - 0.75) < 0.05) {
+                              selectedFraction = '0.75';
+                            }
+
+                            const subtotal = item.price * itemQuantity;
+
+                            return (
+                              <div 
+                                key={`cart-item-${item.product_id ?? 'no-id'}-${idx}`} 
+                                className="bg-white p-3 rounded-2xl border border-slate-150/70 hover:border-slate-200 shadow-xs transition-all flex flex-col gap-3 text-right"
+                              >
+                                {/* الصف الأول: اسم المنتج والتحكم بالحذف وسعر الوحدة */}
+                                <div className="flex justify-between items-start gap-2">
+                                  <div className="space-y-0.5">
+                                    <p className="font-extrabold text-slate-800 text-xs sm:text-sm leading-snug">{item.name}</p>
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 font-bold">
+                                      <span>سعر الوحدة:</span>
+                                      <span className="font-mono text-slate-600">{formatPrice(item.price)}</span>
+                                      {item.unit && (
+                                        <span className="bg-slate-100 text-slate-500 px-1 rounded-md text-[9px] font-bold">
+                                          {item.unit}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  
+                                  <button 
+                                    onClick={() => removeFromCart(item.product_id)}
+                                    className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-all shrink-0 cursor-pointer"
+                                    title="حذف من السلة"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+
+                                {/* الصف الثاني: التحكم بالكمية يدوي وتحديد الكسر والمجموع */}
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                                  {/* أداة التحكم بالكمية والادخال اليدوي */}
+                                  <div className="flex items-center gap-1">
+                                    <button 
+                                      type="button"
+                                      onClick={() => {
+                                        const currentVal = Number(item.quantity) || 0;
+                                        const val = Math.max(0, currentVal - 1);
+                                        setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
+                                      }}
+                                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-sm transition-all active:scale-95 cursor-pointer"
+                                      title="إنقاص الكمية بـ 1"
+                                    >
+                                      -
+                                    </button>
+                                    
+                                    <input 
+                                      type="number"
+                                      step="any"
+                                      min="0"
+                                      value={item.quantity === 0 ? '' : item.quantity}
+                                      onChange={(e) => {
+                                        const rawVal = e.target.value;
+                                        if (rawVal === '') {
+                                          setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: 0 } : c));
+                                          return;
+                                        }
+                                        const val = parseFloat(rawVal);
+                                        if (isNaN(val)) return;
+                                        if (val < 0) return;
+                                        if (val > item.max_stock) {
+                                          showNotification(`تنبيه: الكمية تتجاوز المتوفر بالمخزن (${item.max_stock})`, 'error');
+                                          setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: item.max_stock } : c));
+                                          return;
+                                        }
+                                        setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
+                                      }}
+                                      className="w-14 h-7 text-center bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none"
+                                      placeholder="0"
+                                    />
+
+                                    <button 
+                                      type="button"
+                                      onClick={() => {
+                                        const currentVal = Number(item.quantity) || 0;
+                                        const val = currentVal + 1;
+                                        if (val > item.max_stock) {
+                                          showNotification('لا يمكن تجاوز الكمية المتوفرة في المخزن', 'error');
+                                          return;
+                                        }
+                                        setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
+                                      }}
+                                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-sm transition-all active:scale-95 cursor-pointer"
+                                      title="زيادة الكمية بـ 1"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+
+                                  {/* القائمة المنسدلة للكسر (نصف، ثلث، ربع) */}
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[10px] font-bold text-slate-400">الكسر:</span>
+                                    <select
+                                      value={selectedFraction}
+                                      onChange={(e) => {
+                                        const fractionVal = parseFloat(e.target.value);
+                                        const currentInt = Math.floor(Number(item.quantity) || 0);
+                                        let finalQty = currentInt + fractionVal;
+                                        if (finalQty > item.max_stock) {
+                                          showNotification(`تجاوزت الحد الأقصى للمخزون (${item.max_stock})`, 'error');
+                                          finalQty = item.max_stock;
+                                        }
+                                        setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(finalQty.toFixed(2)) } : c));
+                                      }}
+                                      className="p-1 pr-5 pl-1 rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-black text-slate-700 focus:border-emerald-500 outline-none cursor-pointer"
+                                    >
+                                      <option value="0">كامل (1.0)</option>
+                                      <option value="0.5">نصف (0.50)</option>
+                                      <option value="0.33">ثلث (0.33)</option>
+                                      <option value="0.25">ربع (0.25)</option>
+                                      <option value="0.75">ثلاثة أرباع (0.75)</option>
+                                    </select>
+                                  </div>
+
+                                  {/* المجموع للسلعة */}
+                                  <div className="text-left shrink-0">
+                                    <p className="text-[9px] text-slate-400 font-bold">المجموع</p>
+                                    <p className="text-xs font-black font-mono text-emerald-600 leading-none mt-0.5">
+                                      {formatPrice(subtotal)}
+                                    </p>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <button 
-                                  onClick={() => {
-                                    const val = Math.max(0, item.quantity - 0.25);
-                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
-                                  }}
-                                  className="p-1.5 rounded-lg bg-slate-100 text-slate-600"
-                                >-</button>
-                                <span className="font-bold text-sm min-w-[3rem] text-center">{item.quantity} {item.unit || ''}</span>
-                                <button 
-                                  onClick={() => {
-                                    const val = item.quantity + 0.25;
-                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
-                                  }}
-                                  className="p-1.5 rounded-lg bg-slate-100 text-slate-600"
-                                >+</button>
-                              </div>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
 
@@ -3453,10 +3863,24 @@ export default function App() {
                         </div>
                       </div>
                       <div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity mr-2 pr-2 border-r border-slate-100">
-                        <button onClick={(e) => { e.stopPropagation(); setEditingProduct(p); }} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            verifyAdminPermission('edit_product', () => setEditingProduct(p), '✏️ صلاحية تعديل صنف');
+                          }} 
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                        >
                           <Edit className="w-4 h-4" />
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); if(window.confirm('موافق على الحذف؟')) handleDeleteProduct(p.id!); }} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            verifyAdminPermission('edit_product', () => {
+                              if (window.confirm('هل أنت متأكد من حذف هذا الصنف من المخازن؟')) handleDeleteProduct(p.id!);
+                            }, '🗑️ صلاحية حذف صنف');
+                          }} 
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
@@ -3555,17 +3979,69 @@ export default function App() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/80 p-4 rounded-3xl border border-slate-150/60">
                   <div className="flex items-center gap-2">
                     <BookOpen className="w-5 h-5 text-emerald-600" />
-                    <h2 className="text-lg font-bold text-slate-800">سجل المهام والملاحظات واليوميات</h2>
+                    <div>
+                      <h2 className="text-lg font-black text-slate-800">سجل المهام والملاحظات واليوميات بالصندوق</h2>
+                      <p className="text-[10px] text-slate-400 font-bold">تسجيل وتدوين التنبيهات، المعاملات، النواقص، والتسليم اليومي لوردية الصندوق</p>
+                    </div>
                   </div>
                   <Button 
                     variant="outline" 
-                    className="flex items-center gap-2 w-full sm:w-auto text-emerald-600 border-emerald-200 hover:bg-emerald-50 bg-white font-bold text-xs" 
-                    onClick={() => { setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '' }); setShowAddNote(true); }}
+                    className="flex items-center justify-center gap-2 w-full sm:w-auto text-emerald-600 border-emerald-200 hover:bg-emerald-50 bg-white font-extrabold text-xs py-2.5 rounded-2xl cursor-pointer" 
+                    onClick={() => { setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '', priority: 'normal' }); setShowAddNote(true); }}
                   >
                     <Plus className="w-4 h-4" /> إضافة مهمة / ملاحظة جديدة
                   </Button>
                 </div>
 
+                {/* أزرار الفلترة وشريط البحث */}
+                <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between pb-1 text-right">
+                  <div className="flex flex-wrap gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-150/50 w-fit">
+                    {[
+                      { key: 'all', label: 'الكل', count: notes.length },
+                      { key: 'pending', label: 'المعلقة 📝', count: notes.filter(n => !n.is_completed).length },
+                      { key: 'completed', label: 'المكتملة ✓', count: notes.filter(n => n.is_completed).length },
+                      { key: 'high', label: 'عاجلة وهامة 🚨', count: notes.filter(n => (n.priority || 'normal') === 'high').length }
+                    ].map(pill => (
+                      <button
+                        key={pill.key}
+                        onClick={() => setNoteFilter(pill.key as any)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                          noteFilter === pill.key
+                            ? 'bg-white text-emerald-800 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                        }`}
+                      >
+                        <span>{pill.label}</span>
+                        <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                          noteFilter === pill.key ? 'bg-emerald-550/15 text-emerald-700' : 'bg-slate-200/80 text-slate-600'
+                        }`}>
+                          {pill.count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="البحث في العنوان أو محتوى الملاحظات..."
+                      value={noteSearchQuery}
+                      onChange={(e) => setNoteSearchQuery(e.target.value)}
+                      className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/10 text-slate-700 font-extrabold transition-all placeholder:text-slate-400 text-right"
+                    />
+                    {noteSearchQuery && (
+                      <button 
+                        onClick={() => setNoteSearchQuery('')}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-350 hover:text-slate-600 font-bold text-sm cursor-pointer p-1"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* عرض الملاحظات */}
                 {notes.length === 0 ? (
                   <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-3xl border border-slate-100 shadow-sm">
                     <div className="w-16 h-16 bg-slate-50 flex items-center justify-center rounded-full mb-3">
@@ -3575,36 +4051,135 @@ export default function App() {
                     <p className="text-slate-400 text-xs">قم بإضافة ملاحظاتك ومهامك اليومية هنا لتذكرها لاحقاً</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    {notes.map(note => (
-                      <Card key={note.id} className="relative overflow-hidden group hover:border-emerald-200 hover:shadow-md transition-all border border-slate-100/80 bg-white p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <h3 className={`font-bold text-base pr-1 ${note.is_completed ? 'line-through text-slate-400' : 'text-slate-800'}`}>{note.title}</h3>
-                          <div className="flex gap-1 shrink-0">
-                            <button onClick={() => handleEditNoteAction(note)} className="text-slate-300 hover:text-emerald-500 transition-colors p-1 cursor-pointer">
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            <button onClick={() => handleDeleteNote(note.id!)} className="text-slate-300 hover:text-red-500 transition-colors p-1 cursor-pointer">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                  (() => {
+                    const filteredNotes = notes.filter(note => {
+                      if (noteFilter === 'pending') {
+                        if (note.is_completed) return false;
+                      } else if (noteFilter === 'completed') {
+                        if (!note.is_completed) return false;
+                      } else if (noteFilter === 'high') {
+                        if ((note.priority || 'normal') !== 'high') return false;
+                      }
+                      
+                      if (noteSearchQuery.trim()) {
+                        const q = noteSearchQuery.toLowerCase();
+                        return (note.title || '').toLowerCase().includes(q) || (note.content || '').toLowerCase().includes(q);
+                      }
+                      return true;
+                    });
+
+                    if (filteredNotes.length === 0) {
+                      return (
+                        <div className="flex flex-col items-center justify-center p-10 text-center bg-white rounded-3xl border border-slate-100/80 shadow-xs">
+                          <Search className="w-8 h-8 text-slate-300 mb-2" />
+                          <h4 className="text-sm font-bold text-slate-700">لا توجد ملاحظات تطابق بحثك أو تصنيفك</h4>
+                          <p className="text-slate-400 text-[10px] mt-0.5">يرجى تعديل الفلتر أو محرك البحث لرؤية النتائج الأخرى</p>
                         </div>
-                        
-                        <div className="mb-4 text-slate-600 text-xs whitespace-pre-wrap break-words min-h-[50px] line-clamp-4 leading-relaxed text-right">
-                          {note.content}
-                        </div>
-                        
-                        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-4 pt-3 border-t border-slate-50">
-                          <span>{new Date(note.created_at).toLocaleDateString('ar-SA')}</span>
-                          {note.reminder_date && (
-                            <span className={`px-2 py-0.5 rounded-full font-bold ${note.is_completed ? 'bg-slate-100 text-slate-400' : 'bg-emerald-50 text-emerald-600'}`}>
-                              تذكير: {new Date(note.reminder_date).toLocaleDateString('ar-SA')}
-                            </span>
-                          )}
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        {filteredNotes.map(note => {
+                          const priority = note.priority || 'normal';
+                          let pConfig = {
+                            badgeBg: 'bg-slate-100 text-slate-600 border border-slate-200/50',
+                            borderColor: 'border-r-4 border-r-slate-400',
+                            label: '🟢 ملاحظة عامة',
+                            bgHover: 'hover:border-slate-300'
+                          };
+                          if (priority === 'high') {
+                            pConfig = {
+                              badgeBg: 'bg-red-50 text-red-700 border border-red-100',
+                              borderColor: 'border-r-4 border-r-red-500',
+                              label: '🔴 عاجل وهام',
+                              bgHover: 'hover:border-red-200 hover:shadow-red-50/[0.04]'
+                            };
+                          } else if (priority === 'info') {
+                            pConfig = {
+                              badgeBg: 'bg-blue-50 text-blue-700 border border-blue-100',
+                              borderColor: 'border-r-4 border-r-blue-500',
+                              label: '🔵 حسابات وكاش',
+                              bgHover: 'hover:border-blue-200 hover:shadow-blue-50/[0.04]'
+                            };
+                          } else if (priority === 'warning') {
+                            pConfig = {
+                              badgeBg: 'bg-amber-50 text-amber-700 border border-amber-100',
+                              borderColor: 'border-r-4 border-r-amber-500',
+                              label: '🟡 نواقص بضاعة',
+                              bgHover: 'hover:border-amber-200 hover:shadow-amber-50/[0.04]'
+                            };
+                          }
+
+                          return (
+                            <Card 
+                              key={note.id} 
+                              onClick={() => setSelectedNote(note)}
+                              className={`relative overflow-hidden group hover:shadow-sm transition-all border border-slate-150/70 bg-white p-4 rounded-2xl flex flex-col justify-between cursor-pointer ${pConfig.borderColor} ${pConfig.bgHover} ${note.is_completed ? 'opacity-70 bg-slate-50/40' : ''}`}
+                            >
+                              <div className="space-y-3">
+                                {/* رأس الكارد */}
+                                <div className="flex justify-between items-center gap-2">
+                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${pConfig.badgeBg}`}>
+                                    {pConfig.label}
+                                  </span>
+                                  
+                                  <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                                    <button 
+                                      onClick={() => handleToggleNoteCompletion(note)}
+                                      className={`p-1 rounded-lg transition-colors cursor-pointer ${note.is_completed ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'}`}
+                                      title={note.is_completed ? "تأشير كغير مكتملة" : "تأشير كمكتملة وسليمة"}
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleEditNoteAction(note)} 
+                                      className="text-slate-400 hover:text-emerald-600 transition-colors p-1 hover:bg-slate-150 rounded-lg cursor-pointer"
+                                      title="تعديل"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeleteNote(note.id!)} 
+                                      className="text-slate-400 hover:text-red-600 transition-colors p-1 hover:bg-slate-150 rounded-lg cursor-pointer"
+                                      title="حذف"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* العنوان والتفاصيل */}
+                                <div className="space-y-1.5 text-right">
+                                  <h3 className={`font-black text-sm tracking-tight text-slate-800 leading-snug line-clamp-1 ${note.is_completed ? 'line-through text-slate-400' : ''}`}>
+                                    {note.title}
+                                  </h3>
+                                  <p className="text-slate-500 text-[11px] font-semibold whitespace-pre-wrap break-words leading-relaxed line-clamp-3 text-right">
+                                    {note.content}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* التواريخ في ذيل الكارد */}
+                              <div className="mt-4 pt-2.5 border-t border-slate-100 flex flex-wrap gap-2 justify-between items-center text-[9px] font-black text-slate-400">
+                                <span className="flex items-center gap-1">
+                                  <Calendar className="w-3 h-3" />
+                                  {formatDateWithDay(note.created_at)}
+                                </span>
+                                {note.reminder_date ? (
+                                  <span className={`px-1.5 py-0.5 rounded-md font-bold ${note.is_completed ? 'bg-slate-100 text-slate-400' : 'bg-emerald-50 text-emerald-600'}`}>
+                                    تنبيه: {formatDateWithDay(note.reminder_date)}
+                                  </span>
+                                ) : (
+                                  <span className="text-[8px] opacity-65 text-slate-350">عرض التفاصيل ←</span>
+                                )}
+                              </div>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()
                 )}
               </div>
 
@@ -3624,10 +4199,12 @@ export default function App() {
                   </div>
                   <Button 
                     onClick={() => {
-                      setWithdrawAmount('');
-                      setWithdrawReason('');
-                      setWithdrawByWhom('أمين الصندوق');
-                      setShowWithdrawModal(true);
+                      verifyAdminPermission('cash_withdrawal', () => {
+                        setWithdrawAmount('');
+                        setWithdrawReason('');
+                        setWithdrawByWhom('أمين الصندوق');
+                        setShowWithdrawModal(true);
+                      }, '💸 تسجيل مسحوبات كاش');
                     }}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] sm:text-xs py-2 px-3 rounded-xl flex items-center gap-1 cursor-pointer shadow-xs w-full sm:w-auto"
                   >
@@ -3674,10 +4251,6 @@ export default function App() {
                         </thead>
                         <tbody className="divide-y divide-slate-150/60">
                           {currentCycleWithdrawals.map((w, idx) => {
-                            const dateObj = new Date(w.created_at);
-                            const timeStr = dateObj.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' });
-                            const dateStr = dateObj.toLocaleDateString('ar-SA', { month: '2-digit', day: '2-digit' });
-                            
                             return (
                               <tr 
                                 key={w.id || idx} 
@@ -3687,8 +4260,8 @@ export default function App() {
                                     : 'bg-white hover:bg-rose-50/[0.04]'
                                 }`}
                               >
-                                <td className="p-3.5 text-center font-mono text-[11px] text-slate-500 whitespace-nowrap">
-                                  {timeStr} | {dateStr}
+                                <td className="p-3.5 text-center font-bold text-[10px] text-slate-500 whitespace-nowrap">
+                                  {formatDateTimeWithDay(w.created_at)}
                                 </td>
                                 <td className="p-3.5 font-bold text-slate-800 whitespace-nowrap">
                                   {w.by_whom}
@@ -3698,7 +4271,7 @@ export default function App() {
                                     <p className="font-semibold text-slate-700">{w.reason}</p>
                                     {w.is_repaid && w.repay_date && (
                                       <p className="text-[10px] text-emerald-600 font-bold mt-1">
-                                        ✓ تم الإرجاع: {new Date(w.repay_date).toLocaleString('ar-SA', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        ✓ تم الإرجاع: {formatDateTimeWithDay(w.repay_date)}
                                       </p>
                                     )}
                                   </div>
@@ -3759,16 +4332,18 @@ export default function App() {
                     </div>
                     <p className="text-violet-100 text-xs">
                       {lastSettleDate 
-                        ? `الدورة الحالية منذ: ${new Date(lastSettleDate).toLocaleString('ar-SA')}` 
+                        ? `الدورة الحالية منذ: ${formatDateTimeWithDay(lastSettleDate)}` 
                         : 'الدورة الأولى: لم يتم إجراء تصفية مبيعات سابقة بعد'}
                     </p>
                   </div>
                   <Button 
                     className="bg-white text-violet-700 hover:bg-violet-50 hover:scale-[1.02] active:scale-95 transition-all text-xs font-bold py-2.5 px-4 shadow-sm w-full sm:w-auto mt-2 sm:mt-0 cursor-pointer"
                     onClick={() => {
-                      setDeliveredSettleAmount(String(activeOutstandingCash || ''));
-                      setSettleNotes('');
-                      setShowSettleModal(true);
+                      verifyAdminPermission('settlement', () => {
+                        setDeliveredSettleAmount(String(activeOutstandingCash || ''));
+                        setSettleNotes('');
+                        setShowSettleModal(true);
+                      }, '⚖️ تصفية الصندوق وتسوية الوردية');
                     }}
                   >
                     ⚖️ إجراء تصفية وتدوير لليوم الصندوقي
@@ -3831,7 +4406,7 @@ export default function App() {
                                   #{settlement.id} تسوية مبيعات
                                 </span>
                                 <p className="text-[11px] text-slate-400 mt-1 font-semibold">
-                                  {new Date(settlement.created_at).toLocaleString('ar-SA')}
+                                  {formatDateTimeWithDay(settlement.created_at)}
                                 </p>
                               </div>
                               <button 
@@ -4045,6 +4620,41 @@ export default function App() {
                         <option value={100}>100</option>
                       </select>
                     </div>
+                  </div>
+                </Card>
+
+                <Card className="space-y-4 border-slate-200/90 shadow-sm hover:shadow-md transition-all relative overflow-hidden">
+                  <div className="absolute top-0 left-0 bg-emerald-500/10 text-emerald-700 text-[9px] font-extrabold px-2.5 py-1 rounded-br-2xl">
+                    مستحسن 🔒
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-800 mb-1">
+                    <div className="p-2 bg-slate-100 rounded-xl">
+                      <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-sm sm:text-base">نظام حماية وإدارة صلاحيات الكاشير</h3>
+                      <p className="text-[10px] text-slate-400">تأمين العمليات الحساسة بررمز مرور خاص بالمدير</p>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                    <span className="text-xs font-bold text-slate-600">حالة نظام الحماية والتقييد:</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${permissionsEnabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-150' : 'bg-slate-100 text-slate-500'}`}>
+                      {permissionsEnabled ? 'نشط ومحمي 🔒' : 'معطل (مفتوح بالكامل)'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    <Button 
+                      onClick={() => {
+                        verifyAdminPermission('settings', () => {
+                          setShowPermissionsConfigModal(true);
+                        }, '⚙️ تهيئة إعدادات الأمان والصلاحيات');
+                      }}
+                      className="w-full bg-slate-800 hover:bg-slate-900 text-white font-extrabold flex items-center justify-center gap-2 rounded-xl transition-all shadow-xs cursor-pointer text-xs py-3"
+                    >
+                      <span>🔑 إعداد الصلاحيات وتغيير الرمز</span>
+                    </Button>
                   </div>
                 </Card>
 
@@ -4268,7 +4878,7 @@ export default function App() {
                             </div>
                             <p className="text-[10px] font-bold text-slate-400 mt-0.5 flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                              {new Date(s.created_at).toLocaleString('ar-SA', { dateStyle: 'full', timeStyle: 'short' })}
+                              {formatDateTimeWithDay(s.created_at)}
                             </p>
                           </div>
                         </div>
@@ -4294,8 +4904,11 @@ export default function App() {
                               <Printer className="w-4 h-4" />
                             </button>
                             <button 
-                              onClick={(e) => { e.stopPropagation(); handleRefundSale(s.id!); }}
-                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                verifyAdminPermission('delete_sale', () => handleRefundSale(s.id!), '🔄 إلغاء وعكس مبيعات الفاتورة');
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                               title="إلغاء العملية"
                             >
                               <RotateCcw className="w-4 h-4" />
@@ -4560,7 +5173,7 @@ export default function App() {
                                 </p>
                                 <p className="text-[10px] text-slate-400 font-bold mt-0.5 flex items-center gap-1">
                                   <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                                  {new Date(log.created_at).toLocaleString('ar-SA', { dateStyle: 'full', timeStyle: 'short' })}
+                                  {formatDateTimeWithDay(log.created_at)}
                                 </p>
                               </div>
                               <div className={`px-3 py-1 rounded-xl text-sm font-bold ${log.change_amount > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
@@ -4799,7 +5412,7 @@ export default function App() {
                               {/* Date and neat notes preview badge if notes exist */}
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-xs text-slate-400 font-mono">
-                                  {pay.payment_date ? new Date(pay.payment_date).toLocaleDateString('ar-SA') : ''}
+                                  {pay.payment_date ? formatDateWithDay(pay.payment_date) : ''}
                                 </span>
                                 {pay.notes && (
                                   <span className="inline-flex items-center gap-1.5 text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-0.5 rounded-full font-bold max-w-[130px] sm:max-w-[220px] truncate" title={pay.notes}>
@@ -4859,8 +5472,10 @@ export default function App() {
                   <Button 
                     className="w-full py-4 rounded-2xl shadow-lg shadow-amber-100 cursor-pointer text-center font-bold"
                     onClick={() => {
-                      setShowSupplierPaymentModal(showSupplierDetails);
-                      setShowSupplierDetails(null);
+                      verifyAdminPermission('supplier_payment', () => {
+                        setShowSupplierPaymentModal(showSupplierDetails);
+                        setShowSupplierDetails(null);
+                      }, '💸 تسديد دفعة مالية للمورد');
                     }}
                   >
                     تسديد دفعة مالية للمورد
@@ -5005,7 +5620,7 @@ export default function App() {
                                     )}
                                   </div>
                                   <span className="text-[9px] text-slate-400 block font-mono">
-                                    {new Date(p.payment_date).toLocaleDateString('ar-SA')}
+                                    {formatDateWithDay(p.payment_date)}
                                   </span>
                                 </div>
                                 <span className="font-extrabold text-emerald-800 font-mono text-xs bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-100 whitespace-nowrap shrink-0">
@@ -5528,7 +6143,7 @@ export default function App() {
           )}
 
           {showSupplierPaymentModal && (
-            <div key="modal-supplier-payment" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+            <div key="modal-supplier-payment" className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
               <motion.div 
                 initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                 className="bg-white w-full max-w-sm rounded-[2.5rem] p-6 space-y-4 shadow-2xl relative"
@@ -5610,7 +6225,7 @@ export default function App() {
                   <div className="flex justify-between items-center pb-2.5 border-b border-slate-200/60 text-right">
                     <span className="text-[11px] font-bold text-slate-400 block">تاريخ الدفعة والوقت</span>
                     <span className="text-xs font-bold text-slate-700 font-mono">
-                      {selectedSupplierPayment.payment_date ? new Date(selectedSupplierPayment.payment_date).toLocaleString('ar-SA') : 'غير متوفر'}
+                      {selectedSupplierPayment.payment_date ? formatDateTimeWithDay(selectedSupplierPayment.payment_date) : 'غير متوفر'}
                     </span>
                   </div>
 
@@ -5649,25 +6264,156 @@ export default function App() {
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
               >
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="font-bold text-xl">{editingNoteId ? 'تعديل الملاحظة' : 'إضافة ملاحظة جديدة'}</h3>
-                  <button onClick={() => { setShowAddNote(false); setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '' }); }} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+                <div className="flex justify-between items-center mb-2 text-right">
+                  <h3 className="font-extrabold text-lg text-slate-800">{editingNoteId ? '✏️ تعديل الملاحظة اليومية' : '📝 إضافة ملاحظة جديدة'}</h3>
+                  <button onClick={() => { setShowAddNote(false); setEditingNoteId(null); setNewNote({ title: '', content: '', reminder_date: '', priority: 'normal' }); }} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-4 text-right">
                   <div>
-                    <label className="text-sm font-bold text-slate-600 block mb-1">العنوان</label>
-                    <input type="text" value={newNote.title} onChange={e => setNewNote({...newNote, title: e.target.value})} className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none" placeholder="عنوان الملاحظة المرجعي" />
+                    <label className="text-xs font-bold text-slate-500 block mb-1">نوع وأولوية الملاحظة</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { key: 'normal', label: '🟢 ملاحظة عامة', color: 'border-slate-200 text-slate-700 bg-slate-50/50', activeColor: 'ring-2 ring-emerald-500 bg-emerald-50/30 border-emerald-300' },
+                        { key: 'high', label: '🔴 عاجل وهام', color: 'border-red-200 text-red-700 bg-red-50/30', activeColor: 'ring-2 ring-red-500 bg-red-50 border-red-300' },
+                        { key: 'info', label: '🔵 حسابات وكاش', color: 'border-blue-200 text-blue-700 bg-blue-50/30', activeColor: 'ring-2 ring-blue-500 bg-blue-50 border-blue-300' },
+                        { key: 'warning', label: '🟡 نواقص بضاعة', color: 'border-amber-200 text-amber-700 bg-amber-50/30', activeColor: 'ring-2 ring-amber-500 bg-amber-50 border-amber-300' }
+                      ].map(item => {
+                        const isSelected = newNote.priority === item.key;
+                        return (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => setNewNote({ ...newNote, priority: item.key as any })}
+                            className={`p-2.5 rounded-xl border text-xs font-black text-center transition-all cursor-pointer ${
+                              isSelected ? item.activeColor : `${item.color} opacity-75 border-dashed hover:opacity-100`
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   <div>
-                    <label className="text-sm font-bold text-slate-600 block mb-1">التفاصيل / الملاحظة</label>
-                    <textarea value={newNote.content} onChange={e => setNewNote({...newNote, content: e.target.value})} className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none min-h-[120px]" placeholder="اكتب ملاحظاتك، حسابات، مهام..."></textarea>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">عنوان الملاحظة</label>
+                    <input type="text" value={newNote.title} onChange={e => setNewNote({...newNote, title: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 text-xs font-bold outline-none" placeholder="مثال: تسليم الوردية، سداد فاتورة كهرباء" />
                   </div>
                   <div>
-                    <label className="text-sm font-bold text-slate-600 block mb-1">تاريخ التذكير (اختياري)</label>
-                    <input type="date" value={newNote.reminder_date} onChange={e => setNewNote({...newNote, reminder_date: e.target.value})} className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-emerald-500 outline-none" />
+                    <label className="text-xs font-bold text-slate-500 block mb-1">تفاصيل الملاحظة والبيان</label>
+                    <textarea value={newNote.content} onChange={e => setNewNote({...newNote, content: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 text-xs font-medium outline-none min-h-[110px]" placeholder="اكتب المبالغ، الأسماء، التنبيهات أو التفاصيل..."></textarea>
                   </div>
-                  <Button className="w-full" onClick={handleAddNote}>{editingNoteId ? 'حفظ التعديلات' : 'حفظ الملاحظة'}</Button>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">تاريخ التذكير (اختياري)</label>
+                    <input type="date" value={newNote.reminder_date} onChange={e => setNewNote({...newNote, reminder_date: e.target.value})} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 text-xs font-bold outline-none" />
+                  </div>
+                  <Button className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black shadow-md mt-2" onClick={handleAddNote}>
+                    {editingNoteId ? '💾 حفظ التعديلات' : '💾 حفظ الملاحظة بالصندوق'}
+                  </Button>
                 </div>
+              </motion.div>
+            </div>
+          )}
+
+          {selectedNote && (
+            <div key="modal-view-note" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4 text-right shadow-xl"
+              >
+                {/* رأس المودال مع تفاصيل الحالة */}
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
+                      (selectedNote.priority || 'normal') === 'high' ? 'bg-red-50 text-red-700 border border-red-100' :
+                      (selectedNote.priority || 'normal') === 'info' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
+                      (selectedNote.priority || 'normal') === 'warning' ? 'bg-amber-50 text-amber-700 border border-amber-100' :
+                      'bg-slate-100 text-slate-700 border border-slate-200'
+                    }`}>
+                      {(selectedNote.priority || 'normal') === 'high' ? '🔴 عاجل وهام' :
+                       (selectedNote.priority || 'normal') === 'info' ? '🔵 حسابات وكاش' :
+                       (selectedNote.priority || 'normal') === 'warning' ? '🟡 نواقص بضاعة' :
+                       '🟢 ملاحظة عامة'}
+                    </span>
+                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-black ${
+                      selectedNote.is_completed ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+                    }`}>
+                      {selectedNote.is_completed ? '✓ مكتملة' : '📝 معلقة'}
+                    </span>
+                  </div>
+                  <button onClick={() => setSelectedNote(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><X className="w-5 h-5 text-slate-400" /></button>
+                </div>
+
+                {/* المحتوى الفعلي للملاحظة */}
+                <div className="space-y-3">
+                  <div>
+                    <h2 className={`text-base font-black text-slate-800 leading-snug ${selectedNote.is_completed ? 'line-through text-slate-400' : ''}`}>
+                      {selectedNote.title}
+                    </h2>
+                    <div className="flex flex-col gap-1 mt-2 text-[10px] text-slate-400 font-bold">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="w-3.5 h-3.5" />
+                        تاريخ الإنشاء: {formatDateWithDay(selectedNote.created_at)}
+                      </span>
+                      {selectedNote.reminder_date && (
+                        <span className="flex items-center gap-1 text-emerald-600 bg-emerald-50/50 px-2 py-0.5 rounded-md w-fit">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          تذكير: {formatDateWithDay(selectedNote.reminder_date)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* التفاصيل الكلية */}
+                  <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-150/50 leading-relaxed text-slate-700 text-xs whitespace-pre-wrap break-words max-h-[220px] overflow-y-auto custom-scrollbar font-bold">
+                    {selectedNote.content || <span className="italic text-slate-400">لا توجد تفاصيل إضافية مكتوبة...</span>}
+                  </div>
+                </div>
+
+                {/* أزرار الإجراءات والتحكم بالتفاصيل */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                  <Button 
+                    variant="outline" 
+                    className="flex items-center justify-center gap-1 text-[11px] font-bold py-2 rounded-xl text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                    onClick={() => handleCopyNoteContent(selectedNote.content)}
+                  >
+                    <Copy className="w-3.5 h-3.5" /> نسخ النص
+                  </Button>
+                  
+                  <Button 
+                    variant="outline" 
+                    className={`flex items-center justify-center gap-1 text-[11px] font-bold py-2 rounded-xl ${
+                      selectedNote.is_completed 
+                        ? 'text-slate-600 border-slate-200 hover:bg-slate-50' 
+                        : 'text-emerald-700 border-emerald-200 hover:bg-emerald-50'
+                    }`}
+                    onClick={() => handleToggleNoteCompletion(selectedNote)}
+                  >
+                    <Check className="w-3.5 h-3.5" /> 
+                    {selectedNote.is_completed ? 'تفعيل معلقة' : 'إكمال الملاحظة'}
+                  </Button>
+
+                  <Button 
+                    variant="outline" 
+                    className="flex items-center justify-center gap-1 text-[11px] font-bold py-2 rounded-xl text-amber-600 border-amber-200 hover:bg-amber-50"
+                    onClick={() => { setSelectedNote(null); handleEditNoteAction(selectedNote); }}
+                  >
+                    <Edit2 className="w-3.5 h-3.5" /> تعديل
+                  </Button>
+
+                  <Button 
+                    variant="outline" 
+                    className="flex items-center justify-center gap-1 text-[11px] font-bold py-2 rounded-xl text-red-650 border-red-200 hover:bg-red-50"
+                    onClick={() => { handleDeleteNote(selectedNote.id!); }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> حذف
+                  </Button>
+                </div>
+                
+                <Button className="w-full py-3 bg-slate-900 text-white hover:bg-slate-800 rounded-2xl text-xs font-black shadow-md" onClick={() => setSelectedNote(null)}>
+                  إغلاق التفاصيل
+                </Button>
               </motion.div>
             </div>
           )}
@@ -6332,7 +7078,7 @@ export default function App() {
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${badgeColor}`}>
                                 {typeLabel}
                               </span>
-                              <p className="text-xs text-slate-400 mt-1">{new Date(entry.created_at).toLocaleString('ar-SA')}</p>
+                              <p className="text-xs text-slate-400 mt-1">{formatDateTimeWithDay(entry.created_at)}</p>
                             </div>
                             <p className="text-lg font-bold font-mono flex items-center gap-1" dir="ltr">
                               <span className="text-slate-400 text-sm font-sans">{amountPrefix}</span>
@@ -6394,6 +7140,307 @@ export default function App() {
                     title="تعديل الحساب أو ملاحظات"
                   >
                     <Plus className="w-5 h-5 text-slate-600" />
+                  </Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* PIN Verification Modal / واجهة التحقق من رمز أمان المدير */}
+          {pinModal.isOpen && (
+            <div key="modal-pin" className="fixed inset-0 bg-black/75 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ duration: 0.1, ease: "easeOut" }}
+                className="bg-slate-900 border border-slate-800 text-white w-full max-w-sm rounded-[2rem] p-6 shadow-[0_25px_60px_rgba(0,0,0,0.5)] text-center space-y-4"
+              >
+                <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+                  <span className="text-xs font-black text-slate-500 tracking-wider">نظام صلاحيات المدير</span>
+                  <button 
+                    onClick={() => setPinModal(p => ({ ...p, isOpen: false }))}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="w-12 h-12 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mx-auto text-xl border border-emerald-500/20 shadow-inner">
+                    🔐
+                  </div>
+                  <h3 className="text-base font-black text-slate-100">{pinModal.title}</h3>
+                  <p className="text-[11px] text-slate-400 px-2 leading-relaxed">{pinModal.description}</p>
+                </div>
+
+                {/* Display Dots / دوائر الرمز فائقة الاستجابة */}
+                <div className="space-y-2">
+                  <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex items-center justify-center gap-3 relative overflow-hidden h-14">
+                    {pinModal.inputVal ? (
+                      <div className="flex gap-2.5">
+                        {Array.from(pinModal.inputVal).map((_, idx) => (
+                          <div 
+                            key={idx} 
+                            className="w-3.5 h-3.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.9)] transform scale-100 transition-transform duration-75"
+                          ></div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-slate-500 text-xs font-bold">الرجاء إدخال الرمز المكون من 4 أرقام</span>
+                    )}
+                  </div>
+                  {pinModal.error && (
+                    <p className="text-[11px] text-red-450 font-extrabold animate-pulse">{pinModal.error}</p>
+                  )}
+                </div>
+
+                {/* Numeric Keypad / لوحة أرقام تفاعلية */}
+                <div className="grid grid-cols-3 gap-2.5 max-w-[260px] mx-auto pt-2">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        setPinModal(p => {
+                          const newVal = p.inputVal + num;
+                          if (newVal.length > 8) return p;
+                          
+                          // Instant auto-unlock upon correct PIN match (seamlessly fast)
+                          if (p.actionType !== 'setup_first' && newVal === adminPin) {
+                            setTimeout(() => {
+                              const successCb = p.onSuccess;
+                              setPinModal(prev => ({ ...prev, isOpen: false }));
+                              successCb();
+                            }, 30);
+                          }
+                          return { ...p, inputVal: newVal, error: '' };
+                        });
+                      }}
+                      className="w-14 h-14 bg-slate-800 hover:bg-slate-700 active:bg-slate-650 rounded-full flex items-center justify-center text-lg font-black transition-all cursor-pointer border border-slate-700/50 hover:scale-105 active:scale-95"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPinModal(p => ({ ...p, inputVal: '', error: '' }));
+                    }}
+                    className="w-14 h-14 bg-red-950/30 hover:bg-red-900/40 text-red-400 rounded-full flex items-center justify-center text-xs font-black transition-all cursor-pointer border border-red-900/30"
+                  >
+                    مسح
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPinModal(p => {
+                        const newVal = p.inputVal + '0';
+                        if (newVal.length > 8) return p;
+                        
+                        // Instant auto-unlock upon correct PIN match
+                        if (p.actionType !== 'setup_first' && newVal === adminPin) {
+                          setTimeout(() => {
+                            const successCb = p.onSuccess;
+                            setPinModal(prev => ({ ...prev, isOpen: false }));
+                            successCb();
+                          }, 30);
+                        }
+                        return { ...p, inputVal: newVal, error: '' };
+                      });
+                    }}
+                    className="w-14 h-14 bg-slate-800 hover:bg-slate-700 active:bg-slate-650 rounded-full flex items-center justify-center text-lg font-black transition-all cursor-pointer border border-slate-700/50 hover:scale-105"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPinModal(p => ({ ...p, inputVal: p.inputVal.slice(0, -1), error: '' }));
+                    }}
+                    className="w-14 h-14 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full flex items-center justify-center text-sm font-bold transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    ←
+                  </button>
+                </div>
+
+                <div className="pt-2">
+                  <Button 
+                    onClick={() => {
+                      if (pinModal.actionType === 'setup_first') {
+                        if (pinModal.inputVal.length < 4) {
+                          setPinModal(p => ({ ...p, error: 'يجب أن يكون الرمز من 4 أرقام على الأقل' }));
+                          return;
+                        }
+                        updateAdminPin(pinModal.inputVal);
+                        updatePermissionsEnabled(true);
+                        showNotification('🔑 تم تعيين رمز أمان المدير وتفعيل نظام الحماية بنجاح!');
+                        const successCb = pinModal.onSuccess;
+                        setPinModal(p => ({ ...p, isOpen: false }));
+                        successCb();
+                      } else {
+                        if (pinModal.inputVal === adminPin) {
+                          const successCb = pinModal.onSuccess;
+                          setPinModal(p => ({ ...p, isOpen: false }));
+                          successCb();
+                        } else {
+                          setPinModal(p => ({ ...p, error: '❌ رمز المرور غير صحيح! الرجاء المحاولة مرة أخرى.' }));
+                        }
+                      }
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-850 text-white font-extrabold py-3.5 rounded-2xl cursor-pointer text-xs transition-all shadow-md hover:shadow-emerald-500/25"
+                  >
+                    {pinModal.actionType === 'setup_first' ? 'تأكيد وحفظ الرمز الجديد ✨' : 'تأكيد رمز المرور والمتابعة 🔓'}
+                  </Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {/* Permissions Configuration Modal / واجهة لوحة تهيئة الصلاحيات وإدارة الأمان */}
+          {showPermissionsConfigModal && (
+            <div key="modal-permissions-config" className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-md overflow-y-auto">
+              <motion.div 
+                initial={{ scale: 0.92, opacity: 0, y: 30 }} 
+                animate={{ scale: 1, opacity: 1, y: 0 }} 
+                exit={{ scale: 0.92, opacity: 0, y: 30 }}
+                className="bg-white text-slate-800 w-full max-w-md rounded-3xl overflow-hidden shadow-[0_25px_60px_rgba(0,0,0,0.35)] border border-slate-100 text-right flex flex-col max-h-[90vh]"
+              >
+                {/* Header */}
+                <div className="bg-slate-900 p-5 text-white flex justify-between items-center relative shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 bg-slate-800 rounded-xl">
+                      <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-black">إدارة أمان النظام والصلاحيات للمدير</h3>
+                      <p className="text-[10px] text-slate-400">تخصيص مستويات حماية العمليات وتعيين الرمز</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowPermissionsConfigModal(false)}
+                    className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-5 sm:p-6 space-y-4 overflow-y-auto custom-scrollbar">
+                  {/* Option toggle */}
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150/80 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className="text-xs font-black block text-slate-800">تفعيل التحقق من صلاحيات المدير:</span>
+                        <span className="text-[10px] text-slate-450 block">حظر العمليات المحددة ومطالبة الكاشير برمز الحماية للمتابعة</span>
+                      </div>
+                      <button
+                        onClick={() => updatePermissionsEnabled(!permissionsEnabled)}
+                        className={`w-12 h-6.5 rounded-full p-1 transition-colors duration-300 focus:outline-none cursor-pointer ${permissionsEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                      >
+                        <div className={`bg-white w-4.5 h-4.5 rounded-full shadow-md transform transition-transform duration-300 ${permissionsEnabled ? '-translate-x-5.5' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* List of actions to protect */}
+                  {permissionsEnabled && (
+                    <div className="space-y-3">
+                      <p className="text-[10px] font-black text-slate-450 pr-1">حدد الإجراءات التي تتطلب إدخال رمز الأمان من الكاشير:</p>
+                      
+                      <div className="grid grid-cols-1 gap-2">
+                        {[
+                          { key: 'delete_sale', label: 'إلغاء وعكس مبيعات الفاتورة (المرتجع)', desc: 'يمنع الكاشير من حذف أو تصفير أي فاتورة بيع مسجلة' },
+                          { key: 'edit_product', label: 'تعديل وحذف الأصناف بالمخازن', desc: 'تعديل الأسعار أو الكميات أو حذف الصنف نهائياً' },
+                          { key: 'cash_withdrawal', label: 'مسحوبات الصندوق وسحب الكاش', desc: 'تسجيل مسحوبات نقدية أو عهد أو سلفة للموظفين' },
+                          { key: 'settlement', label: 'تصفية الصندوق وتسوية الوردية', desc: 'إجراء مطابقة النقدية المادية وإغلاق الحساب اليومي' },
+                          { key: 'supplier_payment', label: 'تسديد الموردين والمدفوعات', desc: 'تسجيل الدفعات المالية للموردين أو سداد الذمم المستحقة' },
+                          { key: 'smart_import', label: 'الاستيراد الذكي بالذكاء الاصطناعي', desc: 'استيراد البيانات وفواتير الشراء تلقائياً باستخدام الذكاء الاصطناعي' },
+                          { key: 'analytics', label: 'الوصول لقسم التحليلات وPower BI', desc: 'رؤية صافي الأرباح وإحصاءات المبيعات وسرعة دوران السلع' },
+                          { key: 'settings', label: 'الوصول لإعدادات النظام العامة', desc: 'تصدير البيانات، تغيير العملة، إعدادات التقريب' }
+                        ].map((action) => (
+                          <label 
+                            key={action.key} 
+                            className="flex items-start gap-3 p-3 bg-white hover:bg-slate-50 border border-slate-150/70 rounded-2xl cursor-pointer transition-colors shadow-2xs"
+                          >
+                            <input 
+                              type="checkbox" 
+                              checked={protectedActions[action.key] || false}
+                              onChange={(e) => {
+                                const updated = { ...protectedActions, [action.key]: e.target.checked };
+                                updateProtectedActions(updated);
+                              }}
+                              className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                            />
+                            <div className="flex-1 text-right">
+                              <span className="text-xs font-extrabold text-slate-800 block">{action.label}</span>
+                              <span className="text-[9px] text-slate-400 block mt-0.5">{action.desc}</span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Change PIN section */}
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-150/80 space-y-3.5">
+                    <div>
+                      <span className="text-xs font-black text-slate-800 block">تحديث رمز أمان المدير:</span>
+                      <p className="text-[10px] text-slate-450 block mt-0.5">الرمز الحالي المستخدم هو: <span className="font-mono text-slate-700 font-extrabold bg-slate-200/60 px-1.5 py-0.5 rounded">{adminPin ? '••••' : 'لم يتم التعيين بعد'}</span></p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <input 
+                        type="password" 
+                        maxLength={8}
+                        placeholder="أدخل الرمز الجديد المكون من 4 أرقام على الأقل" 
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-center text-xs font-black font-mono focus:outline-none focus:ring-2 focus:ring-slate-400"
+                        id="new-admin-pin-input"
+                      />
+                      <Button 
+                        onClick={() => {
+                          const inputEl = document.getElementById('new-admin-pin-input') as HTMLInputElement;
+                          if (inputEl && inputEl.value) {
+                            if (inputEl.value.length < 4) {
+                              showNotification('يجب أن يتكون الرمز الجديد من 4 أرقام على الأقل', 'error');
+                              return;
+                            }
+                            updateAdminPin(inputEl.value);
+                            showNotification('🔑 تم تحديث رمز مرور المدير بنجاح!');
+                            inputEl.value = '';
+                          } else {
+                            showNotification('الرجاء إدخال الرمز الجديد أولاً', 'error');
+                          }
+                        }}
+                        className="w-full bg-slate-800 hover:bg-slate-900 text-white font-extrabold py-2 text-xs rounded-xl transition-all cursor-pointer"
+                      >
+                        حفظ رمز المرور الجديد 🔐
+                      </Button>
+                      
+                      {adminPin && (
+                        <button 
+                          type="button"
+                          onClick={async () => {
+                            await updateAdminPin('');
+                            await updatePermissionsEnabled(false);
+                            showNotification('🔓 تم إيقاف نظام الحماية وإلغاء رمز أمان المدير بالكامل!', 'success');
+                            const inputEl = document.getElementById('new-admin-pin-input') as HTMLInputElement;
+                            if (inputEl) inputEl.value = '';
+                          }}
+                          className="w-full bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 font-extrabold py-2.5 text-xs rounded-xl border border-rose-200 transition-all cursor-pointer text-center"
+                        >
+                          تعطيل وإيقاف رمز الأمان الحسابي 🔓
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end shrink-0">
+                  <Button 
+                    onClick={() => setShowPermissionsConfigModal(false)}
+                    className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-black px-5 py-2.5 rounded-xl cursor-pointer"
+                  >
+                    إغلاق وحفظ الإعدادات
                   </Button>
                 </div>
               </motion.div>

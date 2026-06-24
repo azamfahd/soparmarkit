@@ -90,6 +90,7 @@ export interface Note {
   created_at: string;
   reminder_date?: string | null;
   is_completed?: boolean;
+  priority?: 'normal' | 'high' | 'info' | 'warning';
 }
 
 export interface SalesSettlement {
