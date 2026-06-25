@@ -66,6 +66,7 @@ export interface InventoryLog {
   product_id: number;
   change_amount: number;
   reason: string;
+  notes?: string;
   created_at: string;
 }
 

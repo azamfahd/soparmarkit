@@ -53,7 +53,13 @@ import {
   Calendar,
   Bookmark,
   Info,
-  AlertTriangle
+  AlertTriangle,
+  Minus,
+  PackagePlus,
+  Activity,
+  TrendingDown,
+  Clock,
+  RefreshCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -377,6 +383,11 @@ export default function App() {
   const [supplierPaymentAmount, setSupplierPaymentAmount] = useState('');
   const [supplierPaymentNotes, setSupplierPaymentNotes] = useState('');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [updatingStockProduct, setUpdatingStockProduct] = useState<Product | null>(null);
+  const [updatingStockAmount, setUpdatingStockAmount] = useState<string>('');
+  const [updatingStockNotes, setUpdatingStockNotes] = useState<string>('');
+  const [updatingStockType, setUpdatingStockType] = useState<'add' | 'subtract'>('add');
+  const [updateSupplierBalance, setUpdateSupplierBalance] = useState<boolean>(true);
   const [addProfitPercent, setAddProfitPercent] = useState<string>('');
   const [editProfitPercent, setEditProfitPercent] = useState<string>('');
   const [editCostStr, setEditCostStr] = useState<string>('');
@@ -404,6 +415,7 @@ export default function App() {
   }, [editingProduct?.id]);
   const [customerHistory, setCustomerHistory] = useState<{ sales: any[], debts: any[] }>({ sales: [], debts: [] });
   const [productHistory, setProductHistory] = useState<any[]>([]);
+  const [inventoryHistoryFilter, setInventoryHistoryFilter] = useState<'all' | 'sales' | 'refunds' | 'updates'>('all');
   const [dailySales, setDailySales] = useState<any[]>([]);
   const [monthlySalesTrend, setMonthlySalesTrend] = useState<any[]>([]);
   const [trendMode, setTrendMode] = useState<'daily' | 'monthly'>('daily');
@@ -1575,6 +1587,72 @@ export default function App() {
     setShowAddProduct(false);
     setAddProfitPercent('');
     setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined });
+  };
+
+  const handleUpdateStock = async () => {
+    if (!updatingStockProduct || !updatingStockProduct.id || !updatingStockAmount || isNaN(Number(updatingStockAmount))) return;
+    
+    const amount = Number(updatingStockAmount);
+    if (amount <= 0) {
+      showNotification('يجب إدخال كمية صحيحة أكبر من الصفر', 'error');
+      return;
+    }
+
+    try {
+      const dbProduct = await db.products.get(updatingStockProduct.id);
+      if (!dbProduct) return;
+
+      const changeAmount = updatingStockType === 'add' ? amount : -amount;
+      const newStock = dbProduct.stock_quantity + changeAmount;
+
+      if (newStock < 0) {
+        showNotification('الكمية المراد سحبها أكبر من المخزون المتوفر', 'error');
+        return;
+      }
+
+      await db.transaction('rw', db.products, db.inventoryLogs, db.suppliers, async () => {
+        // Update product stock
+        await db.products.update(dbProduct.id!, { stock_quantity: newStock });
+
+        // Add inventory log
+        await db.inventoryLogs.add({
+          product_id: dbProduct.id!,
+          change_amount: changeAmount,
+          reason: 'manual_update',
+          notes: updatingStockNotes || (updatingStockType === 'add' ? 'إضافة مخزون يدوية' : 'سحب/تسوية مخزون يدوية'),
+          created_at: new Date().toISOString()
+        });
+
+        // Update supplier balance
+        if (dbProduct.supplier_id && dbProduct.cost_price > 0) {
+          const supplier = await db.suppliers.get(dbProduct.supplier_id);
+          if (supplier) {
+            let balanceChange = 0;
+            if (updatingStockType === 'add') {
+              balanceChange = changeAmount * dbProduct.cost_price; // changeAmount is positive
+            } else if (updatingStockType === 'subtract' && updateSupplierBalance) {
+              balanceChange = changeAmount * dbProduct.cost_price; // changeAmount is negative, so this deducts
+            }
+            
+            if (balanceChange !== 0) {
+              await db.suppliers.update(supplier.id!, {
+                balance: (supplier.balance || 0) + balanceChange
+              });
+            }
+          }
+        }
+      });
+      
+      showNotification('تم تحديث المخزون بنجاح', 'success');
+      setUpdatingStockProduct(null);
+      setUpdatingStockAmount('');
+      setUpdatingStockNotes('');
+      setUpdatingStockType('add');
+      setUpdateSupplierBalance(true);
+    } catch (e) {
+      console.error(e);
+      showNotification('حدث خطأ أثناء تحديث المخزون', 'error');
+    }
   };
 
   const handleEditProduct = async () => {
@@ -3862,12 +3940,27 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-col items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity mr-2 pr-2 border-r border-slate-100">
+                      <div className="flex flex-col items-center gap-1 transition-opacity mr-2 pr-2 border-r border-slate-100">
+                        <button 
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            setUpdatingStockProduct(p);
+                          }} 
+                          title="تحديث المخزون"
+                          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                            p.stock_quantity <= 5 ? 'text-red-600 hover:bg-red-50' : 
+                            p.stock_quantity <= 20 ? 'text-amber-600 hover:bg-amber-50' : 
+                            'text-emerald-600 hover:bg-emerald-50'
+                          }`}
+                        >
+                          <RefreshCcw className="w-4 h-4" />
+                        </button>
                         <button 
                           onClick={(e) => { 
                             e.stopPropagation(); 
                             verifyAdminPermission('edit_product', () => setEditingProduct(p), '✏️ صلاحية تعديل صنف');
                           }} 
+                          title="تعديل الصنف"
                           className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <Edit className="w-4 h-4" />
@@ -3879,6 +3972,7 @@ export default function App() {
                               if (window.confirm('هل أنت متأكد من حذف هذا الصنف من المخازن؟')) handleDeleteProduct(p.id!);
                             }, '🗑️ صلاحية حذف صنف');
                           }} 
+                          title="حذف الصنف"
                           className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -5146,45 +5240,138 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-0 bg-slate-50 relative">
-                  <div className="sticky top-0 bg-slate-50/90 backdrop-blur-sm z-10 px-6 py-3 border-b border-slate-200">
-                    <h4 className="font-bold text-slate-700 text-sm">سجل حركة المخزون</h4>
+                  <div className="sticky top-0 bg-slate-50/95 backdrop-blur-md z-20 px-6 py-4 border-b border-slate-200 shadow-sm flex justify-between items-center">
+                    <h4 className="font-black text-slate-800 flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-indigo-500" />
+                      سجل حركة المخزون بالتفصيل
+                    </h4>
                   </div>
-                  <div className="p-6 relative">
-                    <div className="absolute top-0 bottom-0 right-10 w-0.5 bg-slate-200" />
+                  
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-2 gap-3 p-6 pb-2">
+                    {/* الوارد الجديد */}
+                    <div className="bg-emerald-50/50 border border-emerald-100 rounded-2xl p-3 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                        <PackagePlus className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-emerald-600 font-bold mb-0.5">وارد وتزويد جديد</p>
+                        <p className="text-lg font-black text-emerald-700 font-mono">
+                          {productHistory.reduce((sum, log) => sum + ((log.change_amount > 0 && log.reason !== 'refund') ? log.change_amount : 0), 0)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* المرتجعات */}
+                    <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-3 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                        <RotateCcw className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-indigo-600 font-bold mb-0.5">بضاعة مرتجعة</p>
+                        <p className="text-lg font-black text-indigo-700 font-mono">
+                          {productHistory.reduce((sum, log) => sum + ((log.change_amount > 0 && log.reason === 'refund') ? log.change_amount : 0), 0)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* المبيعات */}
+                    <div className="bg-rose-50/50 border border-rose-100 rounded-2xl p-3 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                        <ShoppingCart className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-rose-600 font-bold mb-0.5">إجمالي المبيعات</p>
+                        <p className="text-lg font-black text-rose-700 font-mono">
+                          {productHistory.reduce((sum, log) => sum + ((log.change_amount < 0 && log.reason === 'sale') ? Math.abs(log.change_amount) : 0), 0)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* التوالف والتسويات */}
+                    <div className="bg-orange-50/50 border border-orange-100 rounded-2xl p-3 flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+                        <Minus className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-orange-600 font-bold mb-0.5">سحب وتسويات (نقص)</p>
+                        <p className="text-lg font-black text-orange-700 font-mono">
+                          {productHistory.reduce((sum, log) => sum + ((log.change_amount < 0 && log.reason !== 'sale') ? Math.abs(log.change_amount) : 0), 0)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Filter Tabs */}
+                  <div className="px-6 py-2">
+                    <div className="flex bg-slate-200/50 p-1 rounded-xl">
+                      <button 
+                        onClick={() => setInventoryHistoryFilter('all')}
+                        className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${inventoryHistoryFilter === 'all' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                      >الكل</button>
+                      <button 
+                        onClick={() => setInventoryHistoryFilter('sales')}
+                        className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${inventoryHistoryFilter === 'sales' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                      >مبيعات</button>
+                      <button 
+                        onClick={() => setInventoryHistoryFilter('refunds')}
+                        className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${inventoryHistoryFilter === 'refunds' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                      >إرجاع</button>
+                      <button 
+                        onClick={() => setInventoryHistoryFilter('updates')}
+                        className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${inventoryHistoryFilter === 'updates' ? 'bg-white shadow-sm text-indigo-700' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                      >تحديثات</button>
+                    </div>
+                  </div>
+
+                  <div className="p-6 relative pt-2">
+                    <div className="absolute top-2 bottom-0 right-10 w-0.5 bg-gradient-to-b from-slate-200 via-slate-200 to-transparent" />
                     <div className="space-y-6">
-                      {productHistory.length > 0 ? productHistory.map((log, idx) => (
+                      {productHistory.filter(log => {
+                        if (inventoryHistoryFilter === 'all') return true;
+                        if (inventoryHistoryFilter === 'sales') return log.reason === 'sale';
+                        if (inventoryHistoryFilter === 'refunds') return log.reason === 'refund';
+                        if (inventoryHistoryFilter === 'updates') return log.reason === 'manual_update' || log.reason === 'initial_stock' || log.reason === 'new_product';
+                        return true;
+                      }).length > 0 ? productHistory.filter(log => {
+                        if (inventoryHistoryFilter === 'all') return true;
+                        if (inventoryHistoryFilter === 'sales') return log.reason === 'sale';
+                        if (inventoryHistoryFilter === 'refunds') return log.reason === 'refund';
+                        if (inventoryHistoryFilter === 'updates') return log.reason === 'manual_update' || log.reason === 'initial_stock' || log.reason === 'new_product';
+                        return true;
+                      }).map((log, idx) => (
                         <div key={`product-log-${log.id ?? 'no-id'}-${idx}`} className="relative flex items-start gap-4 group">
                           <div className={`w-10 h-10 rounded-2xl flex-shrink-0 flex items-center justify-center z-10 shadow-sm border-[3px] border-slate-50 transition-transform group-hover:scale-110
-                            ${log.reason === 'sale' ? 'bg-red-100 text-red-600' : 
+                            ${log.reason === 'sale' ? 'bg-rose-100 text-rose-600' : 
                               log.reason === 'refund' ? 'bg-indigo-100 text-indigo-600' : 
-                              log.reason === 'manual_update' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}
+                              log.reason === 'manual_update' ? (log.change_amount > 0 ? 'bg-teal-100 text-teal-600' : 'bg-orange-100 text-orange-600') : 'bg-emerald-100 text-emerald-600'}`}
                           >
                             {log.reason === 'sale' ? <ShoppingCart className="w-5 h-5" /> : 
                              log.reason === 'refund' ? <RotateCcw className="w-5 h-5" /> : 
-                             log.reason === 'manual_update' ? <Edit className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                             log.reason === 'manual_update' ? (log.change_amount > 0 ? <Plus className="w-5 h-5" /> : <Minus className="w-5 h-5" />) : <PackagePlus className="w-5 h-5" />}
                           </div>
-                          <div className="flex-1 bg-white p-4 rounded-3xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-slate-100/60 hover:border-slate-200 transition-colors">
+                          <div className="flex-1 bg-white p-4 rounded-3xl shadow-sm border border-slate-100/80 hover:border-slate-300 transition-all hover:shadow-md">
                             <div className="flex justify-between items-start mb-2">
                               <div>
-                                <p className="text-sm font-bold text-slate-800">
-                                  {log.reason === 'sale' ? 'عملية بيع' : 
-                                   log.reason === 'refund' ? 'إرجاع مبيعات' : 
-                                   log.reason === 'manual_update' ? 'تحديث المخزون' : 'إضافة مخزون'}
+                                <p className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+                                  {log.reason === 'sale' ? 'فاتورة مبيعات' : 
+                                   log.reason === 'refund' ? 'إرجاع بضاعة' : 
+                                   log.reason === 'manual_update' ? (log.change_amount > 0 ? 'تحديث أو إضافة بضاعة' : 'سحب أو تسوية نُقصان') : 'إضافة بضاعة جديدة'}
                                 </p>
-                                <p className="text-[10px] text-slate-400 font-bold mt-0.5 flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                                  {formatDateTimeWithDay(log.created_at)}
+                                <p className="text-[11px] text-slate-500 font-bold mt-1 flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5 opacity-70" />
+                                  <span dir="ltr">{formatDateTimeWithDay(log.created_at)}</span>
                                 </p>
                               </div>
-                              <div className={`px-3 py-1 rounded-xl text-sm font-bold ${log.change_amount > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>
-                                <span className="opacity-70 text-[10px] ml-1">{log.change_amount > 0 ? 'كمية الوارد' : 'كمية المنصرف'}</span>
-                                {log.change_amount > 0 ? '+' : ''}{log.change_amount}
+                              <div className={`px-3 py-1.5 rounded-xl text-sm font-black font-mono shadow-sm border ${log.change_amount > 0 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                <span className="opacity-70 text-[10px] ml-1.5 font-sans">{log.change_amount > 0 ? 'إضافة' : 'سحب'}</span>
+                                <span dir="ltr">{log.change_amount > 0 ? '+' : ''}{log.change_amount}</span>
                               </div>
                             </div>
                             {log.notes && (
-                              <div className="mt-3 bg-slate-50 p-3 rounded-2xl flex items-start gap-2 border border-slate-100">
-                                <FileText className="w-4 h-4 text-slate-400 mt-0.5" />
-                                <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                              <div className="mt-3 bg-slate-50/80 p-3 rounded-2xl flex items-start gap-2.5 border border-slate-100">
+                                <FileText className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                                <p className="text-xs text-slate-600 leading-relaxed font-bold">
                                   {log.notes}
                                 </p>
                               </div>
@@ -5192,13 +5379,114 @@ export default function App() {
                           </div>
                         </div>
                       )) : (
-                        <div className="text-center py-10 text-slate-400 text-sm">لا توجد حركات مسجلة لهذا المنتج.</div>
+                        <div className="text-center py-16 bg-white rounded-3xl border border-slate-100 border-dashed">
+                          <Activity className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                          <p className="text-slate-500 font-bold">لا توجد حركات مسجلة لهذا المنتج بعد.</p>
+                        </div>
                       )}
                     </div>
                   </div>
                 </div>
                 <div className="p-4 bg-white border-t border-slate-100">
                   <Button variant="secondary" className="w-full" onClick={() => setShowProductDetails(null)}>إغلاق</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {updatingStockProduct && (
+            <div key="modal-updating-stock" className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                className="bg-white w-full max-w-sm rounded-[2rem] p-6 space-y-6 shadow-2xl relative"
+                dir="rtl"
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                      <RefreshCcw className="w-5 h-5 text-indigo-600" />
+                      تحديث المخزون
+                    </h3>
+                    <p className="text-xs text-slate-500 font-bold mt-1 line-clamp-1">{updatingStockProduct.name}</p>
+                  </div>
+                  <button onClick={() => setUpdatingStockProduct(null)} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-400">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <div className="text-center">
+                    <p className="text-[10px] text-slate-400 font-bold mb-1">المخزون الحالي</p>
+                    <p className="text-2xl font-black text-slate-700 font-mono">{updatingStockProduct.stock_quantity}</p>
+                  </div>
+                  <div className="w-px h-10 bg-slate-200"></div>
+                  <div className="text-center">
+                    <p className="text-[10px] text-indigo-400 font-bold mb-1">بعد التحديث</p>
+                    <p className={`text-2xl font-black font-mono ${updatingStockType === 'add' ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {updatingStockAmount ? (updatingStockProduct.stock_quantity + (updatingStockType === 'add' ? Number(updatingStockAmount) : -Number(updatingStockAmount))) : updatingStockProduct.stock_quantity}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">نوع التحديث</label>
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                      <button 
+                        onClick={() => setUpdatingStockType('add')}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${updatingStockType === 'add' ? 'bg-white shadow-sm text-emerald-700 border border-emerald-100' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                      >
+                        إضافة (+)
+                      </button>
+                      <button 
+                        onClick={() => setUpdatingStockType('subtract')}
+                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${updatingStockType === 'subtract' ? 'bg-white shadow-sm text-red-700 border border-red-100' : 'text-slate-500 hover:bg-slate-200/50'}`}
+                      >
+                        سحب (-)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">الكمية المراد {updatingStockType === 'add' ? 'إضافتها' : 'سحبها'}</label>
+                    <input 
+                      type="number" 
+                      className={`w-full p-4 rounded-xl border-2 bg-slate-50 text-xl font-black font-mono text-center focus:outline-none transition-all ${updatingStockType === 'add' ? 'border-emerald-200 focus:border-emerald-500 text-emerald-700' : 'border-red-200 focus:border-red-500 text-red-700'}`}
+                      value={updatingStockAmount}
+                      onChange={e => setUpdatingStockAmount(e.target.value)}
+                      placeholder="0"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">ملاحظات / سبب التحديث</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20 outline-none"
+                      value={updatingStockNotes}
+                      onChange={e => setUpdatingStockNotes(e.target.value)}
+                      placeholder={updatingStockType === 'add' ? "مثال: بضاعة جديدة، جرد..." : "مثال: تالف، مفقود، جرد..."}
+                    />
+                  </div>
+
+                  {updatingStockType === 'subtract' && updatingStockProduct.supplier_id && updatingStockProduct.cost_price > 0 && (
+                    <label className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
+                      <input 
+                        type="checkbox" 
+                        checked={updateSupplierBalance} 
+                        onChange={(e) => setUpdateSupplierBalance(e.target.checked)}
+                        className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                      />
+                      <span className="text-sm font-bold text-slate-700">خصم التكلفة من حساب المورد (إرجاع أو تصحيح)</span>
+                    </label>
+                  )}
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button className="flex-1 py-4 text-sm shadow-md" onClick={handleUpdateStock}>حفظ التحديث</Button>
+                  <Button variant="secondary" className="py-4 px-6 text-sm" onClick={() => setUpdatingStockProduct(null)}>إلغاء</Button>
                 </div>
               </motion.div>
             </div>
