@@ -1070,9 +1070,9 @@ export default function App() {
       console.error(error);
       let errMsg = 'فشل تسجيل الدخول باستخدام Google.';
       if (error.code === 'auth/popup-closed-by-user') {
-        errMsg = 'تم إغلاق نافذة تسجيل الدخول من قبل المستخدم.';
+        errMsg = 'تم إغلاق نافذة تسجيل الدخول من قبل المستخدم أو تم حظرها بواسطة المتصفح. إذا كنت تتصفح من داخل إطار معينة AI Studio، يرجى النقر على زر "فتح في نافذة مستقلة" لتسجيل الدخول بنجاح.';
       } else if (error.code === 'auth/cancelled-popup-request') {
-        errMsg = 'تم إلغاء طلب تسجيل الدخول.';
+        errMsg = 'تم إلغاء طلب تسجيل الدخول (طلب منبثق متداخل).';
       } else if (error.code === 'auth/operation-not-allowed') {
         errMsg = 'تسجيل الدخول عبر Google غير مفعّل أو معلّق في لوحة Firebase! لتفعيله: اذهب إلى Firebase Console ثم Authentication ثم Sign-in method وقم بتمكين موفر الخدمة Google.';
       }
@@ -3122,58 +3122,130 @@ export default function App() {
           {cloudRequest ? (
             <div className="space-y-4">
               {cloudRequest.status === 'pending' && (
-                <div className="bg-amber-950/40 border border-amber-900/50 rounded-2xl p-4 space-y-3 text-right">
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
-                    </span>
-                    <h4 className="text-sm font-black text-amber-400">طلبك معلق وقيد المراجعة ⏳</h4>
+                <div className="bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-amber-500/30 rounded-3xl p-5 space-y-4 text-right shadow-xl shadow-amber-950/20 relative overflow-hidden">
+                  {/* Subtle pulsing background glow */}
+                  <div className="absolute -right-10 -top-10 w-24 h-24 bg-amber-500/5 rounded-full blur-xl pointer-events-none" />
+                  
+                  {/* Header */}
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="relative flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                      </span>
+                      <h4 className="text-sm font-black text-amber-400">طلب التفعيل السحابي قيد المراجعة ⏳</h4>
+                    </div>
+                    <span className="px-2 py-0.5 text-[9px] font-black bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-md">مستمر</span>
                   </div>
-                  <div className="text-xs text-amber-200/80 space-y-1 font-bold leading-normal">
-                    <p>• تم إرسال طلب التفعيل لاسم المتجر: <span className="text-white font-extrabold">{cloudRequest.storeName}</span></p>
-                    <p>• حالة الطلب الآن: بانتظار موافقة مالك البرنامج وتفعيل جهازك.</p>
-                    <p className="text-amber-400/90 text-[11px] mt-2 bg-amber-950/60 p-2 rounded-xl border border-amber-900/30">
-                      💡 عندما يقوم مالك البرنامج بالموافقة على طلبك من لوحة التحكم السحابية الخاصة به، سيتم تفعيل جهازك وفتح البرنامج تلقائياً بالكامل في نفس اللحظة! لا داعي لإغلاق هذه الصفحة.
+
+                  {/* Information Grid */}
+                  <div className="space-y-2 bg-slate-950/60 p-3 rounded-2xl border border-slate-800/60 text-xs text-slate-300">
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-400">اسم النشاط التجاري:</span>
+                      <span className="font-extrabold text-white">{cloudRequest.storeName}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-t border-slate-800/40 pt-1.5">
+                      <span className="text-slate-400">رقم الهاتف المسجل:</span>
+                      <span className="font-mono text-emerald-400 font-bold">{cloudRequest.phone || 'غير مسجل'}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-t border-slate-800/40 pt-1.5">
+                      <span className="text-slate-400">تاريخ ووقت التقديم:</span>
+                      <span className="font-mono text-slate-400">{new Date(cloudRequest.requestedAt).toLocaleString('ar-SA')}</span>
+                    </div>
+                  </div>
+
+                  {/* Elegant Horizontal Live Stepper */}
+                  <div className="py-2">
+                    <p className="text-[10px] font-black text-slate-400 mb-3 text-right font-sans">مراحل معالجة طلبك الحالية:</p>
+                    <div className="grid grid-cols-3 gap-1 relative">
+                      {/* Connection line */}
+                      <div className="absolute top-3.5 left-8 right-8 h-0.5 bg-slate-800 z-0" />
+                      
+                      {/* Step 1: Sent */}
+                      <div className="flex flex-col items-center text-center z-10">
+                        <div className="w-7 h-7 rounded-full bg-emerald-500/20 border border-emerald-500 text-emerald-400 flex items-center justify-center text-[10px] font-black shadow-md shadow-emerald-500/10">
+                          ✓
+                        </div>
+                        <span className="text-[9px] font-black text-emerald-400 mt-1.5">تم الإرسال</span>
+                      </div>
+
+                      {/* Step 2: Under Review */}
+                      <div className="flex flex-col items-center text-center z-10">
+                        <div className="w-7 h-7 rounded-full bg-amber-500/20 border border-amber-500 text-amber-400 flex items-center justify-center text-[10px] font-black animate-pulse shadow-md shadow-amber-500/10">
+                          📡
+                        </div>
+                        <span className="text-[9px] font-black text-amber-400 mt-1.5">مراجعة الإدارة</span>
+                      </div>
+
+                      {/* Step 3: Activation */}
+                      <div className="flex flex-col items-center text-center z-10">
+                        <div className="w-7 h-7 rounded-full bg-slate-800/80 border border-slate-700 text-slate-500 flex items-center justify-center text-[10px] font-black">
+                          🔒
+                        </div>
+                        <span className="text-[9px] font-bold text-slate-500 mt-1.5">التفعيل الآلي</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Real-time sync alert */}
+                  <div className="p-3 bg-emerald-950/20 border border-emerald-900/40 rounded-2xl flex items-start gap-2.5 text-[11px] leading-relaxed text-emerald-300">
+                    <span className="text-sm shrink-0 animate-pulse">🟢</span>
+                    <p className="font-bold">
+                      <strong>تنبيه البث المباشر:</strong> النظام متصل الآن بقاعدة البيانات السحابية بشكل حي ومستمر. بمجرد قيام المطور أو المدير بالموافقة على الطلب، سيتم تفعيل جهازك وفتح البرنامج بالكامل فوراً ودون الحاجة لتحديث الصفحة!
                     </p>
                   </div>
-                  <button 
-                    onClick={() => handleDeleteCloudRequest(deviceID)}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700/50 cursor-pointer"
-                  >
-                    إلغاء الطلب الحالي أو تعديله 🗑️
-                  </button>
+
+                  {/* Contact Owner Action */}
+                  <div className="pt-1.5 flex flex-col gap-2">
+                    <a 
+                      href={`https://wa.me/?text=${encodeURIComponent(`أهلاً، لقد قمت بإرسال طلب تفعيل سحابي لمتجري (${cloudRequest.storeName}) لجهازي ذو المعرف الفريد: ${deviceID}. يرجى التكرم بالموافقة وتفعيل الترخيص.`)}`}
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.98] text-white rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-emerald-600/10"
+                    >
+                      <span>تواصل سريع لتسريع التفعيل 💬</span>
+                    </a>
+                    
+                    <button 
+                      onClick={() => handleDeleteCloudRequest(deviceID)}
+                      className="w-full py-2 text-slate-400 hover:text-rose-400 text-[11px] font-bold transition-all cursor-pointer hover:bg-rose-950/20 rounded-xl"
+                    >
+                      إلغاء الطلب الحالي أو تعديل البيانات 🗑️
+                    </button>
+                  </div>
                 </div>
               )}
 
               {cloudRequest.status === 'rejected' && (
-                <div className="bg-rose-950/40 border border-rose-900/50 rounded-2xl p-4 space-y-3 text-right">
-                  <div className="flex items-center gap-2 text-rose-400">
-                    <X className="w-5 h-5" />
+                <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-rose-500/30 rounded-3xl p-5 space-y-4 text-right shadow-xl">
+                  <div className="flex items-center gap-2.5 text-rose-400 border-b border-slate-800 pb-3">
+                    <AlertTriangle className="w-5 h-5 shrink-0" />
                     <h4 className="text-sm font-black">تم رفض طلب تفعيل جهازك ❌</h4>
                   </div>
                   <p className="text-xs text-rose-200/80 leading-relaxed font-bold">
-                    للأسف، تم رفض طلب التفعيل الرقمي لجهازك من قبل إدارة البرنامج. يرجى التواصل مع المدير المباشر لمعرفة السبب أو التقديم مجدداً.
+                    للأسف، لم تتم الموافقة على طلب التفعيل السحابي لجهازك من قبل إدارة البرنامج أو المطور. يرجى التواصل مع المدير المباشر للاستفسار وتوضيح حالة الاشتراك.
                   </p>
-                  <button 
-                    onClick={() => handleDeleteCloudRequest(deviceID)}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-600/15 cursor-pointer"
-                  >
-                    إعادة تقديم طلب تفعيل جديد 📡
-                  </button>
+                  <div className="pt-2 flex flex-col gap-2">
+                    <button 
+                      onClick={() => handleDeleteCloudRequest(deviceID)}
+                      className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-600/15 cursor-pointer"
+                    >
+                      إعادة تقديم طلب تفعيل جديد 📡
+                    </button>
+                  </div>
                 </div>
               )}
 
               {cloudRequest.status === 'approved' && (
-                <div className="bg-emerald-950/40 border border-emerald-900/50 rounded-2xl p-4 space-y-3 text-right">
-                  <div className="flex items-center gap-2 text-emerald-400">
-                    <CheckCircle2 className="w-5 h-5 animate-bounce" />
+                <div className="bg-gradient-to-b from-slate-900 to-slate-950 border border-emerald-500/30 rounded-3xl p-5 space-y-4 text-right shadow-xl">
+                  <div className="flex items-center gap-2.5 text-emerald-400 border-b border-slate-800 pb-3">
+                    <CheckCircle2 className="w-5 h-5 animate-bounce shrink-0" />
                     <h4 className="text-sm font-black">تهانينا! تمت الموافقة بنجاح 🎉</h4>
                   </div>
                   <p className="text-xs text-emerald-200/80 leading-relaxed font-bold">
-                    تم إصدار ترخيص معتمد لجهازك سحابياً. يقوم النظام الآن بفتح وتنشيط البرنامج تلقائياً...
+                    تم إصدار ترخيص معتمد لجهازك سحابياً ومزامنته بالكامل. يقوم النظام الآن بفتح وتنشيط البرنامج تلقائياً...
                   </p>
-                  <div className="p-2.5 bg-slate-950 rounded-xl font-mono text-center text-[11px] text-emerald-400 border border-emerald-900/40">
+                  <div className="p-3 bg-slate-950 rounded-2xl font-mono text-center text-xs font-black text-emerald-400 border border-emerald-900/40 shadow-inner">
                     {cloudRequest.licenseKey}
                   </div>
                 </div>
@@ -3301,6 +3373,20 @@ export default function App() {
                   <p className="text-[10px] text-slate-400 leading-relaxed text-center">
                     سجل الدخول مباشرة وبشكل آمن باستخدام حساب Google المرتبط بمالك ومطور البرنامج لتفعيل هذا الجهاز تلقائياً.
                   </p>
+                  {window.self !== window.top && (
+                    <div className="bg-amber-950/40 p-2.5 border border-amber-900/60 rounded-xl text-right space-y-2 text-amber-300">
+                      <p className="text-[9px] sm:text-[10px] leading-relaxed">
+                        ⚠️ <strong>تنبيه المتصفح:</strong> أنت تتصفح التطبيق حالياً داخل إطار معاينة AI Studio. تسجيل الدخول عبر Google يفشل غالباً بسبب قيود الإطار والمنبثقات.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => window.open(window.location.href, '_blank')}
+                        className="w-full py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <span>🌐 افتح التطبيق في نافذة مستقلة</span>
+                      </button>
+                    </div>
+                  )}
                   {adminLoginError && (
                     <p className="text-[10px] text-rose-500 font-bold leading-relaxed text-center">{adminLoginError}</p>
                   )}
@@ -5699,6 +5785,20 @@ export default function App() {
                           <p className="text-[11px] text-slate-400 leading-relaxed text-center">
                             سجل الدخول مباشرة وبشكل آمن باستخدام حساب Google المرتبط بمالك ومطور البرنامج.
                           </p>
+                          {window.self !== window.top && (
+                            <div className="bg-amber-950/40 p-2.5 border border-amber-900/60 rounded-xl text-right space-y-2 text-amber-300">
+                              <p className="text-[9px] sm:text-[10px] leading-relaxed">
+                                ⚠️ <strong>تنبيه المتصفح:</strong> أنت تتصفح التطبيق حالياً داخل إطار معاينة AI Studio. تسجيل الدخول عبر Google يفشل غالباً بسبب قيود الإطار والمنبثقات.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => window.open(window.location.href, '_blank')}
+                                className="w-full py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1"
+                              >
+                                <span>🌐 افتح التطبيق في نافذة مستقلة</span>
+                              </button>
+                            </div>
+                          )}
                           {adminLoginError && (
                             <p className="text-[10px] text-rose-500 font-bold leading-relaxed text-center">{adminLoginError}</p>
                           )}
