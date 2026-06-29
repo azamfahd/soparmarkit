@@ -59,7 +59,9 @@ import {
   Activity,
   TrendingDown,
   Clock,
-  RefreshCcw
+  RefreshCcw,
+  Lock,
+  Key
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -72,7 +74,25 @@ import {
   CartesianGrid
 } from 'recharts';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
+import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from './utils/licensing';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { 
+  submitActivationRequest, 
+  getActivationRequest, 
+  subscribeToDeviceActivation, 
+  subscribeToAllActivationRequests, 
+  approveRequestInCloud, 
+  rejectRequestInCloud, 
+  deleteRequestFromCloud,
+  auth,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup,
+  type ActivationRequest,
+  type User
+} from './services/firebase';
 
 // --- Types ---
 // (Local type definitions removed as they conflict with db.ts imports)
@@ -388,6 +408,43 @@ export default function App() {
   const [updatingStockNotes, setUpdatingStockNotes] = useState<string>('');
   const [updatingStockType, setUpdatingStockType] = useState<'add' | 'subtract'>('add');
   const [updateSupplierBalance, setUpdateSupplierBalance] = useState<boolean>(true);
+
+  // --- Licensing & Subscription States ---
+  const [deviceID, setDeviceID] = useState<string>('');
+  const [isActivated, setIsActivated] = useState<boolean>(false);
+  const [activationDetails, setActivationDetails] = useState<{ licenseKey: string; expiresAt: string; activatedAt: string } | null>(null);
+  const [trialDaysLeft, setTrialDaysLeft] = useState<number>(7);
+  const [isInTrial, setIsInTrial] = useState<boolean>(true);
+  const [activationModalOpen, setActivationModalOpen] = useState<boolean>(false);
+  const [activationKeyInput, setActivationKeyInput] = useState<string>('');
+  const [activationError, setActivationError] = useState<string>('');
+  // Admin key generator states
+  const [generatorDeviceIDInput, setGeneratorDeviceIDInput] = useState<string>('');
+  const [generatorDuration, setGeneratorDuration] = useState<number>(30); // days
+  const [generatedKeyResult, setGeneratedKeyResult] = useState<string>('');
+  const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(false);
+  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests'>('requests');
+  const [devClickCount, setDevClickCount] = useState<number>(0);
+  const [showHiddenAdminInput, setShowHiddenAdminInput] = useState<boolean>(false);
+  
+  // Firebase Auth States
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [adminEmail, setAdminEmail] = useState<string>('');
+  const [adminPassword, setAdminPassword] = useState<string>('');
+  const [adminLoginError, setAdminLoginError] = useState<string>('');
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
+  const [authMethod, setAuthMethod] = useState<'google' | 'firebase'>('google');
+  
+  // Cloud Licensing States
+  const [clientStoreName, setClientStoreName] = useState<string>('');
+  const [clientPhone, setClientPhone] = useState<string>('');
+  const [cloudRequest, setCloudRequest] = useState<ActivationRequest | null>(null);
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
+  const [allCloudRequests, setAllCloudRequests] = useState<ActivationRequest[]>([]);
+  const [isManualInput, setIsManualInput] = useState<boolean>(false);
+  const [showAdminLogin, setShowAdminLogin] = useState<boolean>(false);
+  const [requestDurations, setRequestDurations] = useState<Record<string, number>>({});
+
   const [addProfitPercent, setAddProfitPercent] = useState<string>('');
   const [editProfitPercent, setEditProfitPercent] = useState<string>('');
   const [editCostStr, setEditCostStr] = useState<string>('');
@@ -679,6 +736,7 @@ export default function App() {
     const nameSetting = appSettings.find(s => s.key === 'storeName');
     if (nameSetting) {
       setStoreName(nameSetting.value);
+      setClientStoreName(nameSetting.value);
     }
     const currencySetting = appSettings.find(s => s.key === 'currency');
     if (currencySetting) {
@@ -714,6 +772,116 @@ export default function App() {
     }
   }, [appSettings]);
 
+  // Licensing & Subscription Checks
+  useEffect(() => {
+    if (appSettings.length === 0) return;
+
+    const initLicensing = async () => {
+      // 1. Check or generate Device ID
+      let currentDeviceID = '';
+      const deviceIdSetting = appSettings.find(s => s.key === 'deviceID');
+      if (deviceIdSetting) {
+        currentDeviceID = deviceIdSetting.value;
+        setDeviceID(deviceIdSetting.value);
+      } else {
+        const newID = generateDeviceID();
+        await db.settings.add({ key: 'deviceID', value: newID });
+        currentDeviceID = newID;
+        setDeviceID(newID);
+      }
+
+      // 2. Check first install date for Free Trial
+      let installDate: Date;
+      const installSetting = appSettings.find(s => s.key === 'firstInstallDate');
+      if (installSetting) {
+        installDate = new Date(installSetting.value);
+      } else {
+        const nowStr = new Date().toISOString();
+        await db.settings.add({ key: 'firstInstallDate', value: nowStr });
+        installDate = new Date(nowStr);
+      }
+
+      // Calculate trial days remaining (7 days trial)
+      const now = new Date();
+      const trialMs = 7 * 24 * 60 * 60 * 1000;
+      const elapsedMs = now.getTime() - installDate.getTime();
+      const daysLeft = Math.max(0, Math.ceil((trialMs - elapsedMs) / (1000 * 60 * 60 * 24)));
+      setTrialDaysLeft(daysLeft);
+      setIsInTrial(elapsedMs < trialMs);
+
+      // 3. Check Activation status
+      const activationSetting = appSettings.find(s => s.key === 'activationDetails');
+      if (activationSetting && activationSetting.value) {
+        const details = activationSetting.value;
+        setActivationDetails(details);
+        
+        // Validate the activation details
+        const validation = verifyLicenseKey(currentDeviceID, details.licenseKey);
+        if (validation.isValid) {
+          if (details.expiresAt === 'lifetime') {
+            setIsActivated(true);
+          } else {
+            const expDate = new Date(details.expiresAt);
+            if (now < expDate) {
+              setIsActivated(true);
+            } else {
+              setIsActivated(false); // Expired
+            }
+          }
+        } else {
+          setIsActivated(false); // Tampered/invalid key
+        }
+      } else {
+        setIsActivated(false);
+      }
+    };
+
+    initLicensing();
+  }, [appSettings]);
+
+  // 1. Subscribe to client's own activation status in the Cloud
+  useEffect(() => {
+    if (!deviceID) return;
+    
+    const unsubscribe = subscribeToDeviceActivation(deviceID, (request) => {
+      setCloudRequest(request);
+      
+      // Auto-activation on the fly when approved
+      if (request && request.status === 'approved' && request.licenseKey) {
+        const currentKey = activationDetails?.licenseKey;
+        if (currentKey !== request.licenseKey) {
+          handleActivateApp(request.licenseKey);
+        }
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [deviceID, activationDetails]);
+
+  // 2. Subscribe to all cloud activation requests when Developer Mode is active
+  useEffect(() => {
+    if (!isDeveloperMode) return;
+    
+    const unsubscribe = subscribeToAllActivationRequests((requests) => {
+      setAllCloudRequests(requests);
+    });
+    
+    return () => unsubscribe();
+  }, [isDeveloperMode]);
+
+  // Firebase Auth listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (user) {
+        setIsDeveloperMode(true);
+      } else {
+        setIsDeveloperMode(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
@@ -743,6 +911,243 @@ export default function App() {
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  // --- Licensing & Activation Handlers ---
+  const handleActivateApp = async (keyToUse?: string) => {
+    const key = keyToUse || activationKeyInput;
+    if (!key) {
+      setActivationError('الرجاء إدخال مفتاح التفعيل');
+      return;
+    }
+
+    const validation = verifyLicenseKey(deviceID, key);
+    if (!validation.isValid) {
+      setActivationError('مفتاح التفعيل غير صحيح أو غير متوافق مع معرف جهازك!');
+      return;
+    }
+
+    // Determine expiration date
+    let expiresAt = '';
+    const now = new Date();
+    if (validation.durationDays >= 9999) {
+      expiresAt = 'lifetime';
+    } else {
+      const expDate = new Date(now.getTime() + validation.durationDays * 24 * 60 * 60 * 1000);
+      expiresAt = expDate.toISOString();
+    }
+
+    const details = {
+      licenseKey: key,
+      activatedAt: now.toISOString(),
+      expiresAt
+    };
+
+    const existing = await db.settings.where('key').equals('activationDetails').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: details });
+    } else {
+      await db.settings.add({ key: 'activationDetails', value: details });
+    }
+
+    setActivationDetails(details);
+    setIsActivated(true);
+    setActivationError('');
+    setActivationKeyInput('');
+    showNotification('تم تفعيل البرنامج بنجاح! شكراً لاشتراككم.', 'success');
+  };
+
+  const handleRequestCloudActivation = async () => {
+    if (!clientStoreName.trim()) {
+      showNotification('يرجى إدخال اسم المتجر أولاً!', 'error');
+      return;
+    }
+    
+    setIsSubmittingRequest(true);
+    try {
+      await submitActivationRequest(deviceID, clientStoreName, clientPhone);
+      showNotification('تم إرسال طلب التفعيل الرقمي بنجاح وهو قيد المراجعة الآن!', 'success');
+    } catch (e) {
+      console.error(e);
+      showNotification('حدث خطأ أثناء إرسال الطلب، يرجى التحقق من اتصالك بالإنترنت والتحميل مجدداً', 'error');
+    } finally {
+      setIsSubmittingRequest(false);
+    }
+  };
+
+  const handleFirebaseLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!adminEmail.trim() || !adminPassword.trim()) {
+      setAdminLoginError('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+      return;
+    }
+    
+    setIsLoggingIn(true);
+    setAdminLoginError('');
+    try {
+      await signInWithEmailAndPassword(auth, adminEmail.trim(), adminPassword.trim());
+      showNotification('تم تسجيل الدخول كمالك بنجاح 🔓', 'success');
+      
+      // تفعيل جهاز المطور مدى الحياة تلقائياً
+      if (!isActivated && deviceID) {
+        const key = generateLicenseKey(deviceID, 9999);
+        const details = {
+          licenseKey: key,
+          expiresAt: 'lifetime',
+          activatedAt: new Date().toISOString()
+        };
+        const existing = await db.settings.where('key').equals('activationDetails').first();
+        if (existing) {
+          await db.settings.update(existing.id!, { value: details });
+        } else {
+          await db.settings.add({ key: 'activationDetails', value: details });
+        }
+        setActivationDetails(details);
+        setIsActivated(true);
+        showNotification('تم تفعيل جهاز المالك بنجاح مدى الحياة ♾️', 'success');
+      }
+      
+      setAdminEmail('');
+      setAdminPassword('');
+    } catch (error: any) {
+      console.error(error);
+      let errMsg = 'حدث خطأ أثناء تسجيل الدخول. يرجى التأكد من تفعيل الخدمة وصحة البيانات.';
+      if (error.code === 'auth/wrong-password' || error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+        errMsg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة!';
+      } else if (error.code === 'auth/invalid-email') {
+        errMsg = 'صيغة البريد الإلكتروني غير صحيحة!';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errMsg = 'تسجيل الدخول بالبريد الإلكتروني غير مفعّل في لوحة Firebase! لتفعيله: اذهب إلى Firebase Console ثم Authentication ثم Sign-in method وقم بتمكين (Email/Password).';
+      }
+      setAdminLoginError(errMsg);
+      showNotification(errMsg, 'error');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsLoggingIn(true);
+    setAdminLoginError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      // Use signInWithPopup which is standard and handles the login popup
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      
+      if (user && user.email) {
+        const allowedEmails = ['azamfahd25@gmail.com', 'developer@example.com'];
+        if (allowedEmails.includes(user.email.toLowerCase())) {
+          showNotification(`مرحباً بالمالك: ${user.displayName || user.email} 🔓`, 'success');
+          setIsDeveloperMode(true);
+          
+          // تفعيل جهاز المطور مدى الحياة تلقائياً
+          if (!isActivated && deviceID) {
+            const key = generateLicenseKey(deviceID, 9999);
+            const details = {
+              licenseKey: key,
+              expiresAt: 'lifetime',
+              activatedAt: new Date().toISOString()
+            };
+            const existing = await db.settings.where('key').equals('activationDetails').first();
+            if (existing) {
+              await db.settings.update(existing.id!, { value: details });
+            } else {
+              await db.settings.add({ key: 'activationDetails', value: details });
+            }
+            setActivationDetails(details);
+            setIsActivated(true);
+            showNotification('تم تفعيل جهاز المالك بنجاح مدى الحياة ♾️', 'success');
+          }
+        } else {
+          // If they log in but aren't the owner, sign them out and show error
+          await signOut(auth);
+          setAdminLoginError('عذراً، هذا البريد الإلكتروني ليس مسجلاً كمالك للبرنامج!');
+          showNotification('عذراً، لست مالكاً معتمداً للبرنامج.', 'error');
+        }
+      }
+    } catch (error: any) {
+      console.error(error);
+      let errMsg = 'فشل تسجيل الدخول باستخدام Google.';
+      if (error.code === 'auth/popup-closed-by-user') {
+        errMsg = 'تم إغلاق نافذة تسجيل الدخول من قبل المستخدم.';
+      } else if (error.code === 'auth/cancelled-popup-request') {
+        errMsg = 'تم إلغاء طلب تسجيل الدخول.';
+      } else if (error.code === 'auth/operation-not-allowed') {
+        errMsg = 'تسجيل الدخول عبر Google غير مفعّل أو معلّق في لوحة Firebase! لتفعيله: اذهب إلى Firebase Console ثم Authentication ثم Sign-in method وقم بتمكين موفر الخدمة Google.';
+      }
+      setAdminLoginError(errMsg);
+      showNotification(errMsg, 'error');
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleFirebaseLogout = async () => {
+    try {
+      await signOut(auth);
+      setIsDeveloperMode(false);
+      setShowHiddenAdminInput(false);
+      showNotification('تم تسجيل الخروج وقفل الأداة بنجاح 🔒', 'success');
+    } catch (error) {
+      console.error(error);
+      showNotification('فشل تسجيل الخروج', 'error');
+    }
+  };
+
+  const handleDeactivateApp = async () => {
+    if (confirm('هل أنت متأكد من إلغاء تفعيل هذا الترخيص؟ سيتم إخراجك للنسخة التجريبية.')) {
+      const existing = await db.settings.where('key').equals('activationDetails').first();
+      if (existing) {
+        await db.settings.delete(existing.id!);
+      }
+      setActivationDetails(null);
+      setIsActivated(false);
+      showNotification('تم إلغاء تفعيل الترخيص الحالي بنجاح', 'success');
+    }
+  };
+
+  const handleApproveCloudRequest = async (req: ActivationRequest, duration: number) => {
+    try {
+      const key = generateLicenseKey(req.deviceId, duration);
+      await approveRequestInCloud(req.deviceId, duration, key);
+      showNotification(`تمت الموافقة وتوليد الترخيص لـ ${req.storeName} بنجاح!`, 'success');
+    } catch (e) {
+      console.error(e);
+      showNotification('حدث خطأ أثناء الموافقة على الطلب في السحابة', 'error');
+    }
+  };
+
+  const handleRejectCloudRequest = async (deviceId: string) => {
+    try {
+      await rejectRequestInCloud(deviceId);
+      showNotification('تم رفض طلب التفعيل بنجاح', 'success');
+    } catch (e) {
+      console.error(e);
+      showNotification('حدث خطأ أثناء رفض الطلب', 'error');
+    }
+  };
+
+  const handleDeleteCloudRequest = async (deviceId: string) => {
+    if (confirm('هل أنت متأكد من حذف هذا الطلب بالكامل من السحابة؟')) {
+      try {
+        await deleteRequestFromCloud(deviceId);
+        showNotification('تم حذف طلب التفعيل من السحابة', 'success');
+      } catch (e) {
+        console.error(e);
+        showNotification('حدث خطأ أثناء حذف الطلب', 'error');
+      }
+    }
+  };
+
+  const handleGenerateLicense = () => {
+    if (!generatorDeviceIDInput) {
+      alert('الرجاء إدخال معرف جهاز العميل أولاً!');
+      return;
+    }
+    const key = generateLicenseKey(generatorDeviceIDInput, generatorDuration);
+    setGeneratedKeyResult(key);
+    showNotification('تم توليد مفتاح التفعيل بنجاح!', 'success');
   };
 
   const applyCurrencyRounding = (price: number): number => {
@@ -2666,6 +3071,285 @@ export default function App() {
     }
   };
 
+  // --- Beautiful Activation Lock Screen ---
+  if (!isActivated && !isInTrial) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-100 font-sans relative overflow-hidden" dir="rtl">
+        {/* Ambient Decorative Gradients */}
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10 space-y-5">
+          {/* Logo & Brand Header */}
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 bg-gradient-to-tr from-emerald-500 to-indigo-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/10">
+              <Lock className="w-8 h-8 text-white animate-pulse" />
+            </div>
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">{storeName || 'نظام المبيعات الذكي'}</h1>
+            <p className="text-xs text-slate-400 font-bold">نظام نقاط البيع وإدارة المخازن المتكامل</p>
+          </div>
+
+          {/* Expired Notification */}
+          <div className="bg-rose-950/40 border border-rose-900/50 rounded-2xl p-4 flex gap-3 text-right">
+            <AlertTriangle className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="text-sm font-black text-rose-400">انتهت الفترة التجريبية المجانية</h4>
+              <p className="text-xs text-rose-200/80 leading-relaxed font-bold">
+                لقد انتهت فترة الـ 7 أيام التجريبية الممنوحة لجهازك. يرجى تفعيل البرنامج للمتابعة والوصول إلى بياناتك بأمان.
+              </p>
+            </div>
+          </div>
+
+          {/* Device ID Card */}
+          <div className="bg-slate-950 border border-slate-800/60 rounded-2xl p-4 space-y-1.5">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider text-right">معرّف الجهاز الفريد (Device ID)</p>
+            <div className="flex items-center justify-between bg-slate-900/80 px-3 py-2 rounded-xl border border-slate-800/50">
+              <span className="font-mono text-base font-extrabold text-emerald-400 tracking-wider select-all">{deviceID}</span>
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(deviceID);
+                  showNotification('تم نسخ معرف الجهاز بنجاح!');
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold text-slate-300 bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700/60 rounded-lg transition-all cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>نسخ</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Request Status Checker & Forms */}
+          {cloudRequest ? (
+            <div className="space-y-4">
+              {cloudRequest.status === 'pending' && (
+                <div className="bg-amber-950/40 border border-amber-900/50 rounded-2xl p-4 space-y-3 text-right">
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                    </span>
+                    <h4 className="text-sm font-black text-amber-400">طلبك معلق وقيد المراجعة ⏳</h4>
+                  </div>
+                  <div className="text-xs text-amber-200/80 space-y-1 font-bold leading-normal">
+                    <p>• تم إرسال طلب التفعيل لاسم المتجر: <span className="text-white font-extrabold">{cloudRequest.storeName}</span></p>
+                    <p>• حالة الطلب الآن: بانتظار موافقة مالك البرنامج وتفعيل جهازك.</p>
+                    <p className="text-amber-400/90 text-[11px] mt-2 bg-amber-950/60 p-2 rounded-xl border border-amber-900/30">
+                      💡 عندما يقوم مالك البرنامج بالموافقة على طلبك من لوحة التحكم السحابية الخاصة به، سيتم تفعيل جهازك وفتح البرنامج تلقائياً بالكامل في نفس اللحظة! لا داعي لإغلاق هذه الصفحة.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => handleDeleteCloudRequest(deviceID)}
+                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700/50 cursor-pointer"
+                  >
+                    إلغاء الطلب الحالي أو تعديله 🗑️
+                  </button>
+                </div>
+              )}
+
+              {cloudRequest.status === 'rejected' && (
+                <div className="bg-rose-950/40 border border-rose-900/50 rounded-2xl p-4 space-y-3 text-right">
+                  <div className="flex items-center gap-2 text-rose-400">
+                    <X className="w-5 h-5" />
+                    <h4 className="text-sm font-black">تم رفض طلب تفعيل جهازك ❌</h4>
+                  </div>
+                  <p className="text-xs text-rose-200/80 leading-relaxed font-bold">
+                    للأسف، تم رفض طلب التفعيل الرقمي لجهازك من قبل إدارة البرنامج. يرجى التواصل مع المدير المباشر لمعرفة السبب أو التقديم مجدداً.
+                  </p>
+                  <button 
+                    onClick={() => handleDeleteCloudRequest(deviceID)}
+                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-600/15 cursor-pointer"
+                  >
+                    إعادة تقديم طلب تفعيل جديد 📡
+                  </button>
+                </div>
+              )}
+
+              {cloudRequest.status === 'approved' && (
+                <div className="bg-emerald-950/40 border border-emerald-900/50 rounded-2xl p-4 space-y-3 text-right">
+                  <div className="flex items-center gap-2 text-emerald-400">
+                    <CheckCircle2 className="w-5 h-5 animate-bounce" />
+                    <h4 className="text-sm font-black">تهانينا! تمت الموافقة بنجاح 🎉</h4>
+                  </div>
+                  <p className="text-xs text-emerald-200/80 leading-relaxed font-bold">
+                    تم إصدار ترخيص معتمد لجهازك سحابياً. يقوم النظام الآن بفتح وتنشيط البرنامج تلقائياً...
+                  </p>
+                  <div className="p-2.5 bg-slate-950 rounded-xl font-mono text-center text-[11px] text-emerald-400 border border-emerald-900/40">
+                    {cloudRequest.licenseKey}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Custom Tabs */}
+              <div className="grid grid-cols-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                <button 
+                  onClick={() => setIsManualInput(true)}
+                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${isManualInput ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  🔑 إدخال مفتاح يدوي
+                </button>
+                <button 
+                  onClick={() => setIsManualInput(false)}
+                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${!isManualInput ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                >
+                  📡 طلب تفعيل سحابي رقمي
+                </button>
+              </div>
+
+              {!isManualInput ? (
+                /* Cloud request form */
+                <div className="space-y-3 text-right">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">اسم المتجر / النشاط التجاري:</label>
+                    <input 
+                      type="text"
+                      value={clientStoreName}
+                      onChange={(e) => setClientStoreName(e.target.value)}
+                      placeholder="مثال: سوبرماركت الوفاء"
+                      className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">رقم الهاتف (للتواصل):</label>
+                    <input 
+                      type="text"
+                      value={clientPhone}
+                      onChange={(e) => setClientPhone(e.target.value)}
+                      placeholder="مثال: 777xxxxxx"
+                      className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm font-mono transition-all text-left"
+                    />
+                  </div>
+
+                  <button 
+                    disabled={isSubmittingRequest}
+                    onClick={handleRequestCloudActivation}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
+                  >
+                    {isSubmittingRequest ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>جاري إرسال طلب التفعيل...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Activity className="w-4 h-4" />
+                        <span>إرسال طلب التفعيل السحابي 📡</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                /* Manual Key form */
+                <div className="space-y-3">
+                  <div className="space-y-1.5 text-right">
+                    <label className="text-xs font-bold text-slate-300">أدخل مفتاح التفعيل المستلم:</label>
+                    <input 
+                      type="text" 
+                      value={activationKeyInput}
+                      onChange={(e) => {
+                        setActivationKeyInput(e.target.value);
+                        setActivationError('');
+                      }}
+                      placeholder="LIC-XXXX-XXXX-XXXX-XXXX"
+                      className="w-full p-3 bg-slate-950 text-white font-mono placeholder-slate-600 rounded-xl border-2 border-slate-800 focus:border-indigo-500 outline-none text-center tracking-widest text-sm transition-all uppercase"
+                    />
+                  </div>
+
+                  {activationError && (
+                    <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-xs text-rose-500 font-bold bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20 text-center">
+                      {activationError}
+                    </motion.div>
+                  )}
+
+                  <button 
+                    onClick={() => handleActivateApp()}
+                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-600/20 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>تفعيل وإطلاق البرنامج الآن 🔑</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Instructions / Contact Footer */}
+          <div className="pt-2 border-t border-slate-800/60 text-center space-y-3">
+            <p className="text-[11px] text-slate-400 leading-relaxed font-bold">
+              للاستفسار السريع أو الشراء المباشر لنسخة مرخصة، يرجى النقر للاتصال بمالك البرنامج أو مطوره عبر الواتساب:
+            </p>
+            <div className="flex gap-2 justify-center">
+              <a 
+                href={`https://wa.me/?text=${encodeURIComponent(`أهلاً، أود الحصول على ترخيص معتمد لبرنامج المبيعات لجهازي ذو الرقم الفريد: ${deviceID}`)}`}
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-650 hover:bg-emerald-600 rounded-xl text-white text-xs font-bold shadow-md shadow-emerald-600/10 transition-all cursor-pointer"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                <span>طلب التفعيل الفوري (واتساب) 💬</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Admin / Owner Portal Bypass */}
+          <div className="pt-2.5 border-t border-slate-800/40 text-center">
+            {showAdminLogin ? (
+              <div className="bg-slate-950/80 p-4 border border-indigo-950 rounded-2xl space-y-3 mt-1 text-right">
+                <div className="space-y-3">
+                  <p className="text-[10px] text-slate-400 leading-relaxed text-center">
+                    سجل الدخول مباشرة وبشكل آمن باستخدام حساب Google المرتبط بمالك ومطور البرنامج لتفعيل هذا الجهاز تلقائياً.
+                  </p>
+                  {adminLoginError && (
+                    <p className="text-[10px] text-rose-500 font-bold leading-relaxed text-center">{adminLoginError}</p>
+                  )}
+                  <button 
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={isLoggingIn}
+                    className="w-full py-2 bg-white hover:bg-slate-100 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold text-slate-900 transition-all cursor-pointer flex items-center justify-center gap-2 border border-slate-200"
+                  >
+                    {isLoggingIn ? (
+                      <span className="inline-block w-3 h-3 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin"></span>
+                    ) : (
+                      <svg className="w-4 h-4" viewBox="0 0 24 24">
+                        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.66-.65-1.04-1.39-1.19-2.63z"/>
+                        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                      </svg>
+                    )}
+                    <span>الدخول السريع بحساب Google 🌐</span>
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-900 text-center">
+                  <button 
+                    onClick={() => {
+                      setShowAdminLogin(false);
+                      setAdminLoginError('');
+                    }}
+                    className="text-[10px] text-slate-500 hover:text-slate-300 transition-all cursor-pointer"
+                  >
+                    إلغاء وتراجع
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setShowAdminLogin(true)}
+                className="text-[11px] text-slate-500 hover:text-indigo-400 font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+              >
+                <span>🛠️ تسجيل دخول الإدارة والمالك</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Sidebar Overlay */}
@@ -3002,6 +3686,29 @@ export default function App() {
       </header>
 
       <main className="p-4 max-w-lg mx-auto pb-10">
+        {!isActivated && isInTrial && (
+          <div className="mb-6 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm text-right">
+            <div className="flex items-center gap-3">
+              <div className="bg-amber-100 p-2.5 rounded-xl text-amber-600 shrink-0">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-xs font-black text-amber-800">أنت تستخدم النسخة التجريبية المجانية ⏳</p>
+                <p className="text-[10px] text-amber-700 font-bold">متبقي لديك {trialDaysLeft} أيام تجريبية مجانية للبرنامج على هذا الجهاز.</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                setActiveTab('settings');
+                showNotification('يرجى إدخال مفتاح التفعيل في كرت الاشتراك بالأسفل');
+              }}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 shadow-md shadow-amber-600/10"
+            >
+              تفعيل البرنامج الآن
+            </button>
+          </div>
+        )}
+
         {deferredPrompt && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
@@ -4902,6 +5609,389 @@ export default function App() {
                     السماح بالوصول للكاميرا
                   </Button>
                 </Card>
+
+                {/* كرت حالة الاشتراك وتفعيل الترخيص */}
+                <Card className="space-y-4 border-slate-200">
+                  <div 
+                    onClick={() => {
+                      setDevClickCount(prev => {
+                        const next = prev + 1;
+                        if (next >= 5) {
+                          setShowHiddenAdminInput(true);
+                          showNotification('تم إظهار بوابة المالك السرية 🔓، الرجاء إدخال الرمز لتأكيد هويتك.', 'success');
+                          return 0;
+                        }
+                        return next;
+                      });
+                    }}
+                    className="flex items-center gap-2 text-indigo-700 mb-2 cursor-pointer select-none"
+                    title="تفعيل ترخيص البرنامج"
+                  >
+                    <Key className="w-5 h-5 text-indigo-600 animate-pulse" />
+                    <h3 className="font-bold text-slate-800">تفعيل ترخيص البرنامج</h3>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 text-xs text-slate-600 space-y-2 text-right">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold">معرف هذا الجهاز:</span>
+                        <div className="flex items-center gap-2 font-mono text-indigo-600 font-extrabold bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-100">
+                          <span>{deviceID}</span>
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(deviceID);
+                              showNotification('تم نسخ معرف الجهاز بنجاح!');
+                            }}
+                            className="text-indigo-500 hover:text-indigo-700 p-0.5 hover:bg-indigo-100/50 rounded transition-colors"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold">حالة التفعيل:</span>
+                        {isActivated ? (
+                          <span className="px-2 py-0.5 text-[10px] font-black bg-emerald-100 text-emerald-700 rounded-full">مفعل بنجاح ✅</span>
+                        ) : (
+                          <span className="px-2 py-0.5 text-[10px] font-black bg-amber-100 text-amber-700 rounded-full">نسخة تجريبية ⏳ ({trialDaysLeft} أيام متبقية)</span>
+                        )}
+                      </div>
+
+                      {isActivated && activationDetails && (
+                        <div className="flex justify-between items-center text-[11px] text-slate-500">
+                          <span>تاريخ انتهاء الصلاحية:</span>
+                          <span className="font-mono font-bold text-slate-700">
+                            {activationDetails.expiresAt === 'lifetime' ? 'مدى الحياة (دائم)' : new Date(activationDetails.expiresAt).toLocaleDateString('ar-SA')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {!isActivated ? (
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-600 block text-right">أدخل مفتاح التفعيل المستلم:</label>
+                        <div className="flex gap-2">
+                          <input 
+                            type="text"
+                            value={activationKeyInput}
+                            onChange={(e) => {
+                              setActivationKeyInput(e.target.value);
+                              setActivationError('');
+                            }}
+                            placeholder="LIC-XXXX-XXXX-XXXX-XXXX"
+                            className="flex-1 p-3 bg-slate-50 border-2 border-slate-100 font-mono text-center text-sm rounded-xl focus:border-indigo-500 outline-none transition-all uppercase"
+                          />
+                          <Button onClick={() => handleActivateApp()} className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0">تفعيل</Button>
+                        </div>
+                        {activationError && (
+                          <p className="text-[11px] text-rose-600 font-bold text-center mt-1">{activationError}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <Button variant="outline" className="w-full text-rose-600 border-rose-200 hover:bg-rose-50" onClick={handleDeactivateApp}>
+                        إلغاء تفعيل الترخيص الحالي
+                      </Button>
+                    )}
+
+                    {showHiddenAdminInput && !isDeveloperMode && (
+                      <div className="bg-slate-950 p-5 border border-indigo-950 rounded-2xl space-y-4 mt-4 text-right">
+                        <div className="space-y-3">
+                          <p className="text-[11px] text-slate-400 leading-relaxed text-center">
+                            سجل الدخول مباشرة وبشكل آمن باستخدام حساب Google المرتبط بمالك ومطور البرنامج.
+                          </p>
+                          {adminLoginError && (
+                            <p className="text-[10px] text-rose-500 font-bold leading-relaxed text-center">{adminLoginError}</p>
+                          )}
+                          <button 
+                            type="button"
+                            onClick={handleGoogleLogin}
+                            disabled={isLoggingIn}
+                            className="w-full py-2.5 bg-white hover:bg-slate-100 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl text-xs font-bold text-slate-900 transition-all cursor-pointer flex items-center justify-center gap-2 border border-slate-200"
+                          >
+                            {isLoggingIn ? (
+                              <span className="inline-block w-3 h-3 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin"></span>
+                            ) : (
+                              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22c-.66-.65-1.04-1.39-1.19-2.63z"/>
+                                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                              </svg>
+                            )}
+                            <span>الدخول السريع بحساب Google 🌐</span>
+                          </button>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-900 text-center">
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setShowHiddenAdminInput(false);
+                              setAdminLoginError('');
+                            }}
+                            className="text-[10px] text-slate-500 hover:text-slate-300 transition-all cursor-pointer"
+                          >
+                            إغلاق البوابة
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                {/* كرت مولد مفاتيح التفعيل - للمالك */}
+                {isDeveloperMode && (
+                  <Card className="space-y-4 border-indigo-200 shadow-md shadow-indigo-500/5 bg-slate-50 border-2">
+                    <div className="flex items-center justify-between border-b border-indigo-100 pb-2 mb-2">
+                      <div className="flex items-center gap-2 text-indigo-700">
+                        <Lock className="w-5 h-5 text-indigo-600" />
+                        <h3 className="font-bold text-slate-800">أداة توليد مفاتيح الترخيص (للمطور/المالك)</h3>
+                      </div>
+                      <button 
+                        onClick={async () => {
+                          if (currentUser) {
+                            await handleFirebaseLogout();
+                          } else {
+                            setIsDeveloperMode(false);
+                            setShowHiddenAdminInput(false);
+                          }
+                        }}
+                        className="text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 transition-colors cursor-pointer"
+                      >
+                        {currentUser ? 'تسجيل الخروج السحابي 🔒' : 'قفل الأداة وإخفاءها 🔒'}
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {/* Developer Sub-Tabs */}
+                      <div className="grid grid-cols-2 p-1 bg-slate-150 rounded-xl border border-slate-200">
+                        <button 
+                          onClick={() => setActiveDevTab('generator')}
+                          className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'generator' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          🛠️ توليد يدوي مباشر
+                        </button>
+                        <button 
+                          onClick={() => setActiveDevTab('requests')}
+                          className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center relative ${activeDevTab === 'requests' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                        >
+                          📡 طلبات التفعيل السحابية
+                          {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-extrabold text-[9px] w-5.5 h-5.5 flex items-center justify-center rounded-full border-2 border-white animate-pulse">
+                              {allCloudRequests.filter(r => r.status === 'pending').length}
+                            </span>
+                          )}
+                        </button>
+                      </div>
+
+                      {activeDevTab === 'requests' ? (
+                        /* Cloud Requests Dashboard */
+                        <div className="space-y-3">
+                          {allCloudRequests.length === 0 ? (
+                            <div className="text-center py-8 text-slate-400 text-xs font-bold">
+                              لا توجد أي طلبات تفعيل سحابية في السحابة حالياً.
+                            </div>
+                          ) : (
+                            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                              {allCloudRequests.map((req) => {
+                                const selectedDuration = requestDurations[req.deviceId] || 365;
+                                return (
+                                  <div key={req.deviceId} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-right">
+                                    {/* Request Header */}
+                                    <div className="flex items-start justify-between">
+                                      <div className="flex items-center gap-1.5">
+                                        <button 
+                                          onClick={() => handleDeleteCloudRequest(req.deviceId)}
+                                          className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                          title="حذف من السحابة"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <div className="flex items-center gap-2 justify-end">
+                                          {req.status === 'pending' && <span className="px-2 py-0.5 text-[10px] font-black bg-amber-100 text-amber-700 rounded-full">معلق ⏳</span>}
+                                          {req.status === 'approved' && <span className="px-2 py-0.5 text-[10px] font-black bg-emerald-100 text-emerald-700 rounded-full">موافق ومفعّل ✅</span>}
+                                          {req.status === 'rejected' && <span className="px-2 py-0.5 text-[10px] font-black bg-rose-100 text-rose-700 rounded-full">مرفوض ❌</span>}
+                                          <h4 className="font-bold text-slate-800 text-sm">{req.storeName}</h4>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 font-bold">
+                                          تاريخ الطلب: {new Date(req.requestedAt).toLocaleString('ar-SA')}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    {/* Phone & Device ID Details */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-600 bg-white p-2.5 rounded-xl border border-slate-150">
+                                      <div className="flex justify-between items-center sm:border-l sm:border-slate-100 sm:pl-2">
+                                        <span className="font-mono font-bold text-slate-700">{req.phone || 'غير مسجل'}</span>
+                                        <span className="font-bold text-slate-400">الهاتف:</span>
+                                      </div>
+                                      <div className="flex justify-between items-center">
+                                        <div className="flex items-center gap-1 font-mono text-[11px] font-extrabold text-indigo-600">
+                                          <span>{req.deviceId}</span>
+                                          <button 
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(req.deviceId);
+                                              showNotification('تم نسخ معرف الجهاز!');
+                                            }}
+                                            className="text-slate-400 hover:text-indigo-600 p-0.5"
+                                          >
+                                            <Copy className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                        <span className="font-bold text-slate-400">معرّف الجهاز:</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Action Fields based on status */}
+                                    {req.status === 'pending' ? (
+                                      <div className="space-y-3 pt-1 border-t border-slate-100">
+                                        <div className="flex items-center gap-2 justify-end">
+                                          <select 
+                                            value={selectedDuration}
+                                            onChange={(e) => setRequestDurations({
+                                              ...requestDurations,
+                                              [req.deviceId]: Number(e.target.value)
+                                            })}
+                                            className="p-2 text-xs bg-white border border-slate-200 rounded-lg outline-none font-bold text-slate-700"
+                                          >
+                                            <option value={30}>شهر (30 يوم)</option>
+                                            <option value={90}>3 أشهر (90 يوم)</option>
+                                            <option value={180}>6 أشهر (180 يوم)</option>
+                                            <option value={365}>سنة (365 يوم)</option>
+                                            <option value={9999}>مدى الحياة ♾️</option>
+                                          </select>
+                                          <label className="text-xs font-bold text-slate-500">مدة الترخيص للعميل:</label>
+                                        </div>
+
+                                        <div className="flex gap-2">
+                                          <button 
+                                            onClick={() => handleRejectCloudRequest(req.deviceId)}
+                                            className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                                          >
+                                            رفض الطلب ❌
+                                          </button>
+                                          <button 
+                                            onClick={() => handleApproveCloudRequest(req, selectedDuration)}
+                                            className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/10 cursor-pointer"
+                                          >
+                                            موافقة وتفعيل تلقائي ✅
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : req.status === 'approved' ? (
+                                      <div className="space-y-2 pt-1 border-t border-slate-100 text-right">
+                                        <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between font-mono text-[11px] text-indigo-700 font-extrabold select-all">
+                                          <span>{req.licenseKey}</span>
+                                          <button 
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(req.licenseKey || '');
+                                              showNotification('تم نسخ الترخيص!');
+                                            }}
+                                            className="text-indigo-600 hover:bg-indigo-100 px-1.5 py-0.5 rounded text-[10px]"
+                                          >
+                                            نسخ
+                                          </button>
+                                        </div>
+                                        <div className="flex gap-2 text-right">
+                                          {req.durationDays && (
+                                            <p className="text-[10px] text-slate-400 font-bold self-center">
+                                              • الصلاحية المصدرة: {req.durationDays === 9999 ? 'مدى الحياة' : `${req.durationDays} يوم`}
+                                            </p>
+                                          )}
+                                          <button 
+                                            onClick={() => handleRejectCloudRequest(req.deviceId)}
+                                            className="mr-auto py-1 px-3 bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-600 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                          >
+                                            إلغاء وتجميد التفعيل 🔒
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      /* Rejected Status */
+                                      <div className="pt-1 border-t border-slate-100 text-left">
+                                        <button 
+                                          onClick={() => handleApproveCloudRequest(req, 365)}
+                                          className="py-1 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 border border-emerald-100 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                        >
+                                          إعادة تفعيل وترخيص 📡
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        /* Manual Direct Generator */
+                        <>
+                          {!generatedKeyResult && !generatorDeviceIDInput && !isActivated && (
+                            <p className="text-xs text-slate-500 leading-relaxed text-right">
+                              تتيح لك هذه الأداة بصفتك مالك البرنامج توليد رموز تفعيل مخصصة لعملائك لتباع لهم بشكل دائم أو اشتراكات شهرية وسنوية.
+                            </p>
+                          )}
+
+                          <div className="space-y-3">
+                            <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-600 block text-right">معرّف جهاز العميل (Device ID):</label>
+                              <input 
+                                type="text"
+                                value={generatorDeviceIDInput}
+                                onChange={(e) => setGeneratorDeviceIDInput(e.target.value)}
+                                placeholder="GR-XXXX-XXXX-XXXX"
+                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 font-mono text-center text-sm rounded-xl focus:border-indigo-500 outline-none transition-all uppercase"
+                              />
+                            </div>
+
+                            <div className="space-y-2 text-right">
+                              <label className="text-xs font-bold text-slate-600 block">مدة صلاحية الترخيص:</label>
+                              <select 
+                                value={generatorDuration}
+                                onChange={(e) => setGeneratorDuration(Number(e.target.value))}
+                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-xl focus:border-indigo-500 outline-none text-right font-bold text-slate-700"
+                              >
+                                <option value={30}>شهر واحد (30 يوم)</option>
+                                <option value={90}>3 أشهر (90 يوم)</option>
+                                <option value={180}>6 أشهر (180 يوم)</option>
+                                <option value={365}>سنة كاملة (365 يوم)</option>
+                                <option value={9999}>مدى الحياة (دائم دبلوماسي)</option>
+                              </select>
+                            </div>
+
+                            <Button onClick={handleGenerateLicense} className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold">
+                              🛠️ توليد رمز تفعيل العميل
+                            </Button>
+
+                            {generatedKeyResult && (
+                              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="mt-4 p-4 bg-indigo-50 border border-indigo-100 rounded-2xl space-y-2">
+                                <p className="text-[10px] font-black text-indigo-700 text-right uppercase">مفتاح التفعيل المولد للعميل:</p>
+                                <div className="flex items-center justify-between bg-white border border-indigo-200 p-2.5 rounded-xl">
+                                  <span className="font-mono font-black text-sm text-indigo-800 select-all">{generatedKeyResult}</span>
+                                  <button 
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(generatedKeyResult);
+                                      showNotification('تم نسخ مفتاح التفعيل الجديد!');
+                                    }}
+                                    className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>نسخ</span>
+                                  </button>
+                                </div>
+                                <p className="text-[9px] text-indigo-600 leading-normal text-right mt-1 font-bold">
+                                  * أرسل هذا الرمز لعميلك. سيفعل الرمز هذا التطبيق على جهازه للمدة المحددة بالاعتماد على معرّف جهازه الفريد.
+                                </p>
+                              </motion.div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </Card>
+                )}
               </div>
             </motion.div>
           )}

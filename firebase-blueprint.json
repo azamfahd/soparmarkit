@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "ActivationRequest": {
+      "title": "ActivationRequest",
+      "description": "App activation request",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "storeName": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "requestedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "licenseKey": {
+          "type": "string"
+        },
+        "durationDays": {
+          "type": "number"
+        },
+        "approvedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "deviceId", "storeName", "requestedAt", "status"]
+    }
+  },
+  "firestore": {
+    "activation_requests/{deviceId}": {
+      "schema": "ActivationRequest",
+      "description": "Collection of device activation requests"
+    }
+  }
+}
