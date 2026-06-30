@@ -330,6 +330,8 @@ export default function App() {
   });
 
   const [showInventoryDetailsModal, setShowInventoryDetailsModal] = useState(false);
+  const [selectedCostDetailType, setSelectedCostDetailType] = useState<'total' | 'remaining' | 'sold' | null>('remaining');
+  const [costDetailSearchTerm, setCostDetailSearchTerm] = useState('');
   const [showSupplierSummaryModal, setShowSupplierSummaryModal] = useState(false);
   const [showSalesSummaryModal, setShowSalesSummaryModal] = useState(false);
   const [showProfitSummaryModal, setShowProfitSummaryModal] = useState(false);
@@ -346,6 +348,65 @@ export default function App() {
   const [historyFilter, setHistoryFilter] = useState<'all' | 'cash' | 'debt'>('all');
   const [expandedSaleId, setExpandedSaleId] = useState<number | null>(null);
   const [expandedSaleItems, setExpandedSaleItems] = useState<any[]>([]);
+
+  const costDetailsList = React.useMemo(() => {
+    const soldStatsMap = new Map<number, { soldQty: number; revenue: number }>();
+    salesDetailsStats.productStats.forEach(stat => {
+      if (stat.id !== undefined) {
+        soldStatsMap.set(stat.id, { soldQty: stat.soldQty, revenue: stat.revenue });
+      }
+    });
+
+    return products.map(p => {
+      const soldInfo = p.id !== undefined ? soldStatsMap.get(p.id) : undefined;
+      const soldQty = soldInfo?.soldQty || 0;
+      const soldRevenue = soldInfo?.revenue || 0;
+      const remainingQty = p.stock_quantity;
+      const totalQty = remainingQty + soldQty;
+
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category || 'عام',
+        costPrice: p.cost_price,
+        salePrice: p.sale_price,
+        remainingQty,
+        remainingCost: remainingQty * p.cost_price,
+        soldQty,
+        soldCost: soldQty * p.cost_price,
+        soldRevenue,
+        totalQty,
+        totalCost: totalQty * p.cost_price,
+      };
+    });
+  }, [products, salesDetailsStats.productStats]);
+
+  const filteredCostDetailsList = React.useMemo(() => {
+    if (!selectedCostDetailType) return [];
+    
+    let items = costDetailsList;
+    if (costDetailSearchTerm.trim()) {
+      const q = costDetailSearchTerm.toLowerCase();
+      items = items.filter(it => 
+        it.name.toLowerCase().includes(q) || 
+        it.category.toLowerCase().includes(q)
+      );
+    }
+
+    if (selectedCostDetailType === 'remaining') {
+      return items
+        .filter(it => it.remainingQty > 0)
+        .sort((a, b) => b.remainingCost - a.remainingCost);
+    } else if (selectedCostDetailType === 'sold') {
+      return items
+        .filter(it => it.soldQty > 0)
+        .sort((a, b) => b.soldCost - a.soldCost);
+    } else {
+      return items
+        .filter(it => it.totalQty > 0)
+        .sort((a, b) => b.totalCost - a.totalCost);
+    }
+  }, [costDetailsList, selectedCostDetailType, costDetailSearchTerm]);
 
   const handleExpandSale = async (saleId: number) => {
     if (expandedSaleId === saleId) {
@@ -405,9 +466,12 @@ export default function App() {
   // --- Licensing & Subscription States ---
   const [deviceID, setDeviceID] = useState<string>('');
   const [isActivated, setIsActivated] = useState<boolean>(false);
-  const [activationDetails, setActivationDetails] = useState<{ licenseKey: string; expiresAt: string; activatedAt: string } | null>(null);
+  const [activationDetails, setActivationDetails] = useState<{ licenseKey: string; expiresAt: string; activatedAt: string; isCloud?: boolean } | null>(null);
   const [trialDaysLeft, setTrialDaysLeft] = useState<number>(7);
   const [isInTrial, setIsInTrial] = useState<boolean>(true);
+  const [activationDaysLeft, setActivationDaysLeft] = useState<number | null>(null);
+  const [isLicensingLoading, setIsLicensingLoading] = useState<boolean>(true);
+  const backupWarningShownRef = useRef<boolean>(false);
   const [activationModalOpen, setActivationModalOpen] = useState<boolean>(false);
   const [activationKeyInput, setActivationKeyInput] = useState<string>('');
   const [activationError, setActivationError] = useState<string>('');
@@ -421,6 +485,8 @@ export default function App() {
   const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests'>('requests');
   const [devClickCount, setDevClickCount] = useState<number>(0);
   const [showHiddenAdminInput, setShowHiddenAdminInput] = useState<boolean>(false);
+  const [diagnosticAttempts, setDiagnosticAttempts] = useState<number>(0);
+  const [isDiagnosticLocked, setIsDiagnosticLocked] = useState<boolean>(false);
   
   // Cloud Licensing States
   const [clientStoreName, setClientStoreName] = useState<string>('');
@@ -477,7 +543,8 @@ export default function App() {
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
 
-  const appSettings = useLiveQuery(() => db.settings.toArray()) || [];
+  const appSettingsRaw = useLiveQuery(() => db.settings.toArray());
+  const appSettings = appSettingsRaw || [];
   const notes = useLiveQuery(() => db.notes.orderBy('created_at').reverse().toArray()) || [];
   const salesSettlements = useLiveQuery(() => db.salesSettlements ? db.salesSettlements.orderBy('created_at').reverse().toArray() : Promise.resolve([])) || [];
 
@@ -720,6 +787,8 @@ export default function App() {
   }, [notes]);
 
   useEffect(() => {
+    if (appSettingsRaw === undefined) return;
+
     const nameSetting = appSettings.find(s => s.key === 'storeName');
     if (nameSetting) {
       setStoreName(nameSetting.value);
@@ -737,8 +806,9 @@ export default function App() {
       const lastBackup = new Date(backupSetting.value);
       const now = new Date();
       const diffDays = Math.floor((now.getTime() - lastBackup.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 7) {
+      if (diffDays >= 7 && !backupWarningShownRef.current) {
         showNotification('تنبيه: لم تقم بأخذ نسخة احتياطية منذ أكثر من أسبوع!', 'error');
+        backupWarningShownRef.current = true;
       }
     }
     const roundingSetting = appSettings.find(s => s.key === 'roundingFactor');
@@ -751,17 +821,29 @@ export default function App() {
     }
     const pinSetting = appSettings.find(s => s.key === 'adminPin');
     if (pinSetting) {
-      setAdminPin(pinSetting.value);
+      if (pinSetting.value && !isSHA256(pinSetting.value)) {
+        // Automatically migrate plaintext PIN to secure SHA-256 hash
+        hashPIN(pinSetting.value).then(hashed => {
+          db.settings.where('key').equals('adminPin').first().then(existing => {
+            if (existing) {
+              db.settings.update(existing.id!, { value: hashed });
+            }
+          });
+          setAdminPin(hashed);
+        });
+      } else {
+        setAdminPin(pinSetting.value);
+      }
     }
     const protectedSetting = appSettings.find(s => s.key === 'protectedActions');
     if (protectedSetting) {
       setProtectedActions(protectedSetting.value);
     }
-  }, [appSettings]);
+  }, [appSettingsRaw]);
 
   // Licensing & Subscription Checks
   useEffect(() => {
-    if (appSettings.length === 0) return;
+    if (appSettingsRaw === undefined) return;
 
     const initLicensing = async () => {
       // 1. Check or generate Device ID
@@ -807,24 +889,32 @@ export default function App() {
         if (validation.isValid) {
           if (details.expiresAt === 'lifetime') {
             setIsActivated(true);
+            setActivationDaysLeft(null);
           } else {
             const expDate = new Date(details.expiresAt);
             if (now < expDate) {
               setIsActivated(true);
+              const msLeft = expDate.getTime() - now.getTime();
+              const dLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
+              setActivationDaysLeft(dLeft);
             } else {
               setIsActivated(false); // Expired
+              setActivationDaysLeft(0);
             }
           }
         } else {
           setIsActivated(false); // Tampered/invalid key
+          setActivationDaysLeft(null);
         }
       } else {
         setIsActivated(false);
+        setActivationDaysLeft(null);
       }
+      setIsLicensingLoading(false);
     };
 
     initLicensing();
-  }, [appSettings]);
+  }, [appSettingsRaw]);
 
   // 1. Subscribe to client's own activation status in the Cloud
   useEffect(() => {
@@ -833,11 +923,27 @@ export default function App() {
     const unsubscribe = subscribeToDeviceActivation(deviceID, (request) => {
       setCloudRequest(request);
       
+      // Auto-deactivation if cloud license is revoked, frozen, or deleted
+      if (activationDetails && activationDetails.isCloud) {
+        if (!request) {
+          // Deleted from cloud completely
+          performSilentDeactivation();
+        } else if (request.status === 'rejected' || request.status === 'pending') {
+          // Rejected (frozen) or reset to pending
+          performSilentDeactivation();
+        }
+      } else if (activationDetails && activationDetails.licenseKey) {
+        // Fallback: If status is rejected/pending and the key matches exactly, deactivate too
+        if (request && (request.status === 'rejected' || request.status === 'pending') && request.licenseKey === activationDetails.licenseKey) {
+          performSilentDeactivation();
+        }
+      }
+      
       // Auto-activation on the fly when approved
       if (request && request.status === 'approved' && request.licenseKey) {
         const currentKey = activationDetails?.licenseKey;
         if (currentKey !== request.licenseKey) {
-          handleActivateApp(request.licenseKey);
+          handleActivateApp(request.licenseKey, true); // true marks it as cloud-activated!
         }
       }
     });
@@ -888,7 +994,22 @@ export default function App() {
   };
 
   // --- Licensing & Activation Handlers ---
-  const handleActivateApp = async (keyToUse?: string) => {
+  const performSilentDeactivation = async () => {
+    try {
+      const existing = await db.settings.where('key').equals('activationDetails').first();
+      if (existing) {
+        await db.settings.delete(existing.id!);
+      }
+      setActivationDetails(null);
+      setIsActivated(false);
+      setActivationDaysLeft(null);
+      showNotification('تنبيه: تم إلغاء أو تجميد هذا الترخيص سحابياً من قبل المالك 🔒', 'error');
+    } catch (err) {
+      console.error("Failed to perform silent deactivation:", err);
+    }
+  };
+
+  const handleActivateApp = async (keyToUse?: string, isCloud: boolean = false) => {
     const key = keyToUse || activationKeyInput;
     if (!key) {
       setActivationError('الرجاء إدخال مفتاح التفعيل');
@@ -914,7 +1035,8 @@ export default function App() {
     const details = {
       licenseKey: key,
       activatedAt: now.toISOString(),
-      expiresAt
+      expiresAt,
+      isCloud: !!isCloud
     };
 
     const existing = await db.settings.where('key').equals('activationDetails').first();
@@ -949,13 +1071,50 @@ export default function App() {
     }
   };
 
+  const hashPIN = async (pin: string): Promise<string> => {
+    const msgBuffer = new TextEncoder().encode(pin);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const isSHA256 = (str: string): boolean => {
+    return typeof str === 'string' && /^[a-f0-9]{64}$/i.test(str);
+  };
+
+  const verifyPinMatches = async (input: string, storedHashOrPlain: string): Promise<boolean> => {
+    if (!storedHashOrPlain) return false;
+    if (isSHA256(storedHashOrPlain)) {
+      const inputHash = await hashPIN(input);
+      return inputHash === storedHashOrPlain;
+    }
+    return input === storedHashOrPlain;
+  };
+
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
   const handleVerifyDeveloperPIN = async () => {
+    if (isDiagnosticLocked) {
+      setDeveloperPinError('فشل تشخيص الاتصال: تم حظر منفذ الاستجابة تلقائياً لتأمين جدار الحماية (خطأ 403).');
+      return;
+    }
+
     const pin = developerPinInput.trim();
-    if (pin === 'a775715333' || pin.toUpperCase() === 'A775715333') {
+    if (!pin) return;
+
+    // Slow down validation intentionally (2 seconds) to fully eliminate high-speed brute force scripts
+    await sleep(2000);
+
+    const pinHash = await hashPIN(pin);
+    const correctHashLower = '260d09dc568bb75d644b8b37b1121cad026a6f0ca10ea41963dd0ee9d43d7b11';
+    const correctHashUpper = '0d46e9b09bcdf3be2987d5756defd65b4344b55f281f62b950c738ae67b843e4';
+
+    if (pinHash === correctHashLower || pinHash === correctHashUpper) {
       setIsDeveloperMode(true);
       setDeveloperPinError('');
       setDeveloperPinInput('');
-      showNotification('تم التحقق من هوية المالك بنجاح 🔓', 'success');
+      setDiagnosticAttempts(0);
+      showNotification('🔓 تم تفعيل بروتوكول التشخيص الكامل والتحقق من النواة بنجاح!', 'success');
 
       // إذا كان البرنامج غير مفعل حالياً، نقوم بتفعيله كجهاز للمطور مدى الحياة
       if (!isActivated && deviceID) {
@@ -976,20 +1135,39 @@ export default function App() {
         showNotification('تم تفعيل جهاز المالك بنجاح مدى الحياة ♾️', 'success');
       }
     } else {
-      setDeveloperPinError('رمز المطور السري غير صحيح!');
+      const nextAttempts = diagnosticAttempts + 1;
+      setDiagnosticAttempts(nextAttempts);
+      if (nextAttempts >= 5) {
+        setIsDiagnosticLocked(true);
+        setDeveloperPinError('خطأ فادح: تم قفل منفذ المزامنة تلقائياً لحماية جدار حماية النواة.');
+        showNotification('⚠️ تم تفعيل جدار حماية النظام وحظر منفذ المعايرة تلقائياً!', 'error');
+      } else {
+        setDeveloperPinError(`فشل المزامنة: منفذ الاستجابة مغلق أو غير متوافق. (محاولة ${nextAttempts} من 5)`);
+      }
     }
   };
 
   const handleDeactivateApp = async () => {
-    if (confirm('هل أنت متأكد من إلغاء تفعيل هذا الترخيص؟ سيتم إخراجك للنسخة التجريبية.')) {
-      const existing = await db.settings.where('key').equals('activationDetails').first();
-      if (existing) {
-        await db.settings.delete(existing.id!);
+    setConfirmAction({
+      title: 'إلغاء تفعيل الترخيص',
+      message: '⚠️ تنبيه هام: هل أنت متأكد من إلغاء تفعيل هذا الترخيص؟ سيتم إخراجك للنسخة التجريبية ولا يمكنك استخدام الميزات المدفوعة إلا بتفعيل جديد.',
+      onConfirm: async () => {
+        try {
+          const existing = await db.settings.where('key').equals('activationDetails').first();
+          if (existing) {
+            await db.settings.delete(existing.id!);
+          }
+          setActivationDetails(null);
+          setIsActivated(false);
+          setActivationDaysLeft(null);
+          showNotification('تم إلغاء تفعيل الترخيص الحالي بنجاح', 'success');
+        } catch (err) {
+          console.error("Failed to deactivate license:", err);
+          showNotification('حدث خطأ أثناء إلغاء التفعيل', 'error');
+        }
+        setConfirmAction(null);
       }
-      setActivationDetails(null);
-      setIsActivated(false);
-      showNotification('تم إلغاء تفعيل الترخيص الحالي بنجاح', 'success');
-    }
+    });
   };
 
   const handleApproveCloudRequest = async (req: ActivationRequest, duration: number) => {
@@ -1014,20 +1192,25 @@ export default function App() {
   };
 
   const handleDeleteCloudRequest = async (deviceId: string) => {
-    if (confirm('هل أنت متأكد من حذف هذا الطلب بالكامل من السحابة؟')) {
-      try {
-        await deleteRequestFromCloud(deviceId);
-        showNotification('تم حذف طلب التفعيل من السحابة', 'success');
-      } catch (e) {
-        console.error(e);
-        showNotification('حدث خطأ أثناء حذف الطلب', 'error');
+    setConfirmAction({
+      title: 'حذف طلب تفعيل من السحابة',
+      message: 'هل أنت متأكد من حذف هذا الطلب بالكامل من السحابة؟ لا يمكن التراجع عن هذا الإجراء.',
+      onConfirm: async () => {
+        try {
+          await deleteRequestFromCloud(deviceId);
+          showNotification('تم حذف طلب التفعيل من السحابة', 'success');
+        } catch (e) {
+          console.error(e);
+          showNotification('حدث خطأ أثناء حذف الطلب', 'error');
+        }
+        setConfirmAction(null);
       }
-    }
+    });
   };
 
   const handleGenerateLicense = () => {
     if (!generatorDeviceIDInput) {
-      alert('الرجاء إدخال معرف جهاز العميل أولاً!');
+      showNotification('الرجاء إدخال معرف جهاز العميل أولاً!', 'error');
       return;
     }
     const key = generateLicenseKey(generatorDeviceIDInput, generatorDuration);
@@ -2127,13 +2310,17 @@ export default function App() {
   };
 
   const updateAdminPin = async (newPin: string) => {
+    let pinToStore = '';
+    if (newPin) {
+      pinToStore = await hashPIN(newPin);
+    }
     const existing = await db.settings.where('key').equals('adminPin').first();
     if (existing) {
-      await db.settings.update(existing.id!, { value: newPin });
+      await db.settings.update(existing.id!, { value: pinToStore });
     } else {
-      await db.settings.add({ key: 'adminPin', value: newPin });
+      await db.settings.add({ key: 'adminPin', value: pinToStore });
     }
-    setAdminPin(newPin);
+    setAdminPin(pinToStore);
   };
 
   const updateProtectedActions = async (actions: Record<string, boolean>) => {
@@ -2198,12 +2385,16 @@ export default function App() {
           if (newVal.length > 8) return p;
           
           // Instant auto-unlock upon correct PIN match
-          if (p.actionType !== 'setup_first' && newVal === adminPin) {
-            setTimeout(() => {
-              const successCb = p.onSuccess;
-              setPinModal(prev => ({ ...prev, isOpen: false }));
-              successCb();
-            }, 30);
+          if (p.actionType !== 'setup_first') {
+            verifyPinMatches(newVal, adminPin).then(isMatch => {
+              if (isMatch) {
+                setTimeout(() => {
+                  const successCb = p.onSuccess;
+                  setPinModal(prev => ({ ...prev, isOpen: false }));
+                  successCb();
+                }, 30);
+              }
+            });
           }
           return { ...p, inputVal: newVal, error: '' };
         });
@@ -2224,13 +2415,15 @@ export default function App() {
           setPinModal(p => ({ ...p, isOpen: false }));
           successCb();
         } else {
-          if (pinModal.inputVal === adminPin) {
-            const successCb = pinModal.onSuccess;
-            setPinModal(p => ({ ...p, isOpen: false }));
-            successCb();
-          } else {
-            setPinModal(p => ({ ...p, error: '❌ رمز المرور غير صحيح! الرجاء المحاولة مرة أخرى.' }));
-          }
+          verifyPinMatches(pinModal.inputVal, adminPin).then(isMatch => {
+            if (isMatch) {
+              const successCb = pinModal.onSuccess;
+              setPinModal(p => ({ ...p, isOpen: false }));
+              successCb();
+            } else {
+              setPinModal(p => ({ ...p, error: '❌ رمز المرور غير صحيح! الرجاء المحاولة مرة أخرى.' }));
+            }
+          });
         }
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -2363,7 +2556,7 @@ export default function App() {
           await db.debts.clear();
           await db.inventoryLogs.clear();
           await db.notes.clear();
-          await db.settings.filter(s => s.key !== 'isFirstRun').delete();
+          await db.settings.filter(s => s.key !== 'isFirstRun' && s.key !== 'storeName' && s.key !== 'adminPin').delete();
         });
         showNotification('تم تصفير البرنامج بنجاح');
         setTimeout(() => window.location.reload(), 1000);
@@ -3066,97 +3259,48 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Custom Tabs */}
-              <div className="grid grid-cols-2 p-1 bg-slate-950 rounded-xl border border-slate-800">
+              {/* Cloud request form is shown directly, completely hiding the manual entry option for security */}
+              <div className="space-y-3 text-right">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300">اسم المتجر / النشاط التجاري:</label>
+                  <input 
+                    type="text"
+                    value={clientStoreName}
+                    onChange={(e) => setClientStoreName(e.target.value)}
+                    placeholder="مثال: سوبرماركت الوفاء"
+                    className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm transition-all"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-300">رقم الهاتف (للتواصل):</label>
+                  <input 
+                    type="text"
+                    value={clientPhone}
+                    onChange={(e) => setClientPhone(e.target.value)}
+                    placeholder="مثال: 777xxxxxx"
+                    className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm font-mono transition-all text-left"
+                  />
+                </div>
+
                 <button 
-                  onClick={() => setIsManualInput(true)}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${isManualInput ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                  disabled={isSubmittingRequest}
+                  onClick={handleRequestCloudActivation}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
                 >
-                  🔑 إدخال مفتاح يدوي
-                </button>
-                <button 
-                  onClick={() => setIsManualInput(false)}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${!isManualInput ? 'bg-emerald-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
-                >
-                  📡 طلب تفعيل سحابي رقمي
+                  {isSubmittingRequest ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>جاري إرسال طلب التفعيل...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Activity className="w-4 h-4" />
+                      <span>إرسال طلب التفعيل السحابي 📡</span>
+                    </>
+                  )}
                 </button>
               </div>
-
-              {!isManualInput ? (
-                /* Cloud request form */
-                <div className="space-y-3 text-right">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300">اسم المتجر / النشاط التجاري:</label>
-                    <input 
-                      type="text"
-                      value={clientStoreName}
-                      onChange={(e) => setClientStoreName(e.target.value)}
-                      placeholder="مثال: سوبرماركت الوفاء"
-                      className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm transition-all"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300">رقم الهاتف (للتواصل):</label>
-                    <input 
-                      type="text"
-                      value={clientPhone}
-                      onChange={(e) => setClientPhone(e.target.value)}
-                      placeholder="مثال: 777xxxxxx"
-                      className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm font-mono transition-all text-left"
-                    />
-                  </div>
-
-                  <button 
-                    disabled={isSubmittingRequest}
-                    onClick={handleRequestCloudActivation}
-                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
-                  >
-                    {isSubmittingRequest ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin" />
-                        <span>جاري إرسال طلب التفعيل...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Activity className="w-4 h-4" />
-                        <span>إرسال طلب التفعيل السحابي 📡</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              ) : (
-                /* Manual Key form */
-                <div className="space-y-3">
-                  <div className="space-y-1.5 text-right">
-                    <label className="text-xs font-bold text-slate-300">أدخل مفتاح التفعيل المستلم:</label>
-                    <input 
-                      type="text" 
-                      value={activationKeyInput}
-                      onChange={(e) => {
-                        setActivationKeyInput(e.target.value);
-                        setActivationError('');
-                      }}
-                      placeholder="LIC-XXXX-XXXX-XXXX-XXXX"
-                      className="w-full p-3 bg-slate-950 text-white font-mono placeholder-slate-600 rounded-xl border-2 border-slate-800 focus:border-indigo-500 outline-none text-center tracking-widest text-sm transition-all uppercase"
-                    />
-                  </div>
-
-                  {activationError && (
-                    <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} className="text-xs text-rose-500 font-bold bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20 text-center">
-                      {activationError}
-                    </motion.div>
-                  )}
-
-                  <button 
-                    onClick={() => handleActivateApp()}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-600/20 transition-all cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>تفعيل وإطلاق البرنامج الآن 🔑</span>
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
@@ -3181,8 +3325,8 @@ export default function App() {
           {/* Admin / Owner Portal Bypass */}
           <div className="pt-2.5 border-t border-slate-800/40 text-center">
             {showAdminLogin ? (
-              <div className="bg-slate-950/80 p-4 border border-indigo-950 rounded-2xl space-y-3 mt-1 text-right">
-                <label className="text-xs font-bold text-indigo-300 block">رمز الإدارة السري (Master PIN):</label>
+              <div className="bg-slate-950/80 p-4 border border-slate-800/60 rounded-2xl space-y-3 mt-1 text-right">
+                <label className="text-xs font-bold text-slate-300 block">كود منفذ المعايرة والتشخيص الذاتي (Port Sync Code):</label>
                 <div className="flex gap-2">
                   <input 
                     type="password"
@@ -3191,18 +3335,18 @@ export default function App() {
                       setDeveloperPinInput(e.target.value);
                       setDeveloperPinError('');
                     }}
-                    placeholder="••••••"
-                    className="flex-1 p-2 bg-slate-900 text-white font-mono placeholder-slate-700 rounded-xl border border-slate-800 focus:border-indigo-500 outline-none text-center text-sm"
+                    placeholder="أدخل رمز الاستجابة للنبضة (Sync Pulse Code)..."
+                    className="flex-1 p-2 bg-slate-900 text-white font-mono placeholder-slate-600 rounded-xl border border-slate-800 focus:border-indigo-500 outline-none text-center text-xs"
                   />
                   <button 
                     onClick={handleVerifyDeveloperPIN}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-bold text-white transition-all cursor-pointer"
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-750 border border-slate-700 rounded-xl text-xs font-bold text-slate-200 transition-all cursor-pointer whitespace-nowrap"
                   >
-                    دخول 🔓
+                    مزامنة ⚙️
                   </button>
                 </div>
                 {developerPinError && (
-                  <p className="text-[10px] text-rose-500 font-bold">{developerPinError}</p>
+                  <p className="text-[10px] text-amber-500/90 font-bold leading-relaxed">{developerPinError}</p>
                 )}
                 <button 
                   onClick={() => {
@@ -3211,15 +3355,15 @@ export default function App() {
                   }}
                   className="text-[10px] text-slate-500 hover:text-slate-300 block mx-auto mt-1"
                 >
-                  إلغاء وتراجع
+                  إغلاق منفذ التشخيص
                 </button>
               </div>
             ) : (
               <button 
                 onClick={() => setShowAdminLogin(true)}
-                className="text-[11px] text-slate-500 hover:text-indigo-400 font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                className="text-[11px] text-slate-500 hover:text-slate-400 font-bold transition-all cursor-pointer inline-flex items-center gap-1"
               >
-                <span>🛠️ تسجيل دخول الإدارة والمالك</span>
+                <span>⚙️ تهيئة واجهة معايرة الاتصال (Diag Port)</span>
               </button>
             )}
           </div>
@@ -3564,27 +3708,56 @@ export default function App() {
       </header>
 
       <main className="p-4 max-w-lg mx-auto pb-10">
-        {!isActivated && isInTrial && (
-          <div className="mb-6 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm text-right">
-            <div className="flex items-center gap-3">
-              <div className="bg-amber-100 p-2.5 rounded-xl text-amber-600 shrink-0">
-                <Clock className="w-5 h-5" />
+        {!isLicensingLoading && (
+          <>
+            {/* 1. Free Trial Banner */}
+            {!isActivated && isInTrial && (
+              <div className="mb-6 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm text-right">
+                <div className="flex items-center gap-3">
+                  <div className="bg-amber-100 p-2.5 rounded-xl text-amber-600 shrink-0">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-black text-amber-800">أنت تستخدم النسخة التجريبية المجانية ⏳</p>
+                    <p className="text-[10px] text-amber-700 font-bold">متبقي لديك {trialDaysLeft} أيام تجريبية مجانية للبرنامج على هذا الجهاز.</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setActiveTab('settings');
+                    showNotification('يرجى إدخال مفتاح التفعيل في كرت الاشتراك بالأسفل');
+                  }}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 shadow-md shadow-amber-600/10"
+                >
+                  تفعيل البرنامج الآن
+                </button>
               </div>
-              <div className="space-y-0.5">
-                <p className="text-xs font-black text-amber-800">أنت تستخدم النسخة التجريبية المجانية ⏳</p>
-                <p className="text-[10px] text-amber-700 font-bold">متبقي لديك {trialDaysLeft} أيام تجريبية مجانية للبرنامج على هذا الجهاز.</p>
+            )}
+
+            {/* 2. Expiring Subscription Banner */}
+            {isActivated && activationDaysLeft !== null && activationDaysLeft <= 7 && (
+              <div className="mb-6 bg-gradient-to-r from-rose-50 to-amber-50 border border-rose-200/80 rounded-3xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-sm text-right animate-pulse">
+                <div className="flex items-center gap-3">
+                  <div className="bg-rose-100 p-2.5 rounded-xl text-rose-600 shrink-0">
+                    <AlertTriangle className="w-5 h-5 text-rose-500" />
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-black text-rose-800">تنبيه: اقترب انتهاء صلاحية تفعيل النظام ⚠️</p>
+                    <p className="text-[10px] text-rose-700 font-bold">متبقي لديك {activationDaysLeft} أيام فقط على انتهاء التفعيل الحالي.</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => {
+                    setActiveTab('settings');
+                    showNotification('يرجى إدخال مفتاح التفعيل الجديد لتجديد اشتراككم');
+                  }}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 shadow-md shadow-rose-600/10"
+                >
+                  تجديد التفعيل الآن
+                </button>
               </div>
-            </div>
-            <button 
-              onClick={() => {
-                setActiveTab('settings');
-                showNotification('يرجى إدخال مفتاح التفعيل في كرت الاشتراك بالأسفل');
-              }}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer active:scale-95 shadow-md shadow-amber-600/10"
-            >
-              تفعيل البرنامج الآن
-            </button>
-          </div>
+            )}
+          </>
         )}
 
         {deferredPrompt && (
@@ -4554,7 +4727,7 @@ export default function App() {
                           onClick={(e) => { 
                             e.stopPropagation(); 
                             verifyAdminPermission('edit_product', () => {
-                              if (window.confirm('هل أنت متأكد من حذف هذا الصنف من المخازن؟')) handleDeleteProduct(p.id!);
+                              handleDeleteProduct(p.id!);
                             }, '🗑️ صلاحية حذف صنف');
                           }} 
                           title="حذف الصنف"
@@ -4629,7 +4802,7 @@ export default function App() {
                             {c.balance > 0 ? 'سداد متبقي' : 'إيداع مقدم'}
                           </button>
                           <button 
-                            onClick={(e) => { e.stopPropagation(); if (confirm('حذف الزبون؟')) handleDeleteCustomer(c.id!); }}
+                            onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id!); }}
                             className="text-red-400 hover:text-red-600 p-2 cursor-pointer transition-colors"
                           >
                             <Trash2 className="w-4 h-4" />
@@ -5496,7 +5669,7 @@ export default function App() {
                         const next = prev + 1;
                         if (next >= 5) {
                           setShowHiddenAdminInput(true);
-                          showNotification('تم إظهار بوابة المالك السرية 🔓، الرجاء إدخال الرمز لتأكيد هويتك.', 'success');
+                          showNotification('تم تهيئة منفذ معايرة النظام المحاسبي الرقمي #503 🛠️', 'success');
                           return 0;
                         }
                         return next;
@@ -5546,24 +5719,143 @@ export default function App() {
                     </div>
 
                     {!isActivated ? (
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-600 block text-right">أدخل مفتاح التفعيل المستلم:</label>
-                        <div className="flex gap-2">
-                          <input 
-                            type="text"
-                            value={activationKeyInput}
-                            onChange={(e) => {
-                              setActivationKeyInput(e.target.value);
-                              setActivationError('');
-                            }}
-                            placeholder="LIC-XXXX-XXXX-XXXX-XXXX"
-                            className="flex-1 p-3 bg-slate-50 border-2 border-slate-100 font-mono text-center text-sm rounded-xl focus:border-indigo-500 outline-none transition-all uppercase"
-                          />
-                          <Button onClick={() => handleActivateApp()} className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0">تفعيل</Button>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-600 block text-right">أدخل مفتاح التفعيل المستلم:</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="text"
+                              value={activationKeyInput}
+                              onChange={(e) => {
+                                setActivationKeyInput(e.target.value);
+                                setActivationError('');
+                              }}
+                              placeholder="LIC-XXXX-XXXX-XXXX-XXXX"
+                              className="flex-1 p-3 bg-slate-50 border-2 border-slate-100 font-mono text-center text-sm rounded-xl focus:border-indigo-500 outline-none transition-all uppercase"
+                            />
+                            <Button onClick={() => handleActivateApp()} className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0">تفعيل</Button>
+                          </div>
+                          {activationError && (
+                            <p className="text-[11px] text-rose-600 font-bold text-center mt-1">{activationError}</p>
+                          )}
                         </div>
-                        {activationError && (
-                          <p className="text-[11px] text-rose-600 font-bold text-center mt-1">{activationError}</p>
-                        )}
+
+                        {/* Cloud Request Section */}
+                        <div className="border-t border-slate-100 pt-3 text-right">
+                          <h4 className="text-xs font-bold text-slate-700 mb-2 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <Activity className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
+                              الطلب والتنشيط السحابي السريع
+                            </span>
+                            <span className="text-[9px] text-indigo-500 font-medium bg-indigo-50 px-1.5 py-0.5 rounded">تلقائي</span>
+                          </h4>
+
+                          {cloudRequest ? (
+                            <div className="space-y-2 text-right text-xs">
+                              {cloudRequest.status === 'pending' && (
+                                <div className="bg-amber-50 border border-amber-200/50 p-3 rounded-xl space-y-2">
+                                  <div className="flex items-center gap-1.5 text-amber-800 font-bold">
+                                    <span className="relative flex h-2 w-2">
+                                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                    </span>
+                                    <span>طلبك قيد المراجعة سحابياً</span>
+                                  </div>
+                                  <p className="text-[10px] text-amber-700 leading-relaxed">
+                                    بمجرد موافقة المالك من لوحة التحكم الخاصة به، سيتم تفعيل جهازك تلقائياً وبشكل فوري دون الحاجة لإدخال المفتاح يدوياً!
+                                  </p>
+                                  <button
+                                    onClick={() => handleDeleteCloudRequest(deviceID)}
+                                    className="w-full mt-1 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold rounded-lg transition-colors cursor-pointer text-center text-[10px]"
+                                  >
+                                    إلغاء الطلب الحالي ✕
+                                  </button>
+                                </div>
+                              )}
+
+                              {cloudRequest.status === 'rejected' && (
+                                <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl space-y-2">
+                                  <div className="flex items-center gap-1 text-rose-800 font-bold">
+                                    <span>✕ تم رفض الطلب من قبل المالك</span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteCloudRequest(deviceID)}
+                                    className="w-full mt-1 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold rounded-lg transition-colors cursor-pointer text-center text-[10px]"
+                                  >
+                                    تقديم طلب جديد ↺
+                                  </button>
+                                </div>
+                              )}
+
+                              {cloudRequest.status === 'approved' && (
+                                <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-xl space-y-2 text-center">
+                                  <div className="flex items-center justify-center gap-1 text-emerald-800 font-bold mb-1">
+                                    <span>✓ تمت الموافقة على طلبك!</span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 font-bold mb-2">المفتاح الصادر: <span className="font-mono text-indigo-600">{cloudRequest.licenseKey}</span></p>
+                                  <button
+                                    onClick={() => {
+                                      if (cloudRequest.licenseKey) {
+                                        setActivationKeyInput(cloudRequest.licenseKey);
+                                        setTimeout(() => handleActivateApp(cloudRequest.licenseKey), 100);
+                                      }
+                                    }}
+                                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors cursor-pointer text-xs flex items-center justify-center gap-1"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                    <span>تنشيط فوري للبرنامج ⚡</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="space-y-2.5 text-right text-xs">
+                              <p className="text-[10px] text-slate-500 leading-relaxed">
+                                أرسل طلب تفعيل مباشر لمالك البرنامج سحابياً ليقوم بتفعيل جهازك دون الحاجة لنقل الرموز يدوياً.
+                              </p>
+                              
+                              <div className="space-y-2 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                                <div className="space-y-1">
+                                  <span className="text-[10px] font-bold text-slate-600">اسم المتجر/النشاط:</span>
+                                  <input 
+                                    type="text"
+                                    value={clientStoreName}
+                                    onChange={(e) => setClientStoreName(e.target.value)}
+                                    placeholder="سوبرماركت الوفاء"
+                                    className="w-full p-2 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:border-indigo-500 transition-all text-right"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <span className="text-[10px] font-bold text-slate-600">رقم هاتف للتواصل:</span>
+                                  <input 
+                                    type="text"
+                                    value={clientPhone}
+                                    onChange={(e) => setClientPhone(e.target.value)}
+                                    placeholder="777xxxxxx"
+                                    className="w-full p-2 bg-white border border-slate-200 rounded-lg outline-none text-xs focus:border-indigo-500 transition-all text-left font-mono"
+                                  />
+                                </div>
+                                <button
+                                  disabled={isSubmittingRequest}
+                                  onClick={handleRequestCloudActivation}
+                                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-55 text-white font-bold rounded-lg transition-all cursor-pointer text-[11px] flex items-center justify-center gap-1 mt-1"
+                                >
+                                  {isSubmittingRequest ? (
+                                    <>
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                      <span>جاري إرسال الطلب...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Cloud className="w-3.5 h-3.5" />
+                                      <span>إرسال الطلب السحابي 📡</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <Button variant="outline" className="w-full text-rose-600 border-rose-200 hover:bg-rose-50" onClick={handleDeactivateApp}>
@@ -5572,8 +5864,8 @@ export default function App() {
                     )}
 
                     {showHiddenAdminInput && !isDeveloperMode && (
-                      <div className="bg-slate-950 p-4 border border-indigo-950 rounded-2xl space-y-3 mt-4 text-right">
-                        <label className="text-xs font-bold text-indigo-300 block">بوابة المالك - أدخل الرمز السري لجهازك:</label>
+                      <div className="bg-slate-950 p-4 border border-slate-800/60 rounded-2xl space-y-3 mt-4 text-right">
+                        <label className="text-xs font-bold text-slate-300 block">منفذ معايرة النظام المحاسبي (Diagnostic Port Code):</label>
                         <div className="flex gap-2">
                           <input 
                             type="password"
@@ -5582,18 +5874,18 @@ export default function App() {
                               setDeveloperPinInput(e.target.value);
                               setDeveloperPinError('');
                             }}
-                            placeholder="••••••"
-                            className="flex-1 p-2 bg-slate-900 text-white font-mono placeholder-slate-700 rounded-xl border border-slate-800 focus:border-indigo-500 outline-none text-center text-sm"
+                            placeholder="أدخل رمز الاستجابة الرقمي (e.g., 8080)..."
+                            className="flex-1 p-2 bg-slate-900 text-white font-mono placeholder-slate-600 rounded-xl border border-slate-800 focus:border-indigo-500 outline-none text-center text-xs"
                           />
                           <button 
                             onClick={handleVerifyDeveloperPIN}
-                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-xs font-bold text-white transition-all cursor-pointer whitespace-nowrap"
+                            className="px-4 py-2 bg-slate-800 hover:bg-slate-750 border border-slate-700 rounded-xl text-xs font-bold text-slate-200 transition-all cursor-pointer whitespace-nowrap"
                           >
-                            تأكيد 🔑
+                            مزامنة 🛠️
                           </button>
                         </div>
                         {developerPinError && (
-                          <p className="text-[10px] text-rose-500 font-bold">{developerPinError}</p>
+                          <p className="text-[10px] text-amber-500/90 font-bold leading-relaxed">{developerPinError}</p>
                         )}
                         <button 
                           onClick={() => {
@@ -5602,7 +5894,7 @@ export default function App() {
                           }}
                           className="text-[10px] text-slate-500 hover:text-slate-300 block mx-auto mt-1"
                         >
-                          إغلاق البوابة
+                          إغلاق نافذة المعايرة
                         </button>
                       </div>
                     )}
@@ -6913,46 +7205,191 @@ export default function App() {
                       <p className="text-xs text-slate-500 font-bold">ملخص مالي دقيق مبني على سعر التكلفة (سعر الشراء الفعلي)</p>
                     </div>
                   </div>
-                  <button onClick={() => setShowInventoryDetailsModal(false)} className="p-2.5 hover:bg-slate-200/50 rounded-full transition-colors">
+                  <button onClick={() => {
+                    setShowInventoryDetailsModal(false);
+                    setCostDetailSearchTerm('');
+                  }} className="p-2.5 hover:bg-slate-200/50 rounded-full transition-colors">
                     <X className="w-5 h-5 text-slate-500" />
                   </button>
                 </div>
 
                 <div className="space-y-4">
                   
-                  {/* --- Section 1: Overview (Cost price focus) --- */}
+                  {/* --- Section 1: Overview (Cost price focus with click interactivity) --- */}
                   <div className="space-y-2">
-                    <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                      تحليل تكاليف رأس المال (سعر التكلفة)
-                    </h4>
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                        تحليل تكاليف رأس المال (اضغط للتفاصيل بالأسفل)
+                      </h4>
+                      <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                        اختر أي بطاقة للمعاينة
+                      </span>
+                    </div>
                     
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/50 border border-indigo-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
-                        <p className="text-[10px] text-indigo-700 font-extrabold">رأس المال الكلي</p>
-                        <p className="text-lg font-black font-mono text-indigo-900 mt-1">{formatPrice(summary.totalOriginalInventoryCost ?? 0)}</p>
+                      {/* Card 1: Total Capital */}
+                      <div 
+                        onClick={() => setSelectedCostDetailType('total')}
+                        className={`border p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right cursor-pointer select-none active:scale-[0.98] ${
+                          selectedCostDetailType === 'total' 
+                            ? 'bg-gradient-to-br from-indigo-50 to-indigo-100/80 border-indigo-500 ring-2 ring-indigo-500/15' 
+                            : 'bg-white border-slate-200/80 hover:border-indigo-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <p className={`text-[10px] font-black ${selectedCostDetailType === 'total' ? 'text-indigo-800' : 'text-indigo-700'}`}>رأس المال الكلي</p>
+                          {selectedCostDetailType === 'total' && <span className="w-1.5 h-1.5 rounded-full bg-indigo-600"></span>}
+                        </div>
+                        <p className="text-lg font-black font-mono text-indigo-950 mt-1">{formatPrice(summary.totalOriginalInventoryCost ?? 0)}</p>
                         <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
-                          إجمالي كلفة جميع البضائع المسجلة بالمحل (الحالية + المباعة)
+                          إجمالي كلفة جميع البضائع المسجلة (المتبقية + المباعة)
                         </p>
                       </div>
 
-                      <div className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border border-emerald-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
-                        <p className="text-[10px] text-emerald-700 font-extrabold">كلفة البضائع المتبقية</p>
-                        <p className="text-lg font-black font-mono text-emerald-900 mt-1">{formatPrice(summary.totalInventoryCost ?? 0)}</p>
+                      {/* Card 2: Cost of Remaining Goods */}
+                      <div 
+                        onClick={() => setSelectedCostDetailType('remaining')}
+                        className={`border p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right cursor-pointer select-none active:scale-[0.98] ${
+                          selectedCostDetailType === 'remaining' 
+                            ? 'bg-gradient-to-br from-emerald-50 to-emerald-100/80 border-emerald-500 ring-2 ring-emerald-500/15' 
+                            : 'bg-white border-slate-200/80 hover:border-emerald-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <p className={`text-[10px] font-black ${selectedCostDetailType === 'remaining' ? 'text-emerald-800' : 'text-emerald-700'}`}>كلفة البضائع المتبقية</p>
+                          {selectedCostDetailType === 'remaining' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>}
+                        </div>
+                        <p className="text-lg font-black font-mono text-emerald-950 mt-1">{formatPrice(summary.totalInventoryCost ?? 0)}</p>
                         <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
-                          رأس المال المعلق بالمحل ويمثل البضاعة المتواجدة حالياً بالرفوف
+                          رأس المال المعلق بالمحل ويمثل البضاعة المتواجدة بالرفوف حالياً
                         </p>
                       </div>
 
-                      <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 border border-blue-200 p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right">
-                        <p className="text-[10px] text-blue-700 font-extrabold">رأس المال المسترد</p>
-                        <p className="text-lg font-black font-mono text-blue-900 mt-1">{formatPrice(summary.totalCostOfSoldItems ?? 0)}</p>
+                      {/* Card 3: Recovered Capital */}
+                      <div 
+                        onClick={() => setSelectedCostDetailType('sold')}
+                        className={`border p-4 rounded-2xl space-y-1 shadow-xs hover:shadow-sm transition-all text-right cursor-pointer select-none active:scale-[0.98] ${
+                          selectedCostDetailType === 'sold' 
+                            ? 'bg-gradient-to-br from-blue-50 to-blue-100/80 border-blue-500 ring-2 ring-blue-500/15' 
+                            : 'bg-white border-slate-200/80 hover:border-blue-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <p className={`text-[10px] font-black ${selectedCostDetailType === 'sold' ? 'text-blue-800' : 'text-blue-700'}`}>رأس المال المسترد</p>
+                          {selectedCostDetailType === 'sold' && <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>}
+                        </div>
+                        <p className="text-lg font-black font-mono text-blue-950 mt-1">{formatPrice(summary.totalCostOfSoldItems ?? 0)}</p>
                         <p className="text-[9px] text-slate-500 font-bold leading-tight pt-1">
                           قيمة كلفة شراء البضائع التي تم بيعها وخرجت من ذمة المحل
                         </p>
                       </div>
                     </div>
                   </div>
+
+                  {/* --- Section 1.5: Detailed Items Breakdown (Dynamic list based on selected card) --- */}
+                  {selectedCostDetailType && (
+                    <div className="space-y-3 bg-white border border-slate-200/80 rounded-[2rem] p-5 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-100">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-800">
+                            {selectedCostDetailType === 'remaining' && "📦 تفاصيل كلفة البضائع المتبقية (الرفوف)"}
+                            {selectedCostDetailType === 'sold' && "💸 تفاصيل كلفة البضائع المستردة (المباعة)"}
+                            {selectedCostDetailType === 'total' && "💼 تفاصيل رأس المال الكلي للأصناف"}
+                          </h4>
+                          <p className="text-[10px] text-slate-500 font-bold">فرز تلقائي تصاعدي حسب قيمة التكلفة الإجمالية للبند</p>
+                        </div>
+                        
+                        {/* Live Search input */}
+                        <div className="relative w-full sm:w-56 shrink-0">
+                          <input
+                            type="text"
+                            placeholder="بحث باسم الصنف أو القسم..."
+                            value={costDetailSearchTerm}
+                            onChange={(e) => setCostDetailSearchTerm(e.target.value)}
+                            className="w-full pr-8 pl-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-bold text-slate-700"
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-2.5" />
+                        </div>
+                      </div>
+
+                      {/* Scrollable list of items */}
+                      <div className="overflow-y-auto max-h-[220px] space-y-2 pr-1">
+                        {filteredCostDetailsList.length > 0 ? (
+                          filteredCostDetailsList.map((item, idx) => {
+                            let displayQty = 0;
+                            let displayCost = 0;
+                            let qtyLabel = "";
+                            
+                            if (selectedCostDetailType === 'remaining') {
+                              displayQty = item.remainingQty;
+                              displayCost = item.remainingCost;
+                              qtyLabel = "متبقي";
+                            } else if (selectedCostDetailType === 'sold') {
+                              displayQty = item.soldQty;
+                              displayCost = item.soldCost;
+                              qtyLabel = "مباع";
+                            } else {
+                              displayQty = item.totalQty;
+                              displayCost = item.totalCost;
+                              qtyLabel = "إجمالي";
+                            }
+
+                            return (
+                              <div 
+                                key={item.id || idx} 
+                                className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-slate-100/50 border border-slate-100/80 transition-all text-right"
+                              >
+                                <div className="space-y-0.5 min-w-0 flex-1 pl-3">
+                                  <p className="text-xs font-black text-slate-800 truncate" title={item.name}>
+                                    {item.name}
+                                  </p>
+                                  <div className="flex items-center gap-2 text-[9px] text-slate-400 font-bold">
+                                    <span className="bg-slate-200/50 px-1.5 py-0.5 rounded-md text-slate-600">
+                                      {item.category}
+                                    </span>
+                                    <span>•</span>
+                                    <span>كلفة الشراء للمفرد: <span className="font-mono text-slate-500 font-bold">{formatPrice(item.costPrice)}</span></span>
+                                  </div>
+                                </div>
+                                
+                                <div className="flex items-center gap-4 shrink-0 text-left font-mono">
+                                  <div className="text-right">
+                                    <span className="text-[9px] text-slate-400 font-bold block">{qtyLabel}</span>
+                                    <span className="text-xs font-extrabold text-slate-700">{displayQty} قطعة</span>
+                                  </div>
+                                  <div className="text-left bg-white border border-slate-200 px-2.5 py-1 rounded-lg shadow-2xs min-w-[85px]">
+                                    <span className="text-[9px] text-slate-400 font-bold block text-left">إجمالي الكلفة</span>
+                                    <span className="text-xs font-black text-slate-900">{formatPrice(displayCost)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="text-center py-8 text-slate-400 italic text-xs font-bold bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                            لا توجد أصناف تطابق تصفية البحث الحالية.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Summary footer for the selected detail list */}
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-[10px] text-slate-500 font-bold">
+                        <span>البنود المطابقة: {filteredCostDetailsList.length} صنف</span>
+                        <span className="bg-slate-100 text-slate-800 px-2.5 py-1 rounded-lg font-extrabold font-mono text-[11px] border border-slate-200/60">
+                          مجموع التكلفة: <span className="text-emerald-800 font-black">
+                            {formatPrice(
+                              filteredCostDetailsList.reduce((sum, item) => {
+                                if (selectedCostDetailType === 'remaining') return sum + item.remainingCost;
+                                if (selectedCostDetailType === 'sold') return sum + item.soldCost;
+                                return sum + item.totalCost;
+                              }, 0)
+                            )}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* --- Section 2: Stock Quantities & Rates --- */}
                   <div className="space-y-3">
@@ -8451,12 +8888,16 @@ export default function App() {
                           if (newVal.length > 8) return p;
                           
                           // Instant auto-unlock upon correct PIN match (seamlessly fast)
-                          if (p.actionType !== 'setup_first' && newVal === adminPin) {
-                            setTimeout(() => {
-                              const successCb = p.onSuccess;
-                              setPinModal(prev => ({ ...prev, isOpen: false }));
-                              successCb();
-                            }, 30);
+                          if (p.actionType !== 'setup_first') {
+                            verifyPinMatches(newVal, adminPin).then(isMatch => {
+                              if (isMatch) {
+                                setTimeout(() => {
+                                  const successCb = p.onSuccess;
+                                  setPinModal(prev => ({ ...prev, isOpen: false }));
+                                  successCb();
+                                }, 30);
+                              }
+                            });
                           }
                           return { ...p, inputVal: newVal, error: '' };
                         });
@@ -8483,12 +8924,16 @@ export default function App() {
                         if (newVal.length > 8) return p;
                         
                         // Instant auto-unlock upon correct PIN match
-                        if (p.actionType !== 'setup_first' && newVal === adminPin) {
-                          setTimeout(() => {
-                            const successCb = p.onSuccess;
-                            setPinModal(prev => ({ ...prev, isOpen: false }));
-                            successCb();
-                          }, 30);
+                        if (p.actionType !== 'setup_first') {
+                          verifyPinMatches(newVal, adminPin).then(isMatch => {
+                            if (isMatch) {
+                              setTimeout(() => {
+                                const successCb = p.onSuccess;
+                                setPinModal(prev => ({ ...prev, isOpen: false }));
+                                successCb();
+                              }, 30);
+                            }
+                          });
                         }
                         return { ...p, inputVal: newVal, error: '' };
                       });
@@ -8523,13 +8968,15 @@ export default function App() {
                         setPinModal(p => ({ ...p, isOpen: false }));
                         successCb();
                       } else {
-                        if (pinModal.inputVal === adminPin) {
-                          const successCb = pinModal.onSuccess;
-                          setPinModal(p => ({ ...p, isOpen: false }));
-                          successCb();
-                        } else {
-                          setPinModal(p => ({ ...p, error: '❌ رمز المرور غير صحيح! الرجاء المحاولة مرة أخرى.' }));
-                        }
+                        verifyPinMatches(pinModal.inputVal, adminPin).then(isMatch => {
+                          if (isMatch) {
+                            const successCb = pinModal.onSuccess;
+                            setPinModal(p => ({ ...p, isOpen: false }));
+                            successCb();
+                          } else {
+                            setPinModal(p => ({ ...p, error: '❌ رمز المرور غير صحيح! الرجاء المحاولة مرة أخرى.' }));
+                          }
+                        });
                       }
                     }}
                     className="w-full bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-850 text-white font-extrabold py-3.5 rounded-2xl cursor-pointer text-xs transition-all shadow-md hover:shadow-emerald-500/25"
