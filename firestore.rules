@@ -1,40 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Global default-deny safety net
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Helper functions
-    function isAdmin() {
-      return request.auth != null && 
-             request.auth.token.email_verified == true && 
-             request.auth.token.email.toLowerCase() in ['azamfahd25@gmail.com', 'developer@example.com'];
-    }
-
-    function isValidRequest(data) {
-      return data.id is string && data.id.size() <= 128 &&
-             data.deviceId is string && data.deviceId.size() <= 128 &&
-             data.storeName is string && data.storeName.size() <= 256 &&
-             data.requestedAt is string &&
-             data.status in ['pending', 'approved', 'rejected'];
-    }
-
     match /activation_requests/{deviceId} {
-      // Allow any device to fetch its own registration info (e.g. to see if it has been approved)
-      allow get: if true;
-      
-      // Allow any device to submit a pending registration request
-      allow create: if isValidRequest(request.resource.data) && 
-                      request.resource.data.status == 'pending' &&
-                      deviceId == request.resource.data.deviceId;
-
-      // Only authenticated admin owners can list, update, or delete requests
-      allow list: if isAdmin();
-      allow update: if isAdmin() && isValidRequest(request.resource.data);
-      allow delete: if isAdmin();
+      allow read, write: if true;
     }
   }
 }
