@@ -451,7 +451,8 @@ export default function App() {
   const [newSupplier, setNewSupplier] = useState({ name: '', phone: '', initialBalance: '' });
   const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
   const [showSupplierDetails, setShowSupplierDetails] = useState<Supplier | null>(null);
-  const [supplierDetailsTab, setSupplierDetailsTab] = useState<'payments' | 'products'>('payments');
+  const [supplierDetailsTab, setSupplierDetailsTab] = useState<'summary' | 'logs' | 'products' | 'payments' | 'sales' | 'stock_qty'>('products');
+  const [supplierLogFilter, setSupplierLogFilter] = useState<'all' | 'initial' | 'additions' | 'sales'>('all');
   const [showSupplierPaymentModal, setShowSupplierPaymentModal] = useState<Supplier | null>(null);
   const [selectedSupplierPayment, setSelectedSupplierPayment] = useState<any | null>(null);
   const [supplierPaymentAmount, setSupplierPaymentAmount] = useState('');
@@ -1266,6 +1267,31 @@ export default function App() {
     const year = dateObj.getFullYear();
     
     return `${dayName}، ${year}/${month}/${day}`;
+  };
+
+  const getProductBadgeStyles = (name: string) => {
+    const colors = [
+      { bg: 'bg-indigo-50/70 text-indigo-700 border-indigo-100', dot: 'bg-indigo-500' },
+      { bg: 'bg-emerald-50/70 text-emerald-700 border-emerald-100', dot: 'bg-emerald-500' },
+      { bg: 'bg-blue-50/70 text-blue-700 border-blue-100', dot: 'bg-blue-500' },
+      { bg: 'bg-amber-50/70 text-amber-700 border-amber-100', dot: 'bg-amber-500' },
+      { bg: 'bg-rose-50/70 text-rose-700 border-rose-100', dot: 'bg-rose-500' },
+      { bg: 'bg-purple-50/70 text-purple-700 border-purple-100', dot: 'bg-purple-500' },
+      { bg: 'bg-teal-50/70 text-teal-700 border-teal-100', dot: 'bg-teal-500' },
+      { bg: 'bg-cyan-50/70 text-cyan-700 border-cyan-100', dot: 'bg-cyan-500' },
+      { bg: 'bg-orange-50/70 text-orange-700 border-orange-100', dot: 'bg-orange-500' },
+      { bg: 'bg-violet-50/70 text-violet-700 border-violet-100', dot: 'bg-violet-500' },
+      { bg: 'bg-pink-50/70 text-pink-700 border-pink-100', dot: 'bg-pink-500' },
+    ];
+    
+    if (!name) return colors[0];
+    
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % colors.length;
+    return colors[index];
   };
 
   const customerStats = React.useMemo(() => {
@@ -2833,12 +2859,100 @@ export default function App() {
     printWindow.document.close();
   };
 
-  const [supplierHistory, setSupplierHistory] = useState<{ payments: any[], products: any[] }>({ payments: [], products: [] });
+  const [supplierHistory, setSupplierHistory] = useState<{
+    payments: any[];
+    products: any[];
+    inventoryLogs: any[];
+    stats: {
+      totalSoldQuantity: number;
+      totalSoldValue: number;
+      totalReceivedQuantity: number;
+      totalReceivedValue: number;
+      currentInventoryValue: number;
+      currentInventoryStock: number;
+      totalPayments: number;
+    }
+  }>({
+    payments: [],
+    products: [],
+    inventoryLogs: [],
+    stats: {
+      totalSoldQuantity: 0,
+      totalSoldValue: 0,
+      totalReceivedQuantity: 0,
+      totalReceivedValue: 0,
+      currentInventoryValue: 0,
+      currentInventoryStock: 0,
+      totalPayments: 0
+    }
+  });
 
   const fetchSupplierHistory = async (supplier: any) => {
     const payments = await db.supplierPayments.where('supplier_id').equals(supplier.id).toArray();
     const prods = await db.products.where('supplier_id').equals(supplier.id).toArray();
-    setSupplierHistory({ payments, products: prods });
+    
+    const productIds = prods.map(p => p.id).filter(Boolean) as number[];
+    let logs: any[] = [];
+    if (productIds.length > 0) {
+      logs = await db.inventoryLogs.where('product_id').anyOf(productIds).toArray();
+    }
+
+    // Attach product name and details to logs
+    const logsWithProductInfo = logs.map(log => {
+      const product = prods.find(p => p.id === log.product_id);
+      return {
+        ...log,
+        product_name: product ? product.name : 'منتج غير معروف',
+        cost_price: product ? product.cost_price : 0
+      };
+    }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    // Calculate advanced statistics
+    const currentInventoryStock = prods.reduce((sum, p) => sum + (p.stock_quantity || 0), 0);
+    const currentInventoryValue = prods.reduce((sum, p) => sum + ((p.stock_quantity || 0) * (p.cost_price || 0)), 0);
+    
+    // Total payments made
+    const totalPayments = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+    
+    // Sold items calculation (all negative logs with reason = 'sale')
+    const soldLogs = logs.filter(l => l.reason === 'sale');
+    const canceledLogs = logs.filter(l => l.reason === 'sale_cancel');
+    const totalSoldQuantity = soldLogs.reduce((sum, l) => sum + Math.abs(l.change_amount), 0) - canceledLogs.reduce((sum, l) => sum + l.change_amount, 0);
+    
+    // Calculate total cost value of sold items
+    const totalSoldValue = soldLogs.reduce((sum, l) => {
+      const product = prods.find(p => p.id === l.product_id);
+      const cost = product ? product.cost_price : 0;
+      return sum + (Math.abs(l.change_amount) * cost);
+    }, 0) - canceledLogs.reduce((sum, l) => {
+      const product = prods.find(p => p.id === l.product_id);
+      const cost = product ? product.cost_price : 0;
+      return sum + (l.change_amount * cost);
+    }, 0);
+
+    // Total supplied historically
+    const totalReceivedQuantity = logs.filter(l => l.change_amount > 0 && l.reason !== 'sale_cancel').reduce((sum, l) => sum + l.change_amount, 0);
+    const totalReceivedValue = logs.filter(l => l.change_amount > 0 && l.reason !== 'sale_cancel').reduce((sum, l) => {
+      const product = prods.find(p => p.id === l.product_id);
+      const cost = product ? product.cost_price : 0;
+      return sum + (l.change_amount * cost);
+    }, 0);
+
+    setSupplierHistory({
+      payments,
+      products: prods,
+      inventoryLogs: logsWithProductInfo,
+      stats: {
+        totalSoldQuantity: Math.max(0, totalSoldQuantity),
+        totalSoldValue: Math.max(0, totalSoldValue),
+        totalReceivedQuantity,
+        totalReceivedValue,
+        currentInventoryValue,
+        currentInventoryStock,
+        totalPayments
+      }
+    });
+    
     setShowSupplierDetails(supplier);
   };
 
@@ -6875,63 +6989,277 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* Stats Cards */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100 text-right">
-                      <p className="text-[10px] text-amber-600 font-bold uppercase mb-1">المستحق الحالي (المتبقي)</p>
-                      <p className="text-lg font-bold text-amber-900">{formatPrice(showSupplierDetails.balance)}</p>
+                  {/* Primary Highlight Card */}
+                  <div className="bg-gradient-to-br from-amber-50 to-amber-100/30 p-4 rounded-2xl border border-amber-100/80 flex justify-between items-center text-right mb-4">
+                    <div>
+                      <p className="text-[10px] text-amber-700 font-black uppercase mb-1">المستحق الحالي المتبقي للتسليم</p>
+                      <p className="text-2xl font-black text-amber-900 font-mono">{formatPrice(showSupplierDetails.balance)}</p>
                     </div>
-                    <div className="bg-blue-50 p-3 rounded-2xl border border-blue-100 text-right">
-                      <p className="text-[10px] text-blue-600 font-bold uppercase mb-1">عدد المنتجات الموردة</p>
-                      <p className="text-lg font-bold text-blue-900">{(supplierHistory.products || []).length} صنف</p>
+                    <div className="text-left">
+                      <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-1 rounded-lg font-bold">
+                        ديون تجارية معلقة
+                      </span>
                     </div>
                   </div>
 
-                  {/* Tab Selectors */}
-                  <div className="flex gap-2 mt-4 bg-slate-100 p-1 rounded-xl">
-                    <button
-                      onClick={() => setSupplierDetailsTab('payments')}
-                      className={`flex-1 py-2 text-center text-xs font-bold rounded-lg transition-all ${
-                        supplierDetailsTab === 'payments'
-                          ? 'bg-white text-slate-800 shadow-xs'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      سجل الدفعات المقبوضة
-                    </button>
-                    <button
-                      onClick={() => setSupplierDetailsTab('products')}
-                      className={`flex-1 py-2 text-center text-xs font-bold rounded-lg transition-all ${
-                        supplierDetailsTab === 'products'
-                          ? 'bg-white text-slate-800 shadow-xs'
-                          : 'text-slate-500 hover:text-slate-800'
-                      }`}
-                    >
-                      سجل المنتجات الموردة
-                    </button>
+                  {/* Interactive Dashboard Instructions */}
+                  <div className="text-right pb-1">
+                    <p className="text-[10px] text-slate-400 font-bold leading-normal">
+                      اضغط على أي بطاقة أدناه لعرض كشف التفاصيل والتقارير المتعلقة بها فوراً.
+                    </p>
                   </div>
                 </div>
 
                 {/* Ledger Content */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 text-right" dir="rtl">
-                  {supplierDetailsTab === 'payments' ? (
+                  
+                  {/* Clickable Metric Cards - Serving as Interactive Tabs */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Card 1: Sales / COGS */}
+                    <button
+                      onClick={() => setSupplierDetailsTab('sales')}
+                      className={`p-3 rounded-2xl border text-right transition-all duration-200 active:scale-[0.98] cursor-pointer flex flex-col justify-between h-[100px] ${
+                        supplierDetailsTab === 'sales'
+                          ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-500/10 shadow-xs font-semibold'
+                          : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-xs'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className={`text-[10px] font-black ${supplierDetailsTab === 'sales' ? 'text-amber-800' : 'text-slate-400'}`}>
+                          إجمالي المبيعات للعملاء
+                        </span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${supplierDetailsTab === 'sales' ? 'bg-amber-500 animate-pulse' : 'bg-transparent'}`}></span>
+                      </div>
+                      <p className={`text-base font-black font-mono leading-tight ${supplierDetailsTab === 'sales' ? 'text-amber-900' : 'text-slate-800'}`}>
+                        {formatPrice(supplierHistory.stats.totalSoldValue)}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-medium truncate">تكلفة البضائع التي تم بيعها وصرفها</p>
+                    </button>
+
+                    {/* Card 2: Payments Ledger */}
+                    <button
+                      onClick={() => setSupplierDetailsTab('payments')}
+                      className={`p-3 rounded-2xl border text-right transition-all duration-200 active:scale-[0.98] cursor-pointer flex flex-col justify-between h-[100px] ${
+                        supplierDetailsTab === 'payments'
+                          ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/10 shadow-xs font-semibold'
+                          : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-xs'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className={`text-[10px] font-black ${supplierDetailsTab === 'payments' ? 'text-emerald-800' : 'text-slate-400'}`}>
+                          إجمالي المبالغ المسددة
+                        </span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${supplierDetailsTab === 'payments' ? 'bg-emerald-500 animate-pulse' : 'bg-transparent'}`}></span>
+                      </div>
+                      <p className={`text-base font-black font-mono leading-tight ${supplierDetailsTab === 'payments' ? 'text-emerald-900' : 'text-emerald-800'}`}>
+                        {formatPrice(supplierHistory.stats.totalPayments)}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-medium truncate">إجمالي الدفعات المسلمة للتاجر</p>
+                    </button>
+
+                    {/* Card 3: Stock Value */}
+                    <button
+                      onClick={() => setSupplierDetailsTab('products')}
+                      className={`p-3 rounded-2xl border text-right transition-all duration-200 active:scale-[0.98] cursor-pointer flex flex-col justify-between h-[100px] ${
+                        supplierDetailsTab === 'products'
+                          ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500/10 shadow-xs font-semibold'
+                          : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-xs'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className={`text-[10px] font-black ${supplierDetailsTab === 'products' ? 'text-indigo-800' : 'text-slate-400'}`}>
+                          قيمة البضاعة الحالية بالمخزن
+                        </span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${supplierDetailsTab === 'products' ? 'bg-indigo-500 animate-pulse' : 'bg-transparent'}`}></span>
+                      </div>
+                      <p className={`text-base font-black font-mono leading-tight ${supplierDetailsTab === 'products' ? 'text-indigo-900' : 'text-slate-800'}`}>
+                        {formatPrice(supplierHistory.stats.currentInventoryValue)}
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-medium truncate">قيمة المخزون المتبقي بسعر الجملة</p>
+                    </button>
+
+                    {/* Card 4: Stock Qty */}
+                    <button
+                      onClick={() => setSupplierDetailsTab('stock_qty')}
+                      className={`p-3 rounded-2xl border text-right transition-all duration-200 active:scale-[0.98] cursor-pointer flex flex-col justify-between h-[100px] ${
+                        supplierDetailsTab === 'stock_qty'
+                          ? 'bg-blue-50 border-blue-300 ring-2 ring-blue-500/10 shadow-xs font-semibold'
+                          : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-xs'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className={`text-[10px] font-black ${supplierDetailsTab === 'stock_qty' ? 'text-blue-800' : 'text-slate-400'}`}>
+                          الكميات الحالية بالمستودع
+                        </span>
+                        <span className={`w-1.5 h-1.5 rounded-full ${supplierDetailsTab === 'stock_qty' ? 'bg-blue-500 animate-pulse' : 'bg-transparent'}`}></span>
+                      </div>
+                      <p className={`text-base font-black font-mono leading-tight ${supplierDetailsTab === 'stock_qty' ? 'text-blue-900' : 'text-blue-800'}`}>
+                        {supplierHistory.stats.currentInventoryStock} قطعة
+                      </p>
+                      <p className="text-[9px] text-slate-400 font-medium truncate">إجمالي كمية القطع المتوفرة للبيع</p>
+                    </button>
+                  </div>
+
+                  {/* Section Separator & Heading */}
+                  <div className="pt-2">
+                    {supplierDetailsTab === 'sales' && (
+                      <h4 className="text-xs font-black text-amber-800 flex items-center gap-1">
+                        <span>📈</span>
+                        <span>تفاصيل مبيعات البضائع وتصريفها للعملاء</span>
+                      </h4>
+                    )}
+                    {supplierDetailsTab === 'payments' && (
+                      <h4 className="text-xs font-black text-emerald-800 flex items-center gap-1">
+                        <span>💸</span>
+                        <span>سجل حوالات السداد والدفعات المسلمة للمورد</span>
+                      </h4>
+                    )}
+                    {supplierDetailsTab === 'products' && (
+                      <h4 className="text-xs font-black text-indigo-800 flex items-center gap-1">
+                        <span>📦</span>
+                        <span>قائمة الأصناف وقيمة المخزون الحالي بسعر الجملة</span>
+                      </h4>
+                    )}
+                    {supplierDetailsTab === 'stock_qty' && (
+                      <h4 className="text-xs font-black text-blue-800 flex items-center gap-1">
+                        <span>📥</span>
+                        <span>حركة التوريدات اليدوية ومخزون البداية للأصناف</span>
+                      </h4>
+                    )}
+                  </div>
+
+                  {/* Dynamic Details Panels based on Card Selected */}
+                  
+                  {/* --- SUB-VIEW: SALES LOGS DETAILED --- */}
+                  {supplierDetailsTab === 'sales' && (() => {
+                    const allLogs = supplierHistory.inventoryLogs || [];
+                    const salesLogs = allLogs.filter(log => log.change_amount < 0);
+                    
+                    return (
+                      <div className="space-y-3.5">
+                        {/* Financial Progress & Target Info */}
+                        {supplierHistory.stats.totalSoldValue > 0 && (
+                          <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-3">
+                            <div className="flex justify-between text-xs font-bold">
+                              <span className="text-slate-400">نسبة سداد قيمة المبيعات</span>
+                              <span className="text-emerald-600">
+                                {Math.min(100, Math.round((supplierHistory.stats.totalPayments / supplierHistory.stats.totalSoldValue) * 100))}%
+                              </span>
+                            </div>
+                            <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-emerald-500 rounded-full" 
+                                style={{ width: `${Math.min(100, Math.round((supplierHistory.stats.totalPayments / supplierHistory.stats.totalSoldValue) * 100))}%` }}
+                              ></div>
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-medium leading-normal">
+                              تم تسديد <strong className="text-emerald-600 font-mono">{formatPrice(supplierHistory.stats.totalPayments)}</strong> من إجمالي قيمة مبيعاته المستحقة والبالغة <strong className="text-slate-700 font-mono">{formatPrice(supplierHistory.stats.totalSoldValue)}</strong>.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Quantities Sold Performance */}
+                        <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-xs space-y-2.5">
+                          <span className="text-[10px] text-slate-400 font-black block">تحليل حركة القطع</span>
+                          <div className="grid grid-cols-2 gap-3 text-center">
+                            <div className="bg-slate-50/50 p-2 rounded-xl">
+                              <p className="text-[9px] text-slate-400 font-bold">إجمالي المستلم</p>
+                              <p className="text-xs font-black text-slate-700 font-mono">{supplierHistory.stats.totalReceivedQuantity} قطعة</p>
+                            </div>
+                            <div className="bg-indigo-50/50 p-2 rounded-xl">
+                              <p className="text-[9px] text-indigo-500 font-bold">إجمالي المباع</p>
+                              <p className="text-xs font-black text-indigo-700 font-mono">{supplierHistory.stats.totalSoldQuantity} قطعة</p>
+                            </div>
+                          </div>
+                          {supplierHistory.stats.totalReceivedQuantity > 0 && (
+                            <div className="space-y-1 pt-1.5">
+                              <div className="flex justify-between text-[9px] font-bold text-slate-400">
+                                <span>معدل تصريف الكميات</span>
+                                <span>{Math.round((supplierHistory.stats.totalSoldQuantity / supplierHistory.stats.totalReceivedQuantity) * 100)}%</span>
+                              </div>
+                              <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-indigo-500" 
+                                  style={{ width: `${Math.min(100, Math.round((supplierHistory.stats.totalSoldQuantity / supplierHistory.stats.totalReceivedQuantity) * 100))}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Sales Logs Table */}
+                        <div className="bg-white rounded-2xl border border-slate-100 shadow-xs overflow-hidden">
+                          {salesLogs.length === 0 ? (
+                            <div className="text-center py-10">
+                              <p className="text-slate-400 text-xs font-bold">لا توجد مبيعات مسجلة لهذا المورد حتى الآن</p>
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-right border-collapse whitespace-nowrap">
+                                <thead>
+                                  <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-[10px] font-black">
+                                    <th className="py-2 px-3">المنتج / الصنف</th>
+                                    <th className="py-2 px-3 text-center">الكمية المباعة</th>
+                                    <th className="py-2 px-3 text-center">تكلفة الحبة</th>
+                                    <th className="py-2 px-3 text-center">الإجمالي</th>
+                                    <th className="py-2 px-3 text-left">التاريخ</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-xs">
+                                  {salesLogs.map((log, idx) => {
+                                    const costPrice = log.cost_price || 0;
+                                    const totalCost = Math.abs(log.change_amount) * costPrice;
+                                    const badgeStyle = getProductBadgeStyles(log.product_name || '');
+                                    return (
+                                      <tr key={`supp-sale-log-${log.id ?? idx}`} className="hover:bg-slate-50/50">
+                                        <td className="py-2.5 px-3">
+                                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${badgeStyle.bg}`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`}></span>
+                                            {log.product_name}
+                                          </span>
+                                        </td>
+                                        <td className="py-2.5 px-3 text-center font-black text-rose-600 font-mono">
+                                          {log.change_amount} قطعة
+                                        </td>
+                                        <td className="py-2.5 px-3 text-center text-slate-500 font-mono">
+                                          {formatPrice(costPrice)}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-center font-extrabold text-slate-700 font-mono">
+                                          {formatPrice(totalCost)}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-left text-[9px] text-slate-400 font-mono">
+                                          {formatDateWithDay(log.created_at)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* --- SUB-VIEW: PAYMENTS LEDGER --- */}
+                  {supplierDetailsTab === 'payments' && (
                     <div className="space-y-3">
                       {(!supplierHistory.payments || supplierHistory.payments.length === 0) ? (
                         <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-slate-200">
                           <div className="bg-slate-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
                             <Wallet className="text-slate-300 w-6 h-6" />
                           </div>
-                          <p className="text-slate-400 text-sm">لا توجد دفعات مالية مسجلة لهذا المورد</p>
+                          <p className="text-slate-400 text-xs font-bold">لا توجد دفعات مالية مسجلة لهذا المورد</p>
                         </div>
                       ) : (
                         supplierHistory.payments.map((pay, idx) => (
                           <div 
                             key={`supp-payment-${pay.id ?? idx}`} 
                             onClick={() => setSelectedSupplierPayment({ ...pay, supplier_name: showSupplierDetails.name })}
-                            className="bg-white p-4 rounded-2xl border-r-4 border-r-emerald-500 shadow-xs flex flex-col gap-2 cursor-pointer hover:bg-slate-50/80 active:scale-[0.99] transition-all"
+                            className="bg-white p-4 rounded-2xl border-r-4 border-r-emerald-500 shadow-xs flex flex-col gap-2 cursor-pointer hover:bg-slate-50 active:scale-[0.99] transition-all"
                           >
                             <div className="flex justify-between items-center gap-2">
-                              {/* Date and neat notes preview badge if notes exist */}
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-xs text-slate-400 font-mono">
                                   {pay.payment_date ? formatDateWithDay(pay.payment_date) : ''}
@@ -6959,34 +7287,151 @@ export default function App() {
                         ))
                       )}
                     </div>
-                  ) : (
+                  )}
+
+                  {/* --- SUB-VIEW: PRODUCTS LIST (STOCK VALUE) --- */}
+                  {supplierDetailsTab === 'products' && (
                     <div className="space-y-3">
                       {(!supplierHistory.products || supplierHistory.products.length === 0) ? (
                         <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-slate-200">
                           <div className="bg-slate-50 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
                             <Package className="text-slate-300 w-6 h-6" />
                           </div>
-                          <p className="text-slate-400 text-sm">لا توجد منتجات مسجلة تتبع هذا المورد</p>
+                          <p className="text-slate-400 text-xs font-bold">لا توجد منتجات مسجلة تتبع هذا المورد</p>
                         </div>
                       ) : (
-                        supplierHistory.products.map((prod, idx) => (
-                          <div key={`supp-prod-${prod.id ?? idx}`} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-100 flex justify-between items-center">
-                            <div className="space-y-1">
-                              <p className="font-extrabold text-slate-800 text-sm">{prod.name}</p>
-                              <div className="flex gap-2 text-[10px] text-slate-400">
-                                <span>سعر الشراء: <strong className="text-slate-600 font-mono">{formatPrice(prod.cost_price)}</strong></span>
-                                <span>•</span>
-                                <span>سعر البيع: <strong className="text-emerald-600 font-mono">{formatPrice(prod.sale_price)}</strong></span>
+                        supplierHistory.products.map((prod, idx) => {
+                          const prodLogs = supplierHistory.inventoryLogs.filter(l => l.product_id === prod.id);
+                          const soldQty = prodLogs.filter(l => l.reason === 'sale').reduce((sum, l) => sum + Math.abs(l.change_amount), 0) - prodLogs.filter(l => l.reason === 'sale_cancel').reduce((sum, l) => sum + l.change_amount, 0);
+                          const suppliedQty = prodLogs.filter(l => l.change_amount > 0 && l.reason !== 'sale_cancel').reduce((sum, l) => sum + l.change_amount, 0);
+
+                          let stockBadgeClass = '';
+                          let stockText = '';
+                          if (prod.stock_quantity === 0) {
+                            stockBadgeClass = 'bg-rose-50 text-rose-700 border-rose-100';
+                            stockText = 'نفذت الكمية';
+                          } else if (prod.stock_quantity < 5) {
+                            stockBadgeClass = 'bg-amber-50 text-amber-700 border-amber-100';
+                            stockText = `مخزون منخفض: ${prod.stock_quantity}`;
+                          } else {
+                            stockBadgeClass = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                            stockText = `متوفر: ${prod.stock_quantity}`;
+                          }
+
+                          return (
+                            <div key={`supp-prod-${prod.id ?? idx}`} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-100 hover:shadow-sm transition-all flex flex-col gap-3">
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-1">
+                                  <p className="font-extrabold text-slate-800 text-sm">{prod.name}</p>
+                                  <div className="flex gap-2.5 text-[10px] text-slate-400">
+                                    <span>تكلفة الجملة: <strong className="text-slate-600 font-mono">{formatPrice(prod.cost_price)}</strong></span>
+                                    <span>•</span>
+                                    <span>سعر البيع: <strong className="text-emerald-600 font-mono">{formatPrice(prod.sale_price)}</strong></span>
+                                  </div>
+                                </div>
+                                <span className={`text-[10px] font-bold border px-2.5 py-1 rounded-lg ${stockBadgeClass}`}>
+                                  {stockText}
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2 rounded-xl text-center text-[10px]">
+                                <div className="border-l border-slate-200/60">
+                                  <p className="text-slate-400 font-bold">إجمالي المستلم تاريخياً</p>
+                                  <p className="text-xs font-black font-mono text-slate-700 mt-0.5">{suppliedQty} قطعة</p>
+                                </div>
+                                <div className="border-l border-slate-200/60">
+                                  <p className="text-slate-400 font-bold">إجمالي القطع المباعة</p>
+                                  <p className="text-xs font-black font-mono text-indigo-700 mt-0.5">{soldQty} قطعة</p>
+                                </div>
+                                <div>
+                                  <p className="text-slate-400 font-bold">إجمالي قيمة المخزن</p>
+                                  <p className="text-xs font-black font-mono text-emerald-700 mt-0.5">{formatPrice(prod.stock_quantity * prod.cost_price)}</p>
+                                </div>
                               </div>
                             </div>
-                            <span className="text-xs font-bold font-mono bg-indigo-50 border border-indigo-100 text-indigo-700 px-2 py-1 rounded-lg">
-                              الكمية: {prod.stock_quantity}
-                            </span>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   )}
+
+                  {/* --- SUB-VIEW: STOCK QUANTITY & ADDITIONS --- */}
+                  {supplierDetailsTab === 'stock_qty' && (() => {
+                    const allLogs = supplierHistory.inventoryLogs || [];
+                    const additionsLogs = allLogs.filter(log => log.change_amount > 0);
+                    
+                    return (
+                      <div className="space-y-3.5">
+                        {/* Summary of stock additions */}
+                        <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-xs flex justify-between items-center text-right">
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-slate-400 font-black block">إجمالي حركة الإدخال والتوريد</span>
+                            <p className="text-[9px] text-slate-400 max-w-[240px]">يشمل مخزون التأسيس الأولي لجميع الأصناف بالإضافة لشحنات البضائع الموردة يدوياً لاحقاً.</p>
+                          </div>
+                          <div className="bg-blue-50/70 p-2.5 rounded-xl shrink-0 text-left">
+                            <span className="text-[9px] text-blue-600 font-bold block">إجمالي التوريد</span>
+                            <strong className="text-xs font-black text-blue-950 font-mono font-bold">
+                              +{additionsLogs.reduce((sum, l) => sum + l.change_amount, 0)} قطعة
+                            </strong>
+                          </div>
+                        </div>
+
+                        {/* Additions & Initial Logs Table */}
+                        <div className="bg-white rounded-2xl border border-slate-100 shadow-xs overflow-hidden">
+                          {additionsLogs.length === 0 ? (
+                            <div className="text-center py-10">
+                              <p className="text-slate-400 text-xs font-bold">لا توجد عمليات توريد أو تأسيس مسجلة لهذا المورد</p>
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-right border-collapse whitespace-nowrap">
+                                <thead>
+                                  <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-[10px] font-black">
+                                    <th className="py-2 px-3">اسم المنتج / الصنف</th>
+                                    <th className="py-2 px-3 text-center">الكمية المضافة</th>
+                                    <th className="py-2 px-3 text-center">النوع / السبب</th>
+                                    <th className="py-2 px-3 text-left">التاريخ</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 text-xs">
+                                  {additionsLogs.map((log, idx) => {
+                                    const isInitial = log.reason === 'initial';
+                                    const badgeStyle = getProductBadgeStyles(log.product_name || '');
+                                    return (
+                                      <tr key={`supp-add-log-${log.id ?? idx}`} className="hover:bg-slate-50/50">
+                                        <td className="py-2.5 px-3">
+                                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${badgeStyle.bg}`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`}></span>
+                                            {log.product_name}
+                                          </span>
+                                          {log.notes && <span className="text-[9px] text-slate-400 block mt-1 pr-2">📝 {log.notes}</span>}
+                                        </td>
+                                        <td className="py-2.5 px-3 text-center font-black text-emerald-600 font-mono">
+                                          +{log.change_amount} قطعة
+                                        </td>
+                                        <td className="py-2.5 px-3 text-center">
+                                          <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold ${
+                                            isInitial 
+                                              ? 'bg-blue-50 text-blue-700' 
+                                              : 'bg-emerald-50 text-emerald-700'
+                                          }`}>
+                                            {isInitial ? 'مخزون تأسيسي' : 'توريد إضافي'}
+                                          </span>
+                                        </td>
+                                        <td className="py-2.5 px-3 text-left text-[9px] text-slate-400 font-mono">
+                                          {formatDateWithDay(log.created_at)}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Footer Action */}
