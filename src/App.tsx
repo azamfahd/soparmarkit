@@ -56,6 +56,7 @@ import {
   AlertTriangle,
   Minus,
   PackagePlus,
+  PackageMinus,
   Activity,
   TrendingDown,
   Clock,
@@ -7358,29 +7359,29 @@ export default function App() {
                   {/* --- SUB-VIEW: STOCK QUANTITY & ADDITIONS --- */}
                   {supplierDetailsTab === 'stock_qty' && (() => {
                     const allLogs = supplierHistory.inventoryLogs || [];
-                    const additionsLogs = allLogs.filter(log => log.change_amount > 0);
+                    const relevantLogs = allLogs.filter(log => ['initial', 'manual_update', 'refund'].includes(log.reason));
                     
                     return (
                       <div className="space-y-3.5">
                         {/* Summary of stock additions */}
                         <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-xs flex justify-between items-center text-right">
                           <div className="space-y-1">
-                            <span className="text-[10px] text-slate-400 font-black block">إجمالي حركة الإدخال والتوريد</span>
-                            <p className="text-[9px] text-slate-400 max-w-[240px]">يشمل مخزون التأسيس الأولي لجميع الأصناف بالإضافة لشحنات البضائع الموردة يدوياً لاحقاً.</p>
+                            <span className="text-[10px] text-slate-400 font-black block">إجمالي حركة المخزون</span>
+                            <p className="text-[9px] text-slate-400 max-w-[240px]">يشمل مخزون التأسيس، التوريد الإضافي، والتحديثات والمرتجعات.</p>
                           </div>
                           <div className="bg-blue-50/70 p-2.5 rounded-xl shrink-0 text-left">
-                            <span className="text-[9px] text-blue-600 font-bold block">إجمالي التوريد</span>
+                            <span className="text-[9px] text-blue-600 font-bold block">صافي الحركة</span>
                             <strong className="text-xs font-black text-blue-950 font-mono font-bold">
-                              +{additionsLogs.reduce((sum, l) => sum + l.change_amount, 0)} قطعة
+                              {relevantLogs.reduce((sum, l) => sum + l.change_amount, 0)} قطعة
                             </strong>
                           </div>
                         </div>
 
-                        {/* Additions & Initial Logs Table */}
+                        {/* Inventory Logs Table */}
                         <div className="bg-white rounded-2xl border border-slate-100 shadow-xs overflow-hidden">
-                          {additionsLogs.length === 0 ? (
+                          {relevantLogs.length === 0 ? (
                             <div className="text-center py-10">
-                              <p className="text-slate-400 text-xs font-bold">لا توجد عمليات توريد أو تأسيس مسجلة لهذا المورد</p>
+                              <p className="text-slate-400 text-xs font-bold">لا توجد عمليات مخزنية مسجلة لهذا المورد</p>
                             </div>
                           ) : (
                             <div className="overflow-x-auto">
@@ -7388,34 +7389,41 @@ export default function App() {
                                 <thead>
                                   <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-[10px] font-black">
                                     <th className="py-2 px-3">اسم المنتج / الصنف</th>
-                                    <th className="py-2 px-3 text-center">الكمية المضافة</th>
+                                    <th className="py-2 px-3 text-center">الكمية</th>
                                     <th className="py-2 px-3 text-center">النوع / السبب</th>
                                     <th className="py-2 px-3 text-left">التاريخ</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-xs">
-                                  {additionsLogs.map((log, idx) => {
-                                    const isInitial = log.reason === 'initial';
+                                  {relevantLogs.map((log, idx) => {
+                                    const isReturn = log.reason === 'refund';
+                                    const isWithdrawal = log.reason === 'manual_update' && log.change_amount < 0;
+                                    const isUpdate = log.reason === 'manual_update' && log.change_amount > 0;
                                     const badgeStyle = getProductBadgeStyles(log.product_name || '');
                                     return (
-                                      <tr key={`supp-add-log-${log.id ?? idx}`} className="hover:bg-slate-50/50">
+                                      <tr key={`supp-stock-log-${log.id ?? idx}`} className="hover:bg-slate-50/50">
                                         <td className="py-2.5 px-3">
-                                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${badgeStyle.bg}`}>
+                                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${badgeStyle.bg} shadow-sm transition-all duration-300 hover:shadow-md hover:ring-2 hover:ring-offset-1 ${isReturn ? 'hover:ring-rose-200' : isWithdrawal ? 'hover:ring-amber-200' : isUpdate ? 'hover:ring-sky-200' : 'hover:ring-indigo-200'}`}>
                                             <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`}></span>
+                                            {isReturn ? <RotateCcw size={10} /> : isWithdrawal ? <PackageMinus size={10} /> : isUpdate ? <RefreshCw size={10} /> : <PackagePlus size={10} />}
                                             {log.product_name}
                                           </span>
                                           {log.notes && <span className="text-[9px] text-slate-400 block mt-1 pr-2">📝 {log.notes}</span>}
                                         </td>
-                                        <td className="py-2.5 px-3 text-center font-black text-emerald-600 font-mono">
-                                          +{log.change_amount} قطعة
+                                        <td className={`py-2.5 px-3 text-center font-black font-mono ${log.change_amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                          {log.change_amount > 0 ? '+' : ''}{log.change_amount} قطعة
                                         </td>
                                         <td className="py-2.5 px-3 text-center">
                                           <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold ${
-                                            isInitial 
-                                              ? 'bg-blue-50 text-blue-700' 
-                                              : 'bg-emerald-50 text-emerald-700'
+                                            isReturn 
+                                              ? 'bg-rose-50 text-rose-700' 
+                                              : isWithdrawal
+                                                ? 'bg-amber-50 text-amber-700'
+                                                : isUpdate
+                                                  ? 'bg-sky-50 text-sky-700'
+                                                  : 'bg-emerald-50 text-emerald-700'
                                           }`}>
-                                            {isInitial ? 'مخزون تأسيسي' : 'توريد إضافي'}
+                                            {isReturn ? 'مرتجع' : isWithdrawal ? 'سحب' : isUpdate ? 'تحديث مخزون' : 'توريد/أساسي'}
                                           </span>
                                         </td>
                                         <td className="py-2.5 px-3 text-left text-[9px] text-slate-400 font-mono">
