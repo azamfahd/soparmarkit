@@ -2042,13 +2042,15 @@ export default function App() {
     };
 
     try {
-      // Add to local DB
-      const productId = await db.products.add(productData);
-      await db.inventoryLogs.add({
-        product_id: productId as number,
-        change_amount: stock,
-        reason: 'initial',
-        created_at: new Date().toISOString()
+      await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
+        // Add to local DB
+        const productId = await db.products.add(productData);
+        await db.inventoryLogs.add({
+          product_id: productId as number,
+          change_amount: stock,
+          reason: 'initial',
+          created_at: new Date().toISOString()
+        });
       });
       
       showNotification('تم إضافة المنتج بنجاح');
@@ -2083,7 +2085,7 @@ export default function App() {
         return;
       }
 
-      await db.transaction('rw', db.products, db.inventoryLogs, db.suppliers, async () => {
+      await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
         // Update product stock
         await db.products.update(dbProduct.id!, { stock_quantity: newStock });
 
@@ -2095,25 +2097,6 @@ export default function App() {
           notes: updatingStockNotes || (updatingStockType === 'add' ? 'إضافة مخزون يدوية' : 'سحب/تسوية مخزون يدوية'),
           created_at: new Date().toISOString()
         });
-
-        // Update supplier balance
-        if (dbProduct.supplier_id && dbProduct.cost_price > 0) {
-          const supplier = await db.suppliers.get(dbProduct.supplier_id);
-          if (supplier) {
-            let balanceChange = 0;
-            if (updatingStockType === 'add') {
-              balanceChange = changeAmount * dbProduct.cost_price; // changeAmount is positive
-            } else if (updatingStockType === 'subtract' && updateSupplierBalance) {
-              balanceChange = changeAmount * dbProduct.cost_price; // changeAmount is negative, so this deducts
-            }
-            
-            if (balanceChange !== 0) {
-              await db.suppliers.update(supplier.id!, {
-                balance: (supplier.balance || 0) + balanceChange
-              });
-            }
-          }
-        }
       });
       
       showNotification('تم تحديث المخزون بنجاح', 'success');
@@ -2132,20 +2115,23 @@ export default function App() {
     if (!editingProduct || !editingProduct.id) return;
     
     try {
-      // Update local DB
-      const oldProduct = await db.products.get(editingProduct.id);
-      if (oldProduct) {
-        const diff = editingProduct.stock_quantity - oldProduct.stock_quantity;
-        await db.products.update(editingProduct.id, editingProduct);
-        if (diff !== 0) {
-          await db.inventoryLogs.add({
-            product_id: editingProduct.id,
-            change_amount: diff,
-            reason: 'manual_update',
-            created_at: new Date().toISOString()
-          });
+      await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
+        // Update local DB
+        const oldProduct = await db.products.get(editingProduct.id!);
+        if (oldProduct) {
+          const diff = editingProduct.stock_quantity - oldProduct.stock_quantity;
+          await db.products.update(editingProduct.id!, editingProduct);
+          
+          if (diff !== 0) {
+            await db.inventoryLogs.add({
+              product_id: editingProduct.id!,
+              change_amount: diff,
+              reason: 'manual_update',
+              created_at: new Date().toISOString()
+            });
+          }
         }
-      }
+      });
 
       showNotification('تم تحديث المنتج بنجاح');
     } catch (err) {
