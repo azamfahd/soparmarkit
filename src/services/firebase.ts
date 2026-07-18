@@ -29,6 +29,7 @@ export interface ActivationRequest {
   licenseKey?: string;
   durationDays?: number;
   approvedAt?: string;
+  rejectReason?: string;
 }
 
 /**
@@ -110,12 +111,13 @@ export async function approveRequestInCloud(deviceId: string, durationDays: numb
 /**
  * Rejects a user's activation request
  */
-export async function rejectRequestInCloud(deviceId: string): Promise<void> {
+export async function rejectRequestInCloud(deviceId: string, rejectReason?: string): Promise<void> {
   const docRef = doc(cloudDb, 'activation_requests', deviceId);
   await updateDoc(docRef, {
     status: 'rejected',
     approvedAt: null,
-    licenseKey: null
+    licenseKey: null,
+    rejectReason: rejectReason || ''
   });
 }
 

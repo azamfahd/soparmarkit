@@ -544,6 +544,8 @@ export default function App() {
   const [showReceipt, setShowReceipt] = useState<any>(null);
   const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
+  const [rejectingDevice, setRejectingDevice] = useState<{ deviceId: string; storeName: string } | null>(null);
+  const [rejectReasonText, setRejectReasonText] = useState('');
 
   const appSettingsRaw = useLiveQuery(() => db.settings.toArray());
   const appSettings = appSettingsRaw || [];
@@ -926,17 +928,17 @@ export default function App() {
       setCloudRequest(request);
       
       // Auto-deactivation if cloud license is revoked, frozen, or deleted
-      if (activationDetails && activationDetails.isCloud) {
+      if (activationDetails) {
         if (!request) {
           // Deleted from cloud completely
+          if (activationDetails.isCloud) {
+            performSilentDeactivation();
+          }
+        } else if (request.status === 'rejected') {
+          // Rejected (frozen) - immediately lock out
           performSilentDeactivation();
-        } else if (request.status === 'rejected' || request.status === 'pending') {
-          // Rejected (frozen) or reset to pending
-          performSilentDeactivation();
-        }
-      } else if (activationDetails && activationDetails.licenseKey) {
-        // Fallback: If status is rejected/pending and the key matches exactly, deactivate too
-        if (request && (request.status === 'rejected' || request.status === 'pending') && request.licenseKey === activationDetails.licenseKey) {
+        } else if (request.status === 'pending' && activationDetails.isCloud) {
+          // Reset to pending - lock out if it was cloud-activated
           performSilentDeactivation();
         }
       }
@@ -1038,7 +1040,7 @@ export default function App() {
       licenseKey: key,
       activatedAt: now.toISOString(),
       expiresAt,
-      isCloud: !!isCloud
+      isCloud: !!isCloud || !!cloudRequest
     };
 
     const existing = await db.settings.where('key').equals('activationDetails').first();
@@ -1183,13 +1185,21 @@ export default function App() {
     }
   };
 
-  const handleRejectCloudRequest = async (deviceId: string) => {
+  const handleRejectCloudRequest = (deviceId: string, storeName: string) => {
+    setRejectingDevice({ deviceId, storeName });
+    setRejectReasonText('انتهت صلاحية الاشتراك والمشغل لم يقم بالتجديد.');
+  };
+
+  const confirmRejectCloudRequest = async () => {
+    if (!rejectingDevice) return;
     try {
-      await rejectRequestInCloud(deviceId);
-      showNotification('تم رفض طلب التفعيل بنجاح', 'success');
+      await rejectRequestInCloud(rejectingDevice.deviceId, rejectReasonText || 'تم إلغاء تفعيل الترخيص من قبل الإدارة لسبب غير محدد');
+      showNotification(`تم تجميد وإلغاء ترخيص ${rejectingDevice.storeName} بنجاح`, 'success');
+      setRejectingDevice(null);
+      setRejectReasonText('');
     } catch (e) {
       console.error(e);
-      showNotification('حدث خطأ أثناء رفض الطلب', 'error');
+      showNotification('حدث خطأ أثناء إلغاء الترخيص', 'error');
     }
   };
 
@@ -3327,13 +3337,21 @@ export default function App() {
 
               {cloudRequest.status === 'rejected' && (
                 <div className="bg-rose-950/40 border border-rose-900/50 rounded-2xl p-4 space-y-3 text-right">
-                  <div className="flex items-center gap-2 text-rose-400">
-                    <X className="w-5 h-5" />
-                    <h4 className="text-sm font-black">تم رفض طلب تفعيل جهازك ❌</h4>
+                  <div className="flex items-center gap-2 text-rose-400 border-b border-rose-900/30 pb-2">
+                    <X className="w-5 h-5 animate-pulse" />
+                    <h4 className="text-sm font-black">تم إلغاء أو تجميد ترخيص جهازك 🔒</h4>
                   </div>
-                  <p className="text-xs text-rose-200/80 leading-relaxed font-bold">
-                    للأسف، تم رفض طلب التفعيل الرقمي لجهازك من قبل إدارة البرنامج. يرجى التواصل مع المدير المباشر لمعرفة السبب أو التقديم مجدداً.
-                  </p>
+                  {cloudRequest.rejectReason ? (
+                    <div className="space-y-1 bg-rose-950/80 border border-rose-900/40 p-3 rounded-xl">
+                      <p className="text-[10px] text-rose-400 font-black">السبب المذكور من الإدارة:</p>
+                      <p className="text-xs text-rose-200 leading-relaxed font-bold">⚠️ {cloudRequest.rejectReason}</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-rose-200/80 leading-relaxed font-bold">
+                      للأسف، تم تجميد أو إلغاء تفعيل هذا الترخيص من قبل إدارة البرنامج سحابياً. يرجى مراجعة المسؤول أو تجديد اشتراكك للوصول الآمن لبياناتك.
+                    </p>
+                  )}
+                  <p className="text-[10px] text-rose-300 font-medium">إذا قمت بحل المشكلة مع الإدارة، يمكنك إعادة التقديم أدناه.</p>
                   <button 
                     onClick={() => handleDeleteCloudRequest(deviceID)}
                     className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-rose-600/15 cursor-pointer"
@@ -6126,7 +6144,7 @@ export default function App() {
 
                                         <div className="flex gap-2">
                                           <button 
-                                            onClick={() => handleRejectCloudRequest(req.deviceId)}
+                                            onClick={() => handleRejectCloudRequest(req.deviceId, req.storeName)}
                                             className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-100 rounded-xl text-xs font-bold transition-all cursor-pointer"
                                           >
                                             رفض الطلب ❌
@@ -6160,7 +6178,7 @@ export default function App() {
                                             </p>
                                           )}
                                           <button 
-                                            onClick={() => handleRejectCloudRequest(req.deviceId)}
+                                            onClick={() => handleRejectCloudRequest(req.deviceId, req.storeName)}
                                             className="mr-auto py-1 px-3 bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-600 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
                                           >
                                             إلغاء وتجميد التفعيل 🔒
@@ -6437,6 +6455,81 @@ export default function App() {
                 <div className="flex gap-2 pt-2">
                   <Button className="flex-1" variant="danger" onClick={confirmAction.onConfirm}>تأكيد</Button>
                   <Button className="flex-1" variant="secondary" onClick={() => setConfirmAction(null)}>إلغاء</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
+          {rejectingDevice && (
+            <div key="modal-reject-reason" className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-xs">
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-white w-full max-w-md rounded-3xl p-6 space-y-5 shadow-2xl text-right"
+                dir="rtl"
+              >
+                <div className="flex items-center gap-2 justify-start border-b border-slate-100 pb-3">
+                  <div className="w-9 h-9 rounded-full bg-rose-50 flex items-center justify-center text-rose-600">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-slate-800">تجميد ترخيص العميل وحظر البرنامج 🔒</h3>
+                    <p className="text-[11px] text-slate-400 font-bold">اسم المتجر: {rejectingDevice.storeName}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="text-xs font-extrabold text-slate-500 block">اختر سبب تجميد التفعيل السريع:</label>
+                  <div className="grid grid-cols-1 gap-2">
+                    {[
+                      'انتهت فترة الاشتراك التجريبي أو السنوي للبرنامج ولم يتم التجديد.',
+                      'تم تجميد الترخيص مؤقتاً لعدم سداد المستحقات المالية.',
+                      'مخالفة بنود الاستخدام ومحاولة تشغيل الترخيص على جهاز آخر.',
+                      'بناءً على طلب مباشر من صاحب المتجر لإيقاف أو نقل الخدمة.',
+                    ].map((reason, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => setRejectReasonText(reason)}
+                        className={`p-2.5 text-xs text-right rounded-xl border font-bold transition-all ${
+                          rejectReasonText === reason 
+                            ? 'bg-rose-50 border-rose-300 text-rose-700 shadow-xs' 
+                            : 'bg-slate-50 border-slate-100 text-slate-600 hover:bg-slate-100/50'
+                        }`}
+                      >
+                        {reason}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-1.5 pt-2">
+                    <label className="text-xs font-extrabold text-slate-500 block">أو اكتب نصاً مخصصاً يظهر للعميل:</label>
+                    <textarea
+                      value={rejectReasonText}
+                      onChange={(e) => setRejectReasonText(e.target.value)}
+                      placeholder="اكتب هنا سبب إيقاف التفعيل بالتفصيل..."
+                      rows={3}
+                      className="w-full p-3 text-xs bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-rose-300 focus:bg-white font-medium text-slate-700 transition-colors resize-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2.5 pt-2 border-t border-slate-100">
+                  <button 
+                    onClick={confirmRejectCloudRequest}
+                    className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-98 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-600/10 cursor-pointer"
+                  >
+                    تأكيد إلغاء التفعيل وحظر الجهاز 🚫
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setRejectingDevice(null);
+                      setRejectReasonText('');
+                    }}
+                    className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    تراجع وإلغاء
+                  </button>
                 </div>
               </motion.div>
             </div>
