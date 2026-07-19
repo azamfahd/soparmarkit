@@ -10,6 +10,8 @@ export interface Product {
   barcode?: string;
   unit?: string;
   supplier_id?: number;
+  production_date?: string;
+  expiration_date?: string;
 }
 
 export interface Supplier {
@@ -189,6 +191,21 @@ export class GroceryDatabase extends Dexie {
     });
     this.version(9).stores({
       products: '++id, name, category, stock_quantity, barcode, supplier_id',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date'
+    });
+    this.version(10).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
       customers: '++id, name, phone',
       sales: '++id, customer_id, created_at',
       saleItems: '++id, sale_id, product_id',

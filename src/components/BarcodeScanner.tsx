@@ -1,16 +1,51 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { X, Camera, RefreshCw, Sparkles, Volume2, VolumeX, Zap, ZapOff } from 'lucide-react';
+import { 
+  X, Camera, RefreshCw, Sparkles, Volume2, VolumeX, Zap, ZapOff, 
+  ShoppingCart, Plus, Minus, Trash2, Check, CreditCard, DollarSign, User, AlertTriangle, Printer, Download 
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { type Customer } from '../db';
 
 interface BarcodeScannerProps {
-  onScan: (barcode: string) => void;
+  onScan: (barcode: string, playBeep?: () => void) => void;
   onClose: () => void;
   title?: string;
   autoClose?: boolean;
+  scannerMode?: 'pos' | 'add-product' | 'edit-product' | 'manual';
+  cart?: { product_id: number; name: string; price: number; quantity: number; max_stock: number; unit?: string }[];
+  onUpdateCartQuantity?: (productId: number, delta: number) => void;
+  onRemoveFromCart?: (productId: number) => void;
+  onCheckout?: () => Promise<void>;
+  onPrintCart?: () => void;
+  onDownloadCart?: () => void;
+  formatPrice?: (price: number) => string;
+  paymentType?: 'cash' | 'debt';
+  setPaymentType?: (type: 'cash' | 'debt') => void;
+  selectedCustomer?: number | null;
+  setSelectedCustomer?: (id: number | null) => void;
+  customers?: Customer[];
 }
 
-export default function BarcodeScanner({ onScan, onClose, title = "ماسح الباركود", autoClose = true }: BarcodeScannerProps) {
+export default function BarcodeScanner({ 
+  onScan, 
+  onClose, 
+  title = "ماسح الباركود", 
+  autoClose = true,
+  scannerMode = 'pos',
+  cart = [],
+  onUpdateCartQuantity,
+  onRemoveFromCart,
+  onCheckout,
+  onPrintCart,
+  onDownloadCart,
+  formatPrice = (p) => `${p} ر.ي`,
+  paymentType = 'cash',
+  setPaymentType,
+  selectedCustomer = null,
+  setSelectedCustomer,
+  customers = []
+}: BarcodeScannerProps) {
   const [cameras, setCameras] = useState<any[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
   const [scannerActive, setScannerActive] = useState(false);
@@ -19,32 +54,117 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
   const [manualBarcode, setManualBarcode] = useState('');
   const [torchOn, setTorchOn] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
+  const [flashActive, setFlashActive] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const html5QrcodeRef = useRef<Html5Qrcode | null>(null);
   const lastScannedCode = useRef<string>('');
   const lastScannedTime = useRef<number>(0);
 
+  // Keep latest onScan callback in ref to prevent stale closures when called by third party camera engine
+  const onScanRef = useRef(onScan);
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  // Custom states for continuous autofocus, motion stabilization, and tap-to-focus feedback
+  const [focusRing, setFocusRing] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
+  const focusIntervalRef = useRef<any>(null);
+
   const scanContainerId = "barcode-scanner-reader";
 
+  // Force active camera track autofocus and optical stabilization constraints
+  const triggerAutofocus = async () => {
+    try {
+      if (html5QrcodeRef.current && html5QrcodeRef.current.isScanning) {
+        // @ts-ignore
+        const activeTrack = html5QrcodeRef.current.getActiveTrack();
+        if (activeTrack) {
+          const capabilities = activeTrack.getCapabilities();
+          const constraints: any = {};
+          
+          // Force continuous autofocus if supported
+          if (capabilities && capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+            constraints.focusMode = 'continuous';
+          }
+          // Force optical/digital image stabilization if supported
+          if (capabilities && capabilities.imageStabilizationMode) {
+            if (capabilities.imageStabilizationMode.includes('on')) {
+              constraints.imageStabilizationMode = 'on';
+            } else if (capabilities.imageStabilizationMode.includes('standard')) {
+              constraints.imageStabilizationMode = 'standard';
+            }
+          }
+          
+          if (Object.keys(constraints).length > 0) {
+            await activeTrack.applyConstraints({
+              advanced: [constraints]
+            });
+            console.log("Successfully locked focus & stabilization constraints:", constraints);
+          } else {
+            // Fallback for devices/browsers with limited constraint inspection
+            await activeTrack.applyConstraints({
+              // @ts-ignore
+              focusMode: 'continuous'
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to apply camera focus constraints:", e);
+    }
+  };
+
+  const handleTapToFocus = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!scannerActive) return;
+    
+    // Calculate click coordinates relative to the viewfinder box
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    setFocusRing({ x, y, visible: true });
+    
+    // Explicitly command a hardware focus search sweep
+    triggerAutofocus();
+    
+    // Automatically fade out focus indicator
+    setTimeout(() => {
+      setFocusRing(prev => ({ ...prev, visible: false }));
+    }, 1000);
+  };
+
   // Web Audio API Beep Sound Effect
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  
   const playBeep = () => {
     if (!soundEnabled) return;
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
+      if (navigator.vibrate) {
+        navigator.vibrate([50]);
+      }
+      let ctx = audioCtxRef.current;
+      if (!ctx) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        ctx = new AudioCtx();
+        audioCtxRef.current = ctx;
+      }
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       
       osc.type = "sine";
-      osc.frequency.setValueAtTime(1200, ctx.currentTime); // 1200Hz cleaner crisp chirp
+      osc.frequency.setValueAtTime(1400, ctx.currentTime); // Crisp retail scanner chirp
       gain.gain.setValueAtTime(0.15, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1); // quick 100ms fade
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12); // quick 120ms fade
       
       osc.connect(gain);
       gain.connect(ctx.destination);
       
       osc.start();
-      osc.stop(ctx.currentTime + 0.1);
+      osc.stop(ctx.currentTime + 0.12);
     } catch (e) {
       console.warn("Could not play scan beep:", e);
     }
@@ -71,7 +191,7 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
         if (navigator.permissions && navigator.permissions.query) {
           const permissionStatus = await navigator.permissions.query({ name: 'camera' as any });
           if (permissionStatus.state === 'denied') {
-            setErrorMsg("تم رفض الصلاحية مسبقاً. إذا كنت تستخدم التطبيق (PWA) أو المتصفح، يرجى الذهاب إلى: إعدادات الهاتف > التطبيقات > التطبيق الخاص بك (أو المتصفح Chrome) > الأذونات > الكاميرا، وقم باختيار 'السماح'. ثم أعد فتح التطبيق.");
+            setErrorMsg("تم رفض الصلاحية مسبقاً. يرجى الذهاب إلى إعدادات الكاميرا في متصفحك والسماح بالوصول ثم إعادة المحاولة.");
             return;
           }
         }
@@ -80,7 +200,6 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       }
 
       try {
-        // First get cameras using Html5Qrcode capabilities
         const devices = await Html5Qrcode.getCameras();
         if (!isMounted) return;
         
@@ -89,26 +208,37 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
           const backCam = devices.find(d => 
             d.label.toLowerCase().includes('back') || 
             d.label.toLowerCase().includes('environment') ||
-            d.label.toLowerCase().includes('rear')
+            d.label.toLowerCase().includes('rear') ||
+            d.label.toLowerCase().includes('خلفية')
           );
           const chosenCam = backCam || devices[0];
           setSelectedCameraId(chosenCam.id);
           
           await startScanning(chosenCam.id);
         } else {
-          // No listed cameras but permission given? Try environment via direct constraints
           await startScanning({ facingMode: "environment" });
         }
       } catch (err: any) {
         if (!isMounted) return;
-        console.error("Camera detection error, might need explicit permission prompt", err);
-        // Error from getCameras often means permission denied or not requested yet.
-        // We will show a special error asking them to grant the permission directly.
-        setErrorMsg("يجب إعطاء صلاحية الكاميرا للمتصفح حتى يتمكن الماسح من العمل. إذا رفضت الصلاحية سابقاً، يرجى تحديث الصفحة والسماح بها.");
+        // Improve logging to capture more detail about why camera failed
+        console.error("Camera initialization failure:", {
+          name: err.name,
+          message: err.message,
+          stack: err.stack
+        });
+        
+        let userMessage = "يجب السماح بالوصول إلى الكاميرا ليتمكن الماسح الضوئي من العمل.";
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          userMessage = "تم رفض الوصول للكاميرا. يرجى التحقق من إعدادات المتصفح والسماح للتطبيق بالوصول.";
+        } else if (err.name === 'NotFoundError') {
+          userMessage = "لم يتم العثور على كاميرا خلفية.";
+        }
+        
+        setErrorMsg(userMessage);
       }
     };
 
-    const initTimer = setTimeout(initializeScanner, 150);
+    const initTimer = setTimeout(initializeScanner, 10);
 
     return () => {
       isMounted = false;
@@ -123,9 +253,8 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         if (stream) {
           stream.getTracks().forEach(track => track.stop());
-          setErrorMsg(""); // Clear error to allow standard init
+          setErrorMsg(""); // Clear error
           
-          // Re-init
           const devices = await Html5Qrcode.getCameras();
           if (devices && devices.length > 0) {
             setCameras(devices);
@@ -140,15 +269,15 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
           }
         }
       } else {
-         setErrorMsg("يبدو أن المتصفح الخاص بك لا يدعم استخدام الكاميرا (ربما بسبب عدم استخدام اتصال آمن HTTPS).");
+         setErrorMsg("المتصفح لا يدعم الوصول المباشر للكاميرا بدون اتصال آمن HTTPS.");
       }
     } catch (err: any) {
       console.error("Direct permission request failed", err);
-      setErrorMsg("الوصول مرفوض. إذا كنت قد ثبت البرنامج كتطبيق، اذهب إلى: إعدادات الهاتف (Settings) > التطبيقات (Apps) > اسم تطبيقك أو المتصفح > الأذونات (Permissions) > الكاميرا، واختر 'سماح' (Allow).");
+      setErrorMsg("الوصول مرفوض. يرجى تفعيل إذن الكاميرا يدوياً للتطبيق في إعدادات جهازك.");
     }
   };
 
-  const startScanning = async (cameraIdOrConfig: string | { facingMode: string } | { facingMode: { exact: string } }) => {
+  const startScanning = async (cameraIdOrConfig: string | { facingMode: string }) => {
     setErrorMsg("");
     setTorchOn(false);
     setHasTorch(false);
@@ -169,50 +298,85 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       const scanner = new Html5Qrcode(scanContainerId);
       html5QrcodeRef.current = scanner;
 
-      // Improved config for faster scanning
+      // Hardware level video constraints to minimize blur from movement, force focus
+      const optimizedConstraints = {
+        facingMode: { ideal: "environment" },
+        // High frame rate (30fps) reduces exposure duration per frame, substantially reducing motion blur
+        frameRate: { ideal: 30 },
+        // Optimal HD resolution strikes the perfect balance between crisp details and decoding speed (reducing lag)
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        // @ts-ignore
+        focusMode: "continuous"
+      };
+
       const config = {
-        fps: 25, // Increased FPS for faster scanning
+        fps: 30, // Optimized 30 frames per second decoding scanrate for lightning speed
         qrbox: (viewFinderWidth: number, viewFinderHeight: number) => {
           const scannerWidth = Math.max(Math.min(viewFinderWidth * 0.9, 440), 220);
           const scannerHeight = Math.max(Math.min(viewFinderHeight * 0.55, 200), 90);
           return { width: scannerWidth, height: scannerHeight };
         },
         aspectRatio: 1.333333,
-        // Restricting formats specifically to common retail ones speeds up detection algorithm
+        // Integrate focus and stabilization constraints into camera configuration
+        videoConstraints: {
+          ...optimizedConstraints,
+          deviceId: typeof cameraIdOrConfig === 'string' ? { ideal: cameraIdOrConfig } : undefined
+        },
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true // Native hardware-accelerated Barcode engine (much faster & sharper)
+        },
         formatsToSupport: [
           Html5QrcodeSupportedFormats.EAN_13,
           Html5QrcodeSupportedFormats.EAN_8,
           Html5QrcodeSupportedFormats.UPC_A,
           Html5QrcodeSupportedFormats.UPC_E,
           Html5QrcodeSupportedFormats.CODE_128,
-          Html5QrcodeSupportedFormats.CODE_39,
-          Html5QrcodeSupportedFormats.QR_CODE
+          Html5QrcodeSupportedFormats.CODE_39
         ]
       };
 
+      // Ensure proper object-based fallback parameter injection
+      let finalCameraIdOrConfig: any = cameraIdOrConfig;
+      if (typeof cameraIdOrConfig === 'object') {
+        finalCameraIdOrConfig = {
+          ...cameraIdOrConfig,
+          ...optimizedConstraints
+        };
+      }
+
       await scanner.start(
-        cameraIdOrConfig as any,
+        finalCameraIdOrConfig,
         config,
         (decodedText) => {
           const now = Date.now();
           if (decodedText === lastScannedCode.current && (now - lastScannedTime.current) < 1200) {
-            return;
+            return; // Prevent duplicate immediate scans
           }
           lastScannedCode.current = decodedText;
           lastScannedTime.current = now;
-          playBeep();
-          onScan(decodedText);
+          
+          if (scannerMode !== 'pos') {
+            playBeep();
+          }
+          setFlashActive(true);
+          setTimeout(() => setFlashActive(false), 300);
+
+          onScanRef.current(decodedText, playBeep);
           if (autoClose) {
             stopScanning();
             onClose();
           }
         },
-        () => {} // ignore scan frame errors
+        () => {} // ignore frame errors
       );
 
       setScannerActive(true);
 
-      setTimeout(() => {
+      // Trigger continuous focus sweep immediately once stream boots up
+      setTimeout(async () => {
+        await triggerAutofocus();
+        
         try {
           if (html5QrcodeRef.current && html5QrcodeRef.current.isScanning) {
             // @ts-ignore
@@ -226,37 +390,48 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
             }
           }
         } catch (e) {
-          console.warn("Could not check torch support:", e);
+          console.warn("Torch capabilities check skipped:", e);
         }
-      }, 1000);
+      }, 800);
+
+      // Auto-Focus Watchdog: Periodically re-triggers active continuous focus sweep every 2.5 seconds,
+      // actively preventing the camera from getting locked into a blurry state if the phone is moved.
+      if (focusIntervalRef.current) {
+        clearInterval(focusIntervalRef.current);
+      }
+      focusIntervalRef.current = setInterval(() => {
+        triggerAutofocus();
+      }, 2500);
 
     } catch (err: any) {
-      console.error("Failed to start scanning with config:", cameraIdOrConfig, err);
-      
-      // Intelligent fallback chain
+      console.error("Failed to start scanner:", {
+        name: err.name,
+        message: err.message,
+        stack: err.stack
+      });
       if (typeof cameraIdOrConfig === 'string') {
-        console.log("Attempting fallback to generic environment camera...");
         try {
           await startScanning({ facingMode: "environment" });
           return;
-        } catch (fallbackErr) {
-          console.error("Environment fallback failed:", fallbackErr);
+        } catch (e) {
+          console.error("Camera fallback failed:", e);
         }
-      } else if (typeof cameraIdOrConfig === 'object' && cameraIdOrConfig.facingMode === 'environment') {
-         console.log("Attempting fallback to any available camera...");
-         try {
-           await startScanning({ facingMode: "user" }); // Try front camera if back fails
-           return;
-         } catch (e2) {
-            console.error("User facing fallback failed", e2);
-         }
       }
       
-      setErrorMsg("عذراً، لم نتمكن من تشغيل الكاميرا. يرجى التأكد من إعطاء صلاحية الكاميرا للمتصفح. قد تحتاج لإغلاق أي تطبيق آخر يستخدم الكاميرا، أو تحديث الصفحة والموافقة على الصلاحيات.");
+      let userMessage = "تعذر بدء تشغيل الكاميرا. يرجى إغلاق أي تطبيق كاميرا آخر والتأكد من إعطاء الصلاحيات.";
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        userMessage = "تم رفض الوصول للكاميرا. يرجى التحقق من إعدادات المتصفح والسماح للتطبيق بالوصول.";
+      }
+      
+      setErrorMsg(userMessage);
     }
   };
 
   const stopScanning = async () => {
+    if (focusIntervalRef.current) {
+      clearInterval(focusIntervalRef.current);
+      focusIntervalRef.current = null;
+    }
     if (html5QrcodeRef.current) {
       if (html5QrcodeRef.current.isScanning) {
         try {
@@ -267,9 +442,7 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       }
       try {
         await html5QrcodeRef.current.clear();
-      } catch (err) {
-        // ignore
-      }
+      } catch (e) {}
       html5QrcodeRef.current = null;
     }
     setScannerActive(false);
@@ -287,7 +460,7 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
       } as any);
       setTorchOn(nextState);
     } catch (err) {
-      console.error("Failed to toggle torch:", err);
+      console.error("Failed to toggle flashlight:", err);
     }
   };
 
@@ -302,8 +475,13 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (manualBarcode.trim()) {
-      playBeep();
-      onScan(manualBarcode.trim());
+      if (scannerMode !== 'pos') {
+        playBeep();
+      }
+      setFlashActive(true);
+      setTimeout(() => setFlashActive(false), 300);
+
+      onScan(manualBarcode.trim(), playBeep);
       setManualBarcode('');
       if (autoClose) {
         stopScanning();
@@ -312,8 +490,26 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
     }
   };
 
+  const handleScannerCheckout = async () => {
+    if (cart.length === 0 || !onCheckout) return;
+    setIsSubmitting(true);
+    try {
+      await onCheckout();
+      playBeep(); // Happy double beep on checkout
+      setTimeout(playBeep, 80);
+      onClose(); // Close the scanner since the sale is complete
+    } catch (err) {
+      console.error("Failed scanner checkout:", err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
   return (
-    <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-md z-50 flex items-center justify-center p-4 select-none dir-rtl">
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-lg z-50 flex items-center justify-center p-2 sm:p-4 select-none dir-rtl">
       {/* Dynamic continuous precision scanline styles */}
       <style>{`
         @keyframes precisionScan {
@@ -322,7 +518,7 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
           100% { top: 6%; }
         }
         .animate-precision-laser {
-          animation: precisionScan 2.4s ease-in-out infinite;
+          animation: precisionScan 2s ease-in-out infinite;
         }
       `}</style>
       
@@ -330,177 +526,410 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
-        className="bg-slate-900 border border-slate-700/80 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl relative"
+        transition={{ duration: 0.15, ease: 'easeOut' }}
+        className="bg-slate-900 border border-slate-800 w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl relative flex flex-col max-h-[95vh] sm:max-h-[90vh]"
       >
         {/* Header */}
-        <div className="bg-slate-900 border-b border-slate-800 p-4 flex justify-between items-center text-white">
+        <div className="bg-slate-900 border-b border-slate-800 p-4 flex justify-between items-center text-white shrink-0">
           <div className="flex items-center gap-2">
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
-            <h3 className="font-extrabold text-white text-base mr-1">{title}</h3>
+            <div>
+              <h3 className="font-black text-white text-base mr-1">{title}</h3>
+              {scannerMode === 'pos' && (
+                <p className="text-[10px] text-slate-400 font-bold mr-1">الوضع المستمر للمبيعات السريعة</p>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Intelligent Flashlight (Torch) Control */}
+            {scannerMode === 'pos' && onPrintCart && onDownloadCart && (
+              <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg">
+                <button 
+                  onClick={onPrintCart}
+                  className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 rounded-lg transition-all"
+                  title="طباعة"
+                >
+                  <Printer className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={onDownloadCart}
+                  className="p-2 text-slate-400 hover:text-emerald-400 hover:bg-slate-700 rounded-lg transition-all"
+                  title="تحميل"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             {hasTorch && (
               <button 
                 onClick={toggleTorch} 
-                className={`p-2 rounded-xl transition-all ${torchOn ? 'text-amber-400 bg-amber-500/15 border border-amber-500/20' : 'text-slate-400 bg-slate-800 hover:bg-slate-700'}`}
+                className={`p-2.5 rounded-xl transition-all ${torchOn ? 'text-amber-400 bg-amber-500/15 border border-amber-500/20' : 'text-slate-400 bg-slate-800 hover:bg-slate-700'}`}
                 title={torchOn ? "إيقاف الفلاش" : "تشغيل الفلاش للإضاءة"}
               >
-                {torchOn ? <Zap className="w-5 h-5 fill-amber-400" /> : <ZapOff className="w-5 h-5" />}
+                {torchOn ? <Zap className="w-4 h-4 fill-amber-400" /> : <ZapOff className="w-4 h-4" />}
               </button>
             )}
             
-            {/* Audio Feedback control */}
             <button 
               onClick={() => setSoundEnabled(!soundEnabled)} 
-              className={`p-2 rounded-xl transition-all ${soundEnabled ? 'text-emerald-400 bg-emerald-500/15 border border-emerald-500/20' : 'text-slate-400 bg-slate-800 hover:bg-slate-700'}`}
+              className={`p-2.5 rounded-xl transition-all ${soundEnabled ? 'text-emerald-400 bg-emerald-500/15 border border-emerald-500/20' : 'text-slate-400 bg-slate-800 hover:bg-slate-700'}`}
               title={soundEnabled ? "كتم صوت المسح" : "تشغيل صوت المسح"}
             >
-              {soundEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+              {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             </button>
             <button 
               onClick={() => { stopScanning().then(onClose); }} 
-              className="p-2 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-all"
+              className="p-2.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-all"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4.5 h-4.5" />
             </button>
           </div>
         </div>
 
-        {/* Camera Feed Context */}
-        <div className="p-5 space-y-4 bg-slate-900/40">
-          <div className="relative aspect-[4/3] w-full rounded-3xl bg-black border border-slate-800 overflow-hidden flex items-center justify-center shadow-[inset_0_4px_25px_rgba(0,0,0,0.85)]">
+        {/* Scrollable Scanner & POS Body Area */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+          
+          {/* Main Visual Terminal Grid (Camera + Info Summary) */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             
-            {/* The Scanner Reader Target Element */}
-            <div id={scanContainerId} className="w-full h-full object-cover"></div>
+            {/* Viewfinder Left Column (8 cols on desktop, full on mobile) */}
+            <div className={`${scannerMode === 'pos' ? 'md:col-span-7' : 'md:col-span-12'} space-y-3`}>
+              <div 
+                onClick={handleTapToFocus}
+                className={`relative cursor-pointer aspect-[4/3] w-full rounded-2xl bg-black border overflow-hidden flex items-center justify-center transition-all duration-300 ${
+                  flashActive 
+                    ? 'border-emerald-400 ring-8 ring-emerald-500/30 scale-[0.99] shadow-[0_0_20px_rgba(16,185,129,0.3)]' 
+                    : 'border-slate-800'
+                }`}
+                title="اضغط على الكاميرا للتركيز التلقائي السريع"
+              >
+                {/* The Scanner Reader Target Element */}
+                <div id={scanContainerId} className="w-full h-full object-cover"></div>
 
-            {/* Glowing Laser Scan Reticle Overlay */}
-            {scannerActive && !errorMsg && (
-              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                
-                {/* User Hint Text */}
-                <div className="mb-4 bg-slate-900/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-white/10 flex items-center gap-2 max-w-[90%] pointer-events-auto">
-                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <p className="text-white font-bold text-xs truncate">تأكد من إضاءة جيدة وقرب الكاميرا من الباركود</p>
+                {/* Interactive Touch-to-Focus visual indicator */}
+                {focusRing.visible && (
+                  <div 
+                    className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-20"
+                    style={{ left: focusRing.x, top: focusRing.y }}
+                  >
+                    <div className="w-14 h-14 border-2 border-dashed border-emerald-400 rounded-full animate-ping opacity-75 absolute" />
+                    <div className="w-8 h-8 border-2 border-emerald-400 rounded-full animate-pulse flex items-center justify-center">
+                      <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Glowing Laser Scan Reticle Overlay */}
+                {scannerActive && !errorMsg && (
+                  <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                    {/* Visual Target Area Frame */}
+                    <div className="w-[85%] h-[50%] max-w-[400px] max-h-[180px] border-2 border-dashed border-emerald-400/30 rounded-2xl relative flex items-center justify-center shadow-[0_0_0_9999px_rgba(9,15,29,0.65)]">
+                      {/* High Quality Tech Corner brackets */}
+                      <div className="absolute -top-1 -right-1 w-5 h-5 border-t-[3.5px] border-r-[3.5px] border-emerald-400 rounded-tr-lg" />
+                      <div className="absolute -top-1 -left-1 w-5 h-5 border-t-[3.5px] border-l-[3.5px] border-emerald-400 rounded-tl-lg" />
+                      <div className="absolute -bottom-1 -right-1 w-5 h-5 border-b-[3.5px] border-r-[3.5px] border-emerald-400 rounded-br-lg" />
+                      <div className="absolute -bottom-1 -left-1 w-5 h-5 border-b-[3.5px] border-l-[3.5px] border-emerald-400 rounded-bl-lg" />
+                      
+                      {/* Glowing Laser line */}
+                      <div className="absolute left-1 right-1 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_12px_2px_rgba(52,211,153,0.95)] animate-precision-laser" />
+                    </div>
+
+                    <span className="absolute bottom-3 text-[10px] font-black text-emerald-300 bg-slate-900/90 px-3 py-1.5 rounded-full border border-emerald-500/20 backdrop-blur-xs">
+                      ضع الباركود بداخل المربع
+                    </span>
+                  </div>
+                )}
+
+                {/* Camera activation loading state */}
+                {!scannerActive && !errorMsg && (
+                  <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 text-slate-400">
+                    <SpinnerLoading />
+                    <p className="text-xs font-bold text-slate-400">جاري تشغيل كاميرا جهازك فائقة الدقة...</p>
+                  </div>
+                )}
+
+                {errorMsg && (
+                  <div className="absolute inset-0 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center gap-3">
+                    <div className="p-3 rounded-full bg-red-500/10 text-red-500">
+                      <Camera className="w-7 h-7" />
+                    </div>
+                    <p className="text-xs font-extrabold text-red-400 max-w-[280px] leading-relaxed">
+                      {errorMsg}
+                    </p>
+                    <div className="flex flex-col gap-2 mt-2 w-full max-w-[220px]">
+                      <button 
+                        type="button"
+                        onClick={requestPermissionDirectly}
+                        className="text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 py-2.5 px-4 rounded-xl transition-all cursor-pointer"
+                      >
+                        السماح باستخدام الكاميرا
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => cameras.length > 0 ? startScanning(selectedCameraId) : startScanning({ facingMode: "environment" })}
+                        className="text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 py-2 px-4 rounded-xl border border-emerald-500/20 transition-all cursor-pointer"
+                      >
+                        إعادة محاولة الاتصال
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Camera selecting list (Only if multiple cameras are available) */}
+              {cameras.length > 1 && (
+                <div className="flex items-center gap-2 bg-slate-950/30 p-2.5 rounded-xl border border-slate-800">
+                  <span className="text-[10px] font-black text-slate-400 whitespace-nowrap">العدسة الحالية:</span>
+                  <div className="relative flex-1">
+                    <select 
+                      value={selectedCameraId} 
+                      onChange={handleCameraChange}
+                      className="w-full py-1.5 px-3 bg-slate-800 border border-slate-700 rounded-lg text-white text-[11px] font-bold outline-none cursor-pointer text-right appearance-none pl-7"
+                    >
+                      {cameras.map((device, index) => (
+                        <option key={`scancam-${device.id}-${index}`} value={device.id}>
+                          {device.label || `كاميرا خلفية رقم ${index + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                      <RefreshCw className="w-3 h-3 animate-pulse" />
+                    </div>
+                  </div>
                 </div>
+              )}
+            </div>
 
-                {/* Visual Target Area Frame */}
-                <div className="w-[90%] h-[55%] max-w-[440px] max-h-[200px] border-2 border-dashed border-emerald-400/40 rounded-3xl relative flex items-center justify-center shadow-[0_0_0_9999px_rgba(9,15,29,0.70)] animate-pulse-subtle">
-                  
-                  {/* High Quality Tech Corner brackets */}
-                  <div className="absolute -top-1 -right-1 w-6 h-6 border-t-[4px] border-r-[4px] border-emerald-400 rounded-tr-lg" />
-                  <div className="absolute -top-1 -left-1 w-6 h-6 border-t-[4px] border-l-[4px] border-emerald-400 rounded-tl-lg" />
-                  <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-[4px] border-r-[4px] border-emerald-400 rounded-br-lg" />
-                  <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-[4px] border-l-[4px] border-emerald-400 rounded-bl-lg" />
-                  
-                  {/* Glowing Laser line */}
-                  <div className="absolute left-1 right-1 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_12px_3px_rgba(52,211,153,0.9)] animate-precision-laser" />
-                  
-                  {/* Status Indicator inside Viewfinder */}
-                  <div className="absolute top-2 right-3 flex items-center gap-1.5 bg-black/60 px-2 py-0.5 rounded-md border border-slate-800">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span className="text-[8px] font-bold text-slate-300 font-mono tracking-wider uppercase">AF ON</span>
+            {/* Added Products Sidebar Column (Only in POS mode) */}
+            {scannerMode === 'pos' && (
+              <div className="md:col-span-5 bg-slate-950/40 border border-slate-800/80 p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                <div className="space-y-2 flex-1 flex flex-col min-h-[180px]">
+                  <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
+                    <div className="flex items-center gap-1.5">
+                      <ShoppingCart className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-xs font-black text-slate-200">🛒 المنتجات المضافة ({cartItemCount})</h4>
+                    </div>
                   </div>
 
-                  <span className="absolute bottom-2 text-[9px] font-bold text-emerald-400 bg-slate-950/90 px-3 py-1.5 rounded-full border border-emerald-500/20 backdrop-blur-sm shadow-md">
-                    ضع الباركود في هذا الإطار
-                  </span>
-                </div>
-              </div>
-            )}
+                  {/* Scrollable list inside the sidebar */}
+                  <div className="flex-1 overflow-y-auto divide-y divide-slate-900/60 max-h-[200px] sm:max-h-[240px] pr-1">
+                    {cart.length > 0 ? (
+                      cart.map((item) => (
+                        <motion.div 
+                          key={`scanned-cart-item-${item.product_id}`}
+                          initial={{ opacity: 0, y: 5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="py-2.5 flex flex-col gap-1 text-right"
+                        >
+                          <div className="flex justify-between items-start gap-1">
+                            <span className="text-xs font-black text-white truncate max-w-[120px]">{item.name}</span>
+                            <span className="text-xs font-black text-emerald-400 font-mono shrink-0">{formatPrice(item.price * item.quantity)}</span>
+                          </div>
+                          
+                          <div className="flex items-center justify-between gap-2 mt-1">
+                            <span className="text-[10px] text-slate-400 font-bold">
+                              {item.quantity} × {formatPrice(item.price)}
+                            </span>
 
-            {/* Error or Loading State */}
-            {!scannerActive && !errorMsg && (
-              <div className="absolute inset-0 bg-slate-950 flex flex-col items-center justify-center gap-3 text-slate-400">
-                <SpinnerLoading />
-                <p className="text-xs font-bold text-slate-400">جاري تفعيل مستشعر الكاميرات فائقة الاستجابة...</p>
-              </div>
-            )}
+                            <div className="flex items-center gap-1.5">
+                              {/* Minus */}
+                              <button
+                                type="button"
+                                onClick={() => onUpdateCartQuantity?.(item.product_id, -1)}
+                                className="w-5 h-5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 flex items-center justify-center transition-colors active:scale-90 cursor-pointer text-[10px]"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+                              
+                              {/* Plus */}
+                              <button
+                                type="button"
+                                onClick={() => onUpdateCartQuantity?.(item.product_id, 1)}
+                                className="w-5 h-5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 flex items-center justify-center transition-colors active:scale-90 cursor-pointer text-[10px]"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
 
-            {errorMsg && (
-              <div className="absolute inset-0 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center gap-3">
-                <div className="p-3 rounded-full bg-red-500/10 text-red-500">
-                  <Camera className="w-8 h-8" />
+                              {/* Remove */}
+                              <button
+                                type="button"
+                                onClick={() => onRemoveFromCart?.(item.product_id)}
+                                className="p-1 text-slate-500 hover:text-rose-500 rounded hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                title="إزالة"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-2 mt-4">
+                        <ShoppingCart className="w-6 h-6 text-slate-700 animate-pulse" />
+                        <p className="text-[10px] text-slate-500 font-bold">السلة فارغة حالياً</p>
+                        <p className="text-[9px] text-slate-600">امسح الباركود لإضافة سلع</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="text-xs font-bold text-red-400 max-w-[280px] leading-relaxed">
-                  {errorMsg}
-                </p>
-                <div className="flex flex-col gap-2 mt-2 w-full max-w-[240px]">
-                  <button 
-                    onClick={requestPermissionDirectly}
-                    className="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 px-4 py-3 rounded-xl transition-all"
-                  >
-                    السماح باستخدام الكاميرا
-                  </button>
-                  <button 
-                    onClick={() => cameras.length > 0 ? startScanning(selectedCameraId) : startScanning({ facingMode: "environment" })}
-                    className="text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-4 py-2.5 rounded-xl border border-emerald-500/20 transition-all"
-                  >
-                    إعادة محاولة الاتصال
-                  </button>
+
+                {/* Checkout Quick Settings Inside Scanner Sidebar */}
+                <div className="pt-2.5 border-t border-slate-800/80 space-y-2 shrink-0">
+                  <p className="text-[9px] font-black text-slate-400">⚙️ خيارات الدفع السريع:</p>
+                  
+                  {/* Payment Type Cash/Debt */}
+                  {setPaymentType && (
+                    <div className="grid grid-cols-2 gap-1 p-0.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('cash')}
+                        className={`py-1.5 px-2 rounded-lg text-[9px] font-black transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                          paymentType === 'cash' 
+                            ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10' 
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <DollarSign className="w-2.5 h-2.5" />
+                        نقدي (كاش)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaymentType('debt')}
+                        className={`py-1.5 px-2 rounded-lg text-[9px] font-black transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                          paymentType === 'debt' 
+                            ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' 
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <CreditCard className="w-2.5 h-2.5" />
+                        دين (آجل)
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Customer Selector for Debt */}
+                  {paymentType === 'debt' && setSelectedCustomer && customers.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="relative">
+                        <select
+                          value={selectedCustomer || ''}
+                          onChange={(e) => setSelectedCustomer(e.target.value ? Number(e.target.value) : null)}
+                          className="w-full py-1 px-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-[9px] font-bold outline-none cursor-pointer pr-5 text-right appearance-none"
+                        >
+                          <option value="">-- اختر العميل --</option>
+                          {customers.map(c => (
+                            <option key={`sc-cust-${c.id}`} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <User className="absolute right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 text-slate-500 pointer-events-none" />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
 
-          {/* Manual Barcode Input Backup */}
-          <form onSubmit={handleManualSubmit} className="flex gap-2 p-1.5 bg-slate-950/60 rounded-2xl border border-slate-800">
+          {/* Manual Barcode Input Form Backup */}
+          <form onSubmit={handleManualSubmit} className="flex gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800/80">
             <input 
               type="text" 
-              placeholder="أو اكتب رقم الباركود يدوياً هنا..." 
-              className="flex-1 p-2.5 bg-transparent text-white text-sm font-bold placeholder-slate-500 outline-none pr-3 text-left font-mono"
+              placeholder="اكتب رقم باركود السلعة يدوياً واضغط إدخال..." 
+              className="flex-1 py-2 px-3 bg-transparent text-white text-xs font-bold placeholder-slate-500 outline-none pr-2 text-left font-mono"
               value={manualBarcode}
               onChange={e => setManualBarcode(e.target.value)}
             />
             <button 
               type="submit"
               disabled={!manualBarcode.trim()}
-              className="px-4 py-2 bg-emerald-600 disabled:opacity-40 disabled:bg-slate-800 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all"
+              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:bg-slate-800 text-white rounded-lg text-[11px] font-black transition-all cursor-pointer"
             >
-              إدخال
+              إضافة ➕
             </button>
           </form>
 
-          {/* Active Helper Guidance Text */}
-          {scannerActive && !errorMsg && (
-            <div className="text-center bg-slate-950/30 p-3 rounded-2xl border border-slate-800/60">
-              <p className="text-xs text-slate-400 font-bold leading-relaxed">
-                🚀 التبويب المطور: يتميز الماسح بقدرة قراءة سريعة واكتشاف ذكي مدعوم بمعدل تحديث <span className="text-emerald-400">30 إطار/ثانية</span>. قرب الباركود تدريجياً لسرعة مذهلة في التعرف.
-              </p>
-            </div>
-          )}
-
-          {/* Device Selecting Controls */}
-          {cameras.length > 1 && (
-            <div className="flex items-center gap-3 bg-slate-950/20 p-3 rounded-2xl border border-slate-800/40">
-              <span className="text-xs font-extrabold text-slate-400 whitespace-nowrap">الكاميرا النشطة:</span>
-              <div className="relative flex-1">
-                <select 
-                  value={selectedCameraId} 
-                  onChange={handleCameraChange}
-                  className="w-full p-2 bg-slate-800 border border-slate-700/80 rounded-xl text-white text-xs font-bold outline-none focus:ring-1 focus:ring-emerald-500 appearance-none pr-8 cursor-pointer text-right"
-                >
-                  {cameras.map((device, index) => (
-                    <option key={`camera-dev-opt-${device.id || 'no-id'}-${index}`} value={device.id}>
-                      {device.label || `كاميرا خلفية رقم ${index + 1}`}
-                    </option>
-                  ))}
-                </select>
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                  <RefreshCw className="w-3.5 h-3.5" />
+          {/* Explanatory Technology Card Banner at the bottom (Only in POS mode) */}
+          {scannerMode === 'pos' && (
+            <div className="bg-gradient-to-r from-indigo-950/30 via-slate-900 to-indigo-950/30 border border-slate-800/80 p-3.5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 text-right">
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 text-emerald-400">
+                  <Sparkles className="w-4 h-4 shrink-0 animate-pulse" />
+                  <h4 className="text-xs font-black">تقنية مسح المنتجات المستمر والذكي ⚡</h4>
                 </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                  وجه كاميرا جهازك لملصقات المنتجات واحدة تلو الأخرى وسيقوم النظام تلقائياً بإضافتها وتحديث كمياتها في لوحة المنتجات المضافة بالجانب الأيسر فوراً مع إصدار صوت كاشير رائع.
+                </p>
+              </div>
+              <div className="text-[10px] text-emerald-300 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20 font-bold shrink-0 self-start sm:self-center">
+                ● النظام متصل وبانتظار المسح المباشر
               </div>
             </div>
           )}
         </div>
 
-        {/* Footer info branding */}
-        <div className="bg-slate-950/40 px-6 py-4 border-t border-slate-800/60 text-center flex items-center justify-center gap-1.5 text-slate-500">
-          <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="text-[10px] font-bold tracking-wider uppercase text-slate-400">الماسح الضوئي المطور فائق السرعة v2.1</span>
+        {/* Grand Sticky Footer */}
+        <div className="bg-slate-950 p-4 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          
+          {/* Total display inside scanner (Only in POS mode) */}
+          {scannerMode === 'pos' && (
+            <div className="text-right w-full sm:w-auto">
+              <p className="text-[9px] font-black text-slate-400 uppercase">إجمالي سلة الفاتورة:</p>
+              <p className="text-lg font-black font-mono text-emerald-400 mt-0.5">{formatPrice(cartTotal)}</p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end mt-2 sm:mt-0">
+            {scannerMode === 'pos' && cart.length > 0 && (
+              <>
+                <button 
+                  onClick={onPrintCart}
+                  className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  title="طباعة سلة المشتريات / الفاتورة المبدئية"
+                >
+                  <Printer className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={onDownloadCart}
+                  className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                  title="تحميل السلة بصيغة PDF"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
+            <button 
+              onClick={() => stopScanning().then(onClose)}
+              className="px-5 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-2xl text-xs font-bold transition-all cursor-pointer flex-1 sm:flex-none"
+            >
+              إغلاق النافذة
+            </button>
+            
+            {/* Instant checkout direct shortcut button from within scanner */}
+            {scannerMode === 'pos' && onCheckout && (
+              <button 
+                onClick={handleScannerCheckout}
+                disabled={cart.length === 0 || isSubmitting || (paymentType === 'debt' && !selectedCustomer)}
+                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:bg-slate-800 text-white rounded-2xl text-xs font-black transition-all shadow-lg shadow-emerald-600/15 flex items-center justify-center gap-1.5 flex-[2] sm:flex-none cursor-pointer"
+              >
+                {isSubmitting ? (
+                  <>
+                    <SpinnerLoading />
+                    <span>جاري ترحيل الفاتورة...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4.5 h-4.5" />
+                    <span>حفظ عملية البيع والفاتورة</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </motion.div>
     </div>
@@ -509,10 +938,10 @@ export default function BarcodeScanner({ onScan, onClose, title = "ماسح ال
 
 function SpinnerLoading() {
   return (
-    <div className="flex items-center justify-center space-x-2 space-x-reverse">
-      <div className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-      <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-      <div className="w-2.5 h-2.5 bg-emerald-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+    <div className="flex items-center justify-center space-x-1.5 space-x-reverse">
+      <div className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+      <div className="w-2 h-2 bg-emerald-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+      <div className="w-2 h-2 bg-emerald-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
     </div>
   );
 }

@@ -681,8 +681,71 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       });
     }
 
+    // 5. Expiry Date Alerts
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const thirtyDays = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+    let expiredStock = 0;
+    let expiringStock = 0;
+    
+    products.forEach(p => {
+      if ((p as any).expiration_date) {
+        const expDate = new Date((p as any).expiration_date);
+        if (expDate < today) expiredStock++;
+        else if (expDate <= thirtyDays) expiringStock++;
+      }
+    });
+
+    if (expiredStock > 0) {
+      list.push({
+        id: 5,
+        type: 'warning',
+        title: 'عاجل: توجد منتجات منتهية الصلاحية',
+        desc: `تحذير هام! هناك ${expiredStock} منتج في المستودع انتهت صلاحيتهم الفعّالة. يجب استبعادهم فوراً من الرفوف لمنع بيعها للزبائن بالخطأ.`
+      });
+    } else if (expiringStock > 0) {
+      list.push({
+        id: 5,
+        type: 'info',
+        title: 'منتجات قاربت على الانتهاء',
+        desc: `يوجد ${expiringStock} منتجات ستنتهي صلاحيتها خلال الـ 30 يوماً القادمة. يُنصح بعمل عروض ترويجية فورية أو خصومات (التصفية) لتسريع بيعها قبل خسارتها.`
+      });
+    }
+
+    // 6. Least selling products optimization
+    if (topProductsChart.length > 5) {
+      // Products with least revenue
+      const sortedByLeastRevenue = [...topProductsChart].sort((a, b) => a.revenue - b.revenue);
+      const leastSelling = sortedByLeastRevenue.slice(0, 3).map(p => p.name).join('، ');
+      
+      list.push({
+        id: 6,
+        type: 'info',
+        title: 'توصيات لإنعاش المنتجات الأقل مبيعاً',
+        desc: `لاحظ النظام ضعف حركة البيع للمنتجات: (${leastSelling}). كإجراء تصحيحي، اقرنها كباقات مع السلع الأكثر مبيعاً أو قدم عروض (اشتر واحد والثاني بنصف السعر) لتسريع دوران المخزون وتحريك رأس المال المعطل.`
+      });
+    }
+
+    // 7. System Tracking & Velocity
+    const velocity = performanceKPIs.salesTotal / Math.max(performanceKPIs.salesTransactionsCount, 1);
+    if (velocity > 100) {
+       list.push({
+        id: 7,
+        type: 'success',
+        title: 'مؤشر ممتاز لمتوسط سلة المشتريات للزبائن',
+        desc: `حركة النظام توضح أن متوسط سلة المشتريات للفاتورة الواحدة يبلغ ${formatPrice(velocity)}. هذا يعكس قوة شرائية ممتازة. فكر في إرساء برنامج نقاط ولاء للاحتفاظ بهؤلاء الزبائن المميزين.`
+       });
+    } else if (velocity > 0 && velocity < 15) {
+       list.push({
+        id: 7,
+        type: 'info',
+        title: 'ضعف في حجم سلة الزبون الشرائية',
+        desc: `متوسط إنفاق الزبون في الفاتورة الواحدة هو ${formatPrice(velocity)}. لتحسين المبيعات، درب الكاشير على اقتراح منتجات مكملة (البيع المتقاطع) قبل الدفع.`
+       });
+    }
+
     return list;
-  }, [performanceKPIs, products, formatPrice]);
+  }, [performanceKPIs, products, formatPrice, topProductsChart]);
 
   // --- Dynamic Professional PDF Report Generation ---
   const handleExportPDF = () => {

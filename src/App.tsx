@@ -76,6 +76,7 @@ import {
 } from 'recharts';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
 import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from './utils/licensing';
+import { lookupBarcodeOnline } from './utils/barcodeLookup';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   submitActivationRequest, 
@@ -96,6 +97,7 @@ interface Summary {
   totalCostOfSales: number;
   totalDebts: number;
   lowStock: number;
+  expiringStock: number;
   totalProfit: number;
   totalInventoryCost: number;
   monthlySales: number;
@@ -313,6 +315,7 @@ export default function App() {
       totalCostOfSales: 0,
       totalDebts: 0,
       lowStock: 0,
+      expiringStock: 0,
       totalProfit: 0,
       totalInventoryCost: 0,
       monthlySales: 0,
@@ -434,10 +437,10 @@ export default function App() {
   const [saleNotes, setSaleNotes] = useState('');
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddCustomer, setShowAddCustomer] = useState(false);
-  const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined as number | undefined });
+  const [newProduct, setNewProduct] = useState({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined as number | undefined, production_date: '', expiration_date: '' });
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
-  const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product'>('pos');
+  const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product' | 'manual'>('pos');
   const [scannedProductInfo, setScannedProductInfo] = useState<Product | null>(null);
   const [newCustomer, setNewCustomer] = useState({ name: '', phone: '', initialDebt: '' });
   const [searchTerm, setSearchTerm] = useState('');
@@ -542,8 +545,13 @@ export default function App() {
   const [currency, setCurrency] = useState('ر.ي');
   const [roundingFactor, setRoundingFactor] = useState<number | null>(null);
   const [showReceipt, setShowReceipt] = useState<any>(null);
-  const [notification, setNotification] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void } | null>(null);
+  const [notification, setNotification] = useState<{
+    message: string;
+    type: 'success' | 'error';
+    action?: { label: string; onClick: () => void };
+  } | null>(null);
+  const notificationTimeoutRef = useRef<any>(null);
+  const [confirmAction, setConfirmAction] = useState<{ title: string, message: string, onConfirm: () => void, onCancel?: () => void } | null>(null);
   const [rejectingDevice, setRejectingDevice] = useState<{ deviceId: string; storeName: string } | null>(null);
   const [rejectReasonText, setRejectReasonText] = useState('');
 
@@ -572,6 +580,7 @@ export default function App() {
 
   // States for Security and Permissions / إدارة الصلاحيات والأمان للمدير
   const [permissionsEnabled, setPermissionsEnabled] = useState(false);
+  const [autoLookupBarcode, setAutoLookupBarcode] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [protectedActions, setProtectedActions] = useState<Record<string, boolean>>({
     analytics: true,
@@ -823,6 +832,10 @@ export default function App() {
     if (permSetting) {
       setPermissionsEnabled(permSetting.value);
     }
+    const autoLookupSetting = appSettings.find(s => s.key === 'autoLookupBarcode');
+    if (autoLookupSetting) {
+      setAutoLookupBarcode(autoLookupSetting.value);
+    }
     const pinSetting = appSettings.find(s => s.key === 'adminPin');
     if (pinSetting) {
       if (pinSetting.value && !isSHA256(pinSetting.value)) {
@@ -982,6 +995,27 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (products.length === 0) return;
+
+    const today = new Date().toISOString().split('T')[0];
+    const lastAlert = localStorage.getItem('last_expiration_alert_date');
+
+    if (lastAlert !== today) {
+      const expiringSoon = products.filter(p => {
+          if (!p.expiration_date) return false;
+          const expDate = new Date(p.expiration_date);
+          const diffDays = Math.ceil((expDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays >= 0 && diffDays <= 30; // 30 days window
+      });
+
+      if (expiringSoon.length > 0) {
+        showNotification(`تنبيه: يوجد ${expiringSoon.length} منتجات تقترب صلاحيتها من الانتهاء!`, 'error');
+        localStorage.setItem('last_expiration_alert_date', today);
+      }
+    }
+  }, [products]);
+
   const handleInstall = async () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
@@ -992,9 +1026,19 @@ export default function App() {
     }
   };
 
-  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    setNotification({ message, type });
-    setTimeout(() => setNotification(null), 3000);
+  const showNotification = (
+    message: string, 
+    type: 'success' | 'error' = 'success', 
+    action?: { label: string; onClick: () => void }
+  ) => {
+    if (notificationTimeoutRef.current) {
+      clearTimeout(notificationTimeoutRef.current);
+    }
+    setNotification({ message, type, action });
+    const duration = action ? 6000 : 3000;
+    notificationTimeoutRef.current = setTimeout(() => {
+      setNotification(null);
+    }, duration);
   };
 
   // --- Licensing & Activation Handlers ---
@@ -1361,12 +1405,26 @@ export default function App() {
     const allCustomers = await db.customers.toArray();
     const lowStockCount = await db.products.where('stock_quantity').below(5).count();
     
+    const todayForExpiry = new Date();
+    todayForExpiry.setHours(0, 0, 0, 0);
+    const thirtyDaysFromNow = new Date(todayForExpiry.getTime() + 30 * 24 * 60 * 60 * 1000);
+    
+    const allProducts = await db.products.toArray();
+    let expiringStockCount = 0;
+    allProducts.forEach(p => {
+      if (p.expiration_date) {
+        const expDate = new Date(p.expiration_date);
+        if (expDate <= thirtyDaysFromNow) {
+          expiringStockCount++;
+        }
+      }
+    });
+    
     const totalSales = allSales.reduce((sum, s) => sum + s.total_amount, 0);
     const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
 
     // Profit calculation
     const allSaleItems = await db.saleItems.toArray();
-    const allProducts = await db.products.toArray();
     const productMap = new Map(allProducts.map(p => [p.id, p]));
     
      let totalInventoryCost = 0;
@@ -1427,6 +1485,7 @@ export default function App() {
        totalCostOfSales: totalSupplierBalances,
        totalDebts,
        lowStock: lowStockCount,
+       expiringStock: expiringStockCount,
        totalProfit,
        totalInventoryCost,
        monthlySales,
@@ -2066,16 +2125,30 @@ export default function App() {
   };
 
   const handleAddProduct = async () => {
+    if (!newProduct.name || !newProduct.name.trim()) {
+      showNotification('يجب إدخال اسم المنتج', 'error');
+      return;
+    }
+    if (newProduct.sale === '' || isNaN(Number(newProduct.sale))) {
+      showNotification('يجب إدخال سعر البيع بشكل صحيح', 'error');
+      return;
+    }
+    if (newProduct.stock === '' || isNaN(Number(newProduct.stock))) {
+      showNotification('يجب إدخال الكمية بشكل صحيح', 'error');
+      return;
+    }
     const stock = Number(newProduct.stock);
     const productData: any = {
       name: newProduct.name,
-      cost_price: Number(newProduct.cost),
+      cost_price: Number(newProduct.cost) || 0,
       sale_price: Number(newProduct.sale),
       stock_quantity: stock,
       category: newProduct.category,
       barcode: newProduct.barcode.trim() || undefined,
       unit: newProduct.unit.trim() || undefined,
-      supplier_id: newProduct.supplier_id
+      supplier_id: newProduct.supplier_id,
+      production_date: newProduct.production_date || undefined,
+      expiration_date: newProduct.expiration_date || undefined
     };
 
     try {
@@ -2098,7 +2171,11 @@ export default function App() {
 
     setShowAddProduct(false);
     setAddProfitPercent('');
-    setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined });
+    setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: '', unit: '', supplier_id: undefined, production_date: '', expiration_date: '' });
+    if (scannerMode === 'pos' || scannerMode === 'add-product') {
+      setIsScannerOpen(true);
+      setActiveTab('pos');
+    }
   };
 
   const handleUpdateStock = async () => {
@@ -2150,6 +2227,18 @@ export default function App() {
 
   const handleEditProduct = async () => {
     if (!editingProduct || !editingProduct.id) return;
+    if (!editingProduct.name || !editingProduct.name.trim()) {
+      showNotification('يجب إدخال اسم المنتج', 'error');
+      return;
+    }
+    if (editingProduct.sale_price === undefined || editingProduct.sale_price === null || isNaN(Number(editingProduct.sale_price))) {
+      showNotification('يجب إدخال سعر البيع بشكل صحيح', 'error');
+      return;
+    }
+    if (editingProduct.stock_quantity === undefined || editingProduct.stock_quantity === null || isNaN(Number(editingProduct.stock_quantity))) {
+      showNotification('يجب إدخال الكمية بشكل صحيح', 'error');
+      return;
+    }
     
     try {
       await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
@@ -3060,15 +3149,17 @@ export default function App() {
     }
   };
 
-  const handleBarcodeScan = (code: string) => {
+  const handleBarcodeScan = (code: string, playBeep?: () => void) => {
     if (confirmAction) {
       return; // Ignore any background camera scans while a dialog is active
     }
     if (scannerMode === 'add-product') {
+      playBeep?.();
       setNewProduct(prev => ({ ...prev, barcode: code }));
       showNotification(`تم قراءة الباركود: ${code}`);
     } else if (scannerMode === 'edit-product') {
       if (editingProduct) {
+        playBeep?.();
         setEditingProduct(prev => prev ? { ...prev, barcode: code } : null);
         showNotification(`تم تسجيل الباركود: ${code}`);
       }
@@ -3077,6 +3168,7 @@ export default function App() {
       const product = products.find(p => p.barcode && p.barcode.trim() === trimmedCode);
       if (product) {
         if (product.stock_quantity <= 0) {
+          playBeep?.();
           setIsScannerOpen(false); // Close the scanner to stop background feed and focus user guidance
           showNotification(`تنبيه: المنتج "${product.name}" غير متوفر في المخزون`, 'error');
           setScannedProductInfo(product);
@@ -3100,51 +3192,155 @@ export default function App() {
             }
           });
         } else {
-          addToCart(product);
-          setScannedProductInfo(product);
-          showNotification(`تمت إضافة "${product.name}" إلى السلة`);
+          // التحقق مما إذا كان المنتج مضافاً مسبقاً في السلة لتجنب تكرار الإضافة التلقائية للكمية
+          const isAlreadyInCart = cart.some(item => item.product_id === product.id);
+          if (isAlreadyInCart) {
+            setScannedProductInfo(product);
+            showNotification(
+              `المنتج "${product.name}" موجود ومضاف مسبقاً للسلة`,
+              'success',
+              {
+                label: 'تكرار الكمية +1 🔁',
+                onClick: () => {
+                  setConfirmAction({
+                    title: 'تأكيد تكرار الكمية',
+                    message: `هل أنت متأكد من رغبتك في زيادة كمية "${product.name}" بمقدار 1 قطعة إضافية؟`,
+                    onConfirm: () => {
+                      setCart(prevCart => {
+                        const existing = prevCart.find(item => item.product_id === product.id);
+                        if (existing) {
+                          if (existing.quantity + 1 > product.stock_quantity) {
+                            showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
+                            return prevCart;
+                          }
+                          return prevCart.map(item =>
+                            item.product_id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+                          );
+                        }
+                        return prevCart;
+                      });
+                      setConfirmAction(null);
+                      showNotification(`تم زيادة كمية "${product.name}" بمقدار 1 بنجاح`, 'success');
+                    }
+                  });
+                }
+              }
+            );
+          } else {
+            playBeep?.();
+            addToCart(product);
+            setScannedProductInfo(product);
+            showNotification(`تمت إضافة "${product.name}" إلى السلة`);
+          }
         }
       } else {
+        playBeep?.();
         setIsScannerOpen(false); // Close the scanner to stop background feed and focus product creation
-        showNotification(`الرمز ${code} غير مرتبط بأي منتج`, 'error');
-        setConfirmAction({
-          title: 'منتج غير مسجل',
-          message: `لم يتم العثور على الباركود (${code}) في المخزون. هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
-          onConfirm: () => {
-            setConfirmAction(null);
-            setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined });
-            setShowAddProduct(true);
-          }
-        });
+        
+        if (autoLookupBarcode) {
+          showNotification('جاري البحث عن المنتج عبر الإنترنت...', 'success');
+          lookupBarcodeOnline(code).then(onlineData => {
+            if (onlineData) {
+              setConfirmAction({
+                title: 'تم العثور على المنتج!',
+                message: `تم جلب بيانات "${onlineData.name}" من الإنترنت. هل ترغب في إضافته للمخزون الآن؟`,
+                onConfirm: () => {
+                  setConfirmAction(null);
+                  setNewProduct({ 
+                    name: onlineData.name, 
+                    category: onlineData.category || '', 
+                    cost: '', 
+                    sale: '', 
+                    stock: '', 
+                    barcode: code, 
+                    unit: onlineData.unit || '', 
+                    supplier_id: undefined,
+                    production_date: '',
+                    expiration_date: ''
+                  });
+                  setShowAddProduct(true);
+                  setActiveTab('inventory');
+                },
+                onCancel: () => {
+                  if (scannerMode === 'pos') {
+                    setIsScannerOpen(true);
+                  }
+                }
+              });
+            } else {
+              showNotification(`الرمز ${code} غير مرتبط بأي منتج محلياً ولا على الإنترنت`, 'error');
+              setConfirmAction({
+                title: 'منتج غير مسجل',
+                message: `لم يتم العثور على الباركود (${code}). هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
+                onConfirm: () => {
+                  setConfirmAction(null);
+                  setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined, production_date: '', expiration_date: '' });
+                  setShowAddProduct(true);
+                  setActiveTab('inventory');
+                },
+                onCancel: () => {
+                  if (scannerMode === 'pos') {
+                    setIsScannerOpen(true);
+                  }
+                }
+              });
+            }
+          });
+        } else {
+          showNotification(`الرمز ${code} غير مرتبط بأي منتج`, 'error');
+          setConfirmAction({
+            title: 'منتج غير مسجل',
+            message: `لم يتم العثور على الباركود (${code}) في المخزون. هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
+            onConfirm: () => {
+              setConfirmAction(null);
+              setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined, production_date: '', expiration_date: '' });
+              setShowAddProduct(true);
+              setActiveTab('inventory');
+            },
+            onCancel: () => {
+              if (scannerMode === 'pos') {
+                setIsScannerOpen(true);
+              }
+            }
+          });
+        }
       }
     }
   };
 
   const addToCart = (product: Product, quantity: number = 1) => {
+    if (navigator.vibrate) {
+      navigator.vibrate(30);
+    }
     if (product.stock_quantity <= 0) {
       showNotification('عذراً، هذا المنتج غير متوفر في المخزون', 'error');
       return;
     }
 
-    const existing = cart.find(item => item.product_id === product.id);
-    if (existing) {
-      if (existing.quantity + quantity > product.stock_quantity) {
-        showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
-        return;
+    setCart(prevCart => {
+      const existing = prevCart.find(item => item.product_id === product.id);
+      if (existing) {
+        if (existing.quantity + quantity > product.stock_quantity) {
+          showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
+          return prevCart;
+        }
+        return prevCart.map(item => 
+          item.product_id === product.id ? { ...item, quantity: item.quantity + quantity } : item
+        );
+      } else {
+        if (quantity > product.stock_quantity) {
+          showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
+          return prevCart;
+        }
+        return [...prevCart, { product_id: product.id, name: product.name, price: product.sale_price, quantity: quantity, base_quantity: quantity, max_stock: product.stock_quantity, unit: product.unit }];
       }
-      setCart(cart.map(item => 
-        item.product_id === product.id ? { ...item, quantity: item.quantity + quantity } : item
-      ));
-    } else {
-      if (quantity > product.stock_quantity) {
-        showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
-        return;
-      }
-      setCart([...cart, { product_id: product.id, name: product.name, price: product.sale_price, quantity: quantity, max_stock: product.stock_quantity, unit: product.unit }]);
-    }
+    });
   };
 
   const updateCartQuantity = (productId: number, delta: number) => {
+    if (navigator.vibrate) {
+      navigator.vibrate(30);
+    }
     setCart(cart.map(item => {
       if (item.product_id === productId) {
         const newQty = item.quantity + delta;
@@ -3161,6 +3357,87 @@ export default function App() {
 
   const removeFromCart = (productId: number) => {
     setCart(cart.filter(item => item.product_id !== productId));
+  };
+
+  const generateCartHTML = () => {
+    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const dateStr = formatDateTimeWithDay(new Date());
+    let customerStr = '';
+    if (selectedCustomer) {
+      const cust = customers.find(c => c.id === selectedCustomer);
+      if (cust) customerStr = `<div style="margin-bottom: 10px; font-size: 12px;"><strong>الزبون:</strong> ${cust.name}</div>`;
+    }
+
+    return `
+      <div dir="rtl" style="font-family: Arial, sans-serif; padding: 20px; color: #000; width: 100%; max-width: 400px; margin: 0 auto; background: #fff;">
+        <div style="text-align: center; border-bottom: 2px dashed #000; margin-bottom: 15px; padding-bottom: 10px;">
+          <h2 style="margin: 0 0 5px 0;">${storeName}</h2>
+          <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">فاتورة مبدئية / سلة مشتريات</div>
+          <div style="font-size: 11px;">تاريخ: ${dateStr}</div>
+        </div>
+        ${customerStr}
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px;">
+          <thead>
+            <tr style="border-bottom: 1px solid #000;">
+              <th style="padding: 5px 0; text-align: right;">الصنف</th>
+              <th style="padding: 5px 0; text-align: center;">الكمية</th>
+              <th style="padding: 5px 0; text-align: left;">المجموع</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cart.map(item => `
+              <tr>
+                <td style="padding: 5px 0; text-align: right;">${item.name}</td>
+                <td style="padding: 5px 0; text-align: center; font-family: monospace;">${item.quantity}</td>
+                <td style="padding: 5px 0; text-align: left; font-family: monospace;">${formatPrice(item.price * item.quantity)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div style="border-top: 2px dashed #000; margin-top: 15px; padding-top: 10px; display: flex; justify-content: space-between; font-weight: bold; font-size: 14px;">
+          <span>الإجمالي:</span>
+          <span style="font-family: monospace;">${formatPrice(total)}</span>
+        </div>
+      </div>
+    `;
+  };
+
+  const handlePrintCart = () => {
+    if (cart.length === 0) return showNotification('السلة فارغة', 'warning');
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>طباعة السلة - ${storeName}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+            }
+          </style>
+        </head>
+        <body onload="window.print(); window.close();">
+          ${generateCartHTML()}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  const handleDownloadCartPDF = () => {
+    if (cart.length === 0) return showNotification('السلة فارغة', 'warning');
+    const element = document.createElement('div');
+    element.innerHTML = generateCartHTML();
+    
+    const opt = {
+      margin: 5,
+      filename: `cart_${new Date().getTime()}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2 },
+      jsPDF: { unit: 'mm', format: [80, 200], orientation: 'portrait' }
+    };
+    
+    html2pdf().set(opt).from(element).save();
   };
 
   const handleCheckout = async () => {
@@ -4148,6 +4425,26 @@ export default function App() {
                 </motion.div>
               )}
 
+              {summary.expiringStock > 0 && (
+                <motion.div 
+                  initial={{ x: -20, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  className="bg-amber-50 p-4 rounded-3xl border border-amber-100 flex items-center justify-between gap-4 cursor-pointer hover:bg-amber-100 transition-colors"
+                  onClick={() => setActiveTab('products')}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="bg-amber-100 p-3 rounded-2xl">
+                      <AlertCircle className="text-amber-600 w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-amber-900">تنبيه الصلاحية</p>
+                      <p className="text-sm text-amber-700">لديك {summary.expiringStock} منتجات قاربت صلاحيتها على الانتهاء، اضغط هنا للمراجعة.</p>
+                    </div>
+                  </div>
+                  <ChevronLeft className="w-5 h-5 text-amber-400" />
+                </motion.div>
+              )}
+
               <Card className="p-6 h-80 rounded-3xl shadow-sm border-slate-100 flex flex-col">
                 <div className="flex justify-between items-center mb-6">
                   <h3 className="font-bold text-slate-800">تحليل المبيعات</h3>
@@ -4456,8 +4753,28 @@ export default function App() {
                       className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
                     >
                       <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
-                        <h2 className="text-xl font-extrabold text-slate-900">السلة</h2>
-                        <button onClick={() => setIsCartExpanded(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-xl font-extrabold text-slate-900">السلة</h2>
+                          {cart.length > 0 && (
+                            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
+                              <button 
+                                onClick={handlePrintCart}
+                                className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-white rounded-md transition-all cursor-pointer shadow-sm"
+                                title="طباعة السلة"
+                              >
+                                <Printer className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={handleDownloadCartPDF}
+                                className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-white rounded-md transition-all cursor-pointer shadow-sm"
+                                title="تحميل PDF"
+                              >
+                                <Download className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        <button onClick={() => setIsCartExpanded(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors cursor-pointer">
                           <X className="w-5 h-5 text-slate-500" />
                         </button>
                       </div>
@@ -4567,36 +4884,23 @@ export default function App() {
                             return (
                               <div 
                                 key={`cart-item-${item.product_id ?? 'no-id'}-${idx}`} 
-                                className="bg-white p-3 rounded-2xl border border-slate-150/70 hover:border-slate-200 shadow-xs transition-all flex flex-col gap-3 text-right"
+                                className="bg-white p-2 sm:p-2.5 rounded-xl border border-slate-150/70 hover:border-slate-200 shadow-xs transition-all flex flex-col gap-2 text-right relative overflow-hidden"
                               >
-                                {/* الصف الأول: اسم المنتج والتحكم بالحذف وسعر الوحدة */}
                                 <div className="flex justify-between items-start gap-2">
-                                  <div className="space-y-0.5">
-                                    <p className="font-extrabold text-slate-800 text-xs sm:text-sm leading-snug">{item.name}</p>
-                                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 font-bold">
-                                      <span>سعر الوحدة:</span>
-                                      <span className="font-mono text-slate-600">{formatPrice(item.price)}</span>
-                                      {item.unit && (
-                                        <span className="bg-slate-100 text-slate-500 px-1 rounded-md text-[9px] font-bold">
-                                          {item.unit}
-                                        </span>
-                                      )}
-                                    </div>
+                                  <div className="flex-1 min-w-0 pr-1">
+                                    <p className="font-extrabold text-slate-800 text-xs sm:text-sm truncate" title={item.name}>{item.name}</p>
+                                    <p className="text-[9px] text-slate-400 font-bold mt-0.5">{formatPrice(item.price)} {item.unit ? `/ ${item.unit}` : ''}</p>
                                   </div>
-                                  
-                                  <button 
-                                    onClick={() => removeFromCart(item.product_id)}
-                                    className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-all shrink-0 cursor-pointer"
-                                    title="حذف من السلة"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
+                                  <div className="text-left shrink-0">
+                                    <p className="text-[9px] text-slate-400 font-bold leading-none mb-1">المجموع</p>
+                                    <p className="text-xs font-black font-mono text-emerald-600 leading-none">
+                                      {formatPrice(subtotal)}
+                                    </p>
+                                  </div>
                                 </div>
 
-                                {/* الصف الثاني: التحكم بالكمية يدوي وتحديد الكسر والمجموع */}
-                                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                                  {/* أداة التحكم بالكمية والادخال اليدوي */}
-                                  <div className="flex items-center gap-1">
+                                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-50">
+                                  <div className="flex items-center bg-slate-50 border border-slate-100 rounded-lg overflow-hidden shrink-0">
                                     <button 
                                       type="button"
                                       onClick={() => {
@@ -4604,8 +4908,7 @@ export default function App() {
                                         const val = Math.max(0, currentVal - 1);
                                         setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
                                       }}
-                                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-sm transition-all active:scale-95 cursor-pointer"
-                                      title="إنقاص الكمية بـ 1"
+                                      className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-slate-600 font-black text-sm transition-all cursor-pointer"
                                     >
                                       -
                                     </button>
@@ -4625,13 +4928,13 @@ export default function App() {
                                         if (isNaN(val)) return;
                                         if (val < 0) return;
                                         if (val > item.max_stock) {
-                                          showNotification(`تنبيه: الكمية تتجاوز المتوفر بالمخزن (${item.max_stock})`, 'error');
+                                          showNotification(`تنبيه: الكمية تتجاوز المخزون (${item.max_stock})`, 'error');
                                           setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: item.max_stock } : c));
                                           return;
                                         }
                                         setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
                                       }}
-                                      className="w-14 h-7 text-center bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold font-mono focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none"
+                                      className="w-10 h-7 text-center bg-white border-x border-slate-100 text-[11px] font-bold font-mono outline-none"
                                       placeholder="0"
                                     />
 
@@ -4641,49 +4944,59 @@ export default function App() {
                                         const currentVal = Number(item.quantity) || 0;
                                         const val = currentVal + 1;
                                         if (val > item.max_stock) {
-                                          showNotification('لا يمكن تجاوز الكمية المتوفرة في المخزن', 'error');
+                                          showNotification('لا يمكن تجاوز المخزون', 'error');
                                           return;
                                         }
                                         setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
                                       }}
-                                      className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-sm transition-all active:scale-95 cursor-pointer"
-                                      title="زيادة الكمية بـ 1"
+                                      className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-slate-600 font-black text-sm transition-all cursor-pointer"
                                     >
                                       +
                                     </button>
                                   </div>
 
-                                  {/* القائمة المنسدلة للكسر (نصف، ثلث، ربع) */}
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-[10px] font-bold text-slate-400">الكسر:</span>
+                                  <div className="flex items-center gap-1.5 shrink-0">
                                     <select
                                       value={selectedFraction}
                                       onChange={(e) => {
                                         const fractionVal = parseFloat(e.target.value);
-                                        const currentInt = Math.floor(Number(item.quantity) || 0);
-                                        let finalQty = currentInt + fractionVal;
+                                        const baseQty = item.base_quantity || item.quantity;
+                                        
+                                        // Only allow fraction selection if current quantity is equal to base quantity
+                                        // to avoid multiplicative issues.
+                                        if (item.quantity !== baseQty && fractionVal !== 1) {
+                                          showNotification('يجب اختيار كامل الكمية قبل اختيار كسر', 'error');
+                                          return;
+                                        }
+
+                                        if (fractionVal === 1) {
+                                            setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: baseQty } : c));
+                                            return;
+                                        }
+
+                                        let finalQty = baseQty * fractionVal;
                                         if (finalQty > item.max_stock) {
-                                          showNotification(`تجاوزت الحد الأقصى للمخزون (${item.max_stock})`, 'error');
+                                          showNotification(`تجاوز المخزون (${item.max_stock})`, 'error');
                                           finalQty = item.max_stock;
                                         }
                                         setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(finalQty.toFixed(2)) } : c));
                                       }}
-                                      className="p-1 pr-5 pl-1 rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-black text-slate-700 focus:border-emerald-500 outline-none cursor-pointer"
+                                      className="h-7 px-1 rounded-lg border border-slate-100 bg-slate-50 text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
                                     >
-                                      <option value="0">كامل (1.0)</option>
-                                      <option value="0.5">نصف (0.50)</option>
-                                      <option value="0.33">ثلث (0.33)</option>
-                                      <option value="0.25">ربع (0.25)</option>
-                                      <option value="0.75">ثلاثة أرباع (0.75)</option>
+                                      <option value="1">كامل</option>
+                                      <option value="0.5">نصف</option>
+                                      <option value="0.33">ثلث</option>
+                                      <option value="0.25">ربع</option>
+                                      <option value="0.75">ثلاثة أرباع</option>
                                     </select>
-                                  </div>
-
-                                  {/* المجموع للسلعة */}
-                                  <div className="text-left shrink-0">
-                                    <p className="text-[9px] text-slate-400 font-bold">المجموع</p>
-                                    <p className="text-xs font-black font-mono text-emerald-600 leading-none mt-0.5">
-                                      {formatPrice(subtotal)}
-                                    </p>
+                                    
+                                    <button 
+                                      onClick={() => removeFromCart(item.product_id)}
+                                      className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                                      title="حذف"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
                                   </div>
                                 </div>
                               </div>
@@ -4721,7 +5034,7 @@ export default function App() {
                   <Button variant="outline" className="flex items-center gap-2" onClick={handleDownloadInventoryPDF}>
                     <Printer className="w-4 h-4" /> تقرير PDF
                   </Button>
-                  <Button variant="outline" className="flex items-center gap-2" onClick={() => setShowAddProduct(true)}>
+                  <Button variant="outline" className="flex items-center gap-2" onClick={() => { setScannerMode('manual'); setShowAddProduct(true); }}>
                     <Plus className="w-4 h-4" /> إضافة صنف
                   </Button>
                 </div>
@@ -4787,9 +5100,23 @@ export default function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 {products
                   .filter(p => (inventoryCategory === 'الكل' || p.category === inventoryCategory) && p.name.includes(inventorySearchTerm))
-                  .map((p, idx) => (
+                  .map((p, idx) => {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const thirtyDays = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+                    let expiryBadge = null;
+                    if (p.expiration_date) {
+                      const expDate = new Date(p.expiration_date);
+                      if (expDate < today) {
+                        expiryBadge = <div className="absolute top-2 left-2 bg-red-100 text-red-700 text-[9px] font-bold px-2 py-0.5 rounded-full border border-red-200 shadow-sm animate-pulse">منتهي الصلاحية</div>;
+                      } else if (expDate <= thirtyDays) {
+                        expiryBadge = <div className="absolute top-2 left-2 bg-amber-100 text-amber-700 text-[9px] font-bold px-2 py-0.5 rounded-full border border-amber-200 shadow-sm">قريب الانتهاء</div>;
+                      }
+                    }
+                    return (
                   <Card key={`inv-product-${p.id ?? 'no-id'}-${idx}`} className="group hover:border-emerald-200 transition-all cursor-pointer relative overflow-hidden p-0" onClick={() => fetchProductHistory(p)}>
                     <div className={`absolute top-0 right-0 w-1 h-full ${p.stock_quantity <= 5 ? 'bg-red-500' : p.stock_quantity <= 20 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                    {expiryBadge}
                     <div className="p-3 pl-4 pr-4 flex justify-between items-start">
                       <div className="flex-1">
                         <div className="flex justify-between items-start mb-2">
@@ -4857,7 +5184,8 @@ export default function App() {
                       </div>
                     </div>
                   </Card>
-                ))}
+                );
+                })}
               </div>
             </motion.div>
           )}
@@ -5591,6 +5919,35 @@ export default function App() {
                         <option value={100}>100</option>
                       </select>
                     </div>
+                  </div>
+                  
+                  <div className="space-y-2 pt-4 border-t border-slate-100">
+                    <div className="flex justify-between items-center">
+                      <label className="text-sm font-bold text-slate-600">البحث التلقائي عن المنتجات المجهولة (عبر الإنترنت)</label>
+                      <button
+                        onClick={async () => {
+                          const newValue = !autoLookupBarcode;
+                          setAutoLookupBarcode(newValue);
+                          const existing = await db.settings.where('key').equals('autoLookupBarcode').first();
+                          if (existing) {
+                            await db.settings.update(existing.id!, { value: newValue });
+                          } else {
+                            await db.settings.add({ key: 'autoLookupBarcode', value: newValue });
+                          }
+                          showNotification(`تم ${newValue ? 'تفعيل' : 'تعطيل'} البحث التلقائي عبر الإنترنت بنجاح`, 'success');
+                        }}
+                        className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+                          autoLookupBarcode ? 'bg-emerald-500' : 'bg-slate-300'
+                        }`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                          autoLookupBarcode ? 'left-1 translate-x-6' : 'left-1'
+                        }`} />
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed">
+                      عند تفعيل هذا الخيار، سيحاول النظام التعرف على اسم وبيانات المنتج المجهول من قواعد بيانات عالمية عبر الإنترنت قبل طلب إدخاله يدوياً.
+                    </p>
                   </div>
                 </Card>
 
@@ -6436,10 +6793,32 @@ export default function App() {
               initial={{ opacity: 0, y: -50 }}
               animate={{ opacity: 1, y: 20 }}
               exit={{ opacity: 0, y: -50 }}
-              className={`fixed top-0 left-4 right-4 z-[100] p-4 rounded-2xl shadow-2xl flex items-center gap-3 max-w-md mx-auto ${notification.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}
+              className={`fixed top-4 left-4 right-4 z-[100] p-4 rounded-2xl shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 max-w-md mx-auto transition-all ${
+                notification.type === 'success' 
+                  ? 'bg-slate-900 border border-slate-800 text-white' 
+                  : 'bg-red-600 text-white'
+              }`}
             >
-              {notification.type === 'success' ? <CheckCircle2 /> : <AlertCircle />}
-              <p className="font-bold">{notification.message}</p>
+              <div className="flex items-center gap-3">
+                {notification.type === 'success' ? (
+                  <CheckCircle2 className="text-emerald-400 shrink-0 w-5 h-5" />
+                ) : (
+                  <AlertCircle className="shrink-0 w-5 h-5 text-white" />
+                )}
+                <p className="font-bold text-sm leading-relaxed">{notification.message}</p>
+              </div>
+              {notification.action && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    notification.action?.onClick();
+                    setNotification(null);
+                  }}
+                  className="bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-xs font-black px-4 py-2 rounded-xl transition-all shadow-[0_4px_12px_rgba(16,185,129,0.3)] self-end sm:self-auto shrink-0 flex items-center gap-1 border border-emerald-400/20 cursor-pointer"
+                >
+                  {notification.action.label}
+                </button>
+              )}
             </motion.div>
           )}
 
@@ -6454,7 +6833,10 @@ export default function App() {
                 <p className="text-slate-500">{confirmAction.message}</p>
                 <div className="flex gap-2 pt-2">
                   <Button className="flex-1" variant="danger" onClick={confirmAction.onConfirm}>تأكيد</Button>
-                  <Button className="flex-1" variant="secondary" onClick={() => setConfirmAction(null)}>إلغاء</Button>
+                  <Button className="flex-1" variant="secondary" onClick={() => {
+                    if (confirmAction.onCancel) confirmAction.onCancel();
+                    setConfirmAction(null);
+                  }}>إلغاء</Button>
                 </div>
               </motion.div>
             </div>
@@ -6538,104 +6920,138 @@ export default function App() {
           {showAddProduct && (
             <div key="modal-add-product" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
               <motion.div 
-                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
-                className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"
+                initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]"
               >
-                <h3 className="text-xl font-bold">إضافة صنف جديد</h3>
-                <input placeholder="اسم المنتج" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} />
-                <div className="flex gap-2">
-                  <input 
-                    placeholder="رقم الباركود (اختياري)" 
-                    className="flex-1 p-3 bg-slate-100 rounded-xl text-left font-mono" 
-                    value={newProduct.barcode || ''} 
-                    onChange={e => setNewProduct({...newProduct, barcode: e.target.value})} 
-                  />
-                  <button 
-                    type="button"
-                    onClick={() => { setScannerMode('add-product'); setIsScannerOpen(true); }}
-                    className="p-3 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-all flex items-center justify-center gap-1.5 font-bold text-xs"
-                    title="مسح من الكاميرا"
-                  >
-                    <QrCode className="w-4 h-4" />
-                    <span>مسح</span>
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                  <h3 className="text-xl font-extrabold text-slate-800">إضافة صنف جديد</h3>
+                  <button onClick={() => setShowAddProduct(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-slate-500" />
                   </button>
                 </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">سعر التكلفة</label>
+                
+                <div className="p-6 space-y-5 overflow-y-auto">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 pr-1">اسم المنتج</label>
                     <input 
-                      type="number" 
-                      placeholder="التكلفة" 
-                      className="w-full p-2.5 bg-slate-100 rounded-xl text-center text-sm font-semibold" 
-                      value={newProduct.cost} 
-                      onChange={e => handleAddCostChange(e.target.value)} 
+                      placeholder="أدخل اسم المنتج" 
+                      className="w-full p-3.5 bg-yellow-50 border border-slate-100 rounded-2xl focus:border-emerald-500 outline-none transition-colors" 
+                      value={newProduct.name} 
+                      onChange={e => setNewProduct({...newProduct, name: e.target.value})} 
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">نسبة الربح %</label>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 pr-1">رقم الباركود</label>
+                    <div className="flex gap-2">
+                      <input 
+                        placeholder="أدخل أو امسح الباركود" 
+                        className="flex-1 p-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-left font-mono focus:border-emerald-500 outline-none transition-colors" 
+                        value={newProduct.barcode || ''} 
+                        onChange={e => setNewProduct({...newProduct, barcode: e.target.value})} 
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => { setScannerMode('add-product'); setIsScannerOpen(true); }}
+                        className="px-4 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-2xl transition-all flex items-center justify-center gap-2 font-bold text-sm"
+                        title="مسح من الكاميرا"
+                      >
+                        <QrCode className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500">التكلفة</label>
+                      <input 
+                        type="number" 
+                        className="w-full p-3 bg-yellow-50 border border-slate-100 rounded-xl text-center text-sm font-semibold focus:border-slate-300 outline-none" 
+                        value={newProduct.cost} 
+                        onChange={e => handleAddCostChange(e.target.value)} 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500">الربح %</label>
+                      <input 
+                        type="number" 
+                        className="w-full p-3 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-xl text-center text-sm font-bold focus:outline-none focus:ring-1 focus:ring-indigo-400" 
+                        value={addProfitPercent} 
+                        onChange={e => handleAddProfitPercentChange(e.target.value)} 
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500">سعر البيع</label>
+                      <input 
+                        type="number" 
+                        className="w-full p-3 bg-yellow-50 border border-emerald-100 text-emerald-700 rounded-xl text-center text-sm font-bold focus:outline-none focus:ring-1 focus:ring-emerald-400" 
+                        value={newProduct.sale} 
+                        onChange={e => handleAddSaleChange(e.target.value)} 
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 pr-1">الكمية المتوفرة</label>
+                        <input type="number" className="w-full p-3.5 bg-yellow-50 border border-slate-100 rounded-2xl focus:border-emerald-500 outline-none" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} />
+                    </div>
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-500 pr-1">الفئة</label>
+                        <input 
+                          list="categories-list"
+                          className="w-full p-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:border-emerald-500 outline-none" 
+                          value={newProduct.category} 
+                          onChange={e => setNewProduct({...newProduct, category: e.target.value})} 
+                        />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 pr-1">المورد</label>
+                    <select 
+                      className="w-full p-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-sm focus:border-emerald-500 outline-none"
+                      value={newProduct.supplier_id || ''}
+                      onChange={e => setNewProduct({...newProduct, supplier_id: e.target.value ? Number(e.target.value) : undefined} as any)}
+                    >
+                      <option value="">اختار المورد (اختياري)</option>
+                      {suppliers.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-500 pr-1">الوحدة</label>
                     <input 
-                      type="number" 
-                      placeholder="%" 
-                      className="w-full p-2.5 bg-indigo-50 text-indigo-700 placeholder-indigo-300 rounded-xl text-center text-sm font-bold border border-indigo-100 focus:outline-none focus:ring-1 focus:ring-indigo-400" 
-                      value={addProfitPercent} 
-                      onChange={e => handleAddProfitPercentChange(e.target.value)} 
+                      list="units-list"
+                      className="w-full p-3.5 bg-slate-50 border border-slate-100 rounded-2xl focus:border-emerald-500 outline-none" 
+                      value={newProduct.unit} 
+                      onChange={e => setNewProduct({...newProduct, unit: e.target.value})} 
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">سعر البيع</label>
-                    <input 
-                      type="number" 
-                      placeholder="البيع" 
-                      className="w-full p-2.5 bg-emerald-50 text-emerald-700 placeholder-emerald-300 rounded-xl text-center text-sm font-bold border border-emerald-100 focus:outline-none focus:ring-1 focus:ring-emerald-400" 
-                      value={newProduct.sale} 
-                      onChange={e => handleAddSaleChange(e.target.value)} 
-                    />
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500">تاريخ الإنتاج</label>
+                      <input type="date" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl" value={newProduct.production_date} onChange={e => setNewProduct({...newProduct, production_date: e.target.value})} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500">تاريخ الانتهاء</label>
+                      <input type="date" className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl" value={newProduct.expiration_date} onChange={e => setNewProduct({...newProduct, expiration_date: e.target.value})} />
+                    </div>
                   </div>
                 </div>
-                <input type="number" placeholder="الكمية المتوفرة" className="w-full p-3 bg-slate-100 rounded-xl" value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: e.target.value})} />
-                <input 
-                  list="categories-list"
-                  placeholder="الفئة (مثال: ألبان)" 
-                  className="w-full p-3 bg-slate-100 rounded-xl" 
-                  value={newProduct.category} 
-                  onChange={e => setNewProduct({...newProduct, category: e.target.value})} 
-                />
-                <div className="space-y-1">
-                  <label className="text-[10px] text-slate-500 font-bold block text-right pr-1">المورد</label>
-                  <select 
-                    className="w-full p-3 bg-slate-100 rounded-xl text-sm"
-                    value={newProduct.supplier_id || ''}
-                    onChange={e => setNewProduct({...newProduct, supplier_id: e.target.value ? Number(e.target.value) : undefined} as any)}
-                  >
-                    <option value="">اختار المورد (اختياري)</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <datalist id="categories-list">
-                  {categories.filter(c => c !== 'الكل').map((c, idx) => <option key={`cat-opt-${c}-${idx}`} value={c} />)}
-                </datalist>
-                <input 
-                  list="units-list"
-                  placeholder="الوحدة (مثال: حبة، كرتون، كيلو) - اختياري" 
-                  className="w-full p-3 bg-slate-100 rounded-xl" 
-                  value={newProduct.unit} 
-                  onChange={e => setNewProduct({...newProduct, unit: e.target.value})} 
-                />
-                <datalist id="units-list">
-                  <option value="حبة" />
-                  <option value="كرتون" />
-                  <option value="كيلو" />
-                  <option value="كيس" />
-                  <option value="شد" />
-                  <option value="علبة" />
-                  <option value="جرام" />
-                  <option value="متر" />
-                </datalist>
-                <div className="flex gap-2 pt-4">
-                  <Button className="flex-1" onClick={handleAddProduct}>حفظ</Button>
-                  <Button variant="secondary" onClick={() => setShowAddProduct(false)}>إلغاء</Button>
+
+                <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex gap-3">
+                  <Button variant="secondary" className="flex-1 rounded-2xl py-3.5" onClick={() => {
+                    setShowAddProduct(false);
+                    if (scannerMode === 'pos' || scannerMode === 'add-product') {
+                      setIsScannerOpen(true);
+                      setActiveTab('pos');
+                    }
+                  }}>إلغاء</Button>
+                  <Button className="flex-1 rounded-2xl py-3.5 shadow-lg shadow-emerald-500/20" onClick={handleAddProduct}>حفظ المنتج</Button>
                 </div>
               </motion.div>
             </div>
@@ -7018,6 +7434,16 @@ export default function App() {
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold px-1">تاريخ الإنتاج (اختياري)</label>
+                    <input type="date" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.production_date || ''} onChange={e => setEditingProduct({...editingProduct, production_date: e.target.value})} />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <label className="text-[10px] text-slate-500 font-bold px-1">تاريخ الانتهاء (اختياري)</label>
+                    <input type="date" className="w-full p-3 bg-slate-100 rounded-xl" value={editingProduct.expiration_date || ''} onChange={e => setEditingProduct({...editingProduct, expiration_date: e.target.value})} />
+                  </div>
                 </div>
                 <div className="flex gap-2 pt-4">
                   <Button className="flex-1" onClick={handleEditProduct}>تحديث</Button>
@@ -9772,6 +10198,19 @@ export default function App() {
                 scannerMode === 'add-product' ? "مسح باركود لمنتج جديد" : "تحديث باركود المنتج"
               }
               autoClose={scannerMode !== 'pos'}
+              scannerMode={scannerMode}
+              cart={cart}
+              onUpdateCartQuantity={updateCartQuantity}
+              onRemoveFromCart={removeFromCart}
+              onCheckout={handleCheckout}
+              onPrintCart={handlePrintCart}
+              onDownloadCart={handleDownloadCartPDF}
+              formatPrice={formatPrice}
+              paymentType={paymentType}
+              setPaymentType={setPaymentType}
+              selectedCustomer={selectedCustomer}
+              setSelectedCustomer={setSelectedCustomer}
+              customers={customers}
             />
           )}
         </AnimatePresence>

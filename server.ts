@@ -38,6 +38,45 @@ async function startServer() {
     }
   });
 
+  app.get('/api/barcode/:barcode', async (req, res) => {
+    const barcode = req.params.barcode;
+    console.log(`Barcode lookup requested: ${barcode}`);
+    try {
+      const offUrl = `https://world.openfoodfacts.org/api/v0/product/${barcode}.json`;
+      const offResponse = await fetch(offUrl);
+      if (offResponse.ok) {
+        const offData = await offResponse.json();
+        if (offData.status === 1 && offData.product) {
+          res.json({
+            name: offData.product.product_name_ar || offData.product.product_name || offData.product.generic_name || 'منتج غير معروف',
+            category: offData.product.categories?.split(',')[0] || '',
+            image_url: offData.product.image_front_url || offData.product.image_url,
+          });
+          return;
+        }
+      }
+
+      const upcUrl = `https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`;
+      const upcResponse = await fetch(upcUrl);
+      if (upcResponse.ok) {
+        const upcData = await upcResponse.json();
+        if (upcData.code === 'OK' && upcData.items && upcData.items.length > 0) {
+          res.json({
+            name: upcData.items[0].title || 'منتج غير معروف',
+            category: upcData.items[0].category || '',
+            image_url: upcData.items[0].images?.[0],
+          });
+          return;
+        }
+      }
+
+      res.status(404).json({ error: 'Product not found' });
+    } catch (error) {
+      console.error("Error proxying barcode lookup:", error);
+      res.status(500).json({ error: 'Failed to fetch from external API' });
+    }
+  });
+
   app.get('/api/backup/status', (req, res) => {
     try {
       const backupPath = path.join(process.cwd(), 'قاعدة بيانات النظام.json');
