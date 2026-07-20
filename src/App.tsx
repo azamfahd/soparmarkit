@@ -76,7 +76,6 @@ import {
 } from 'recharts';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
 import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from './utils/licensing';
-import { lookupBarcodeOnline } from './utils/barcodeLookup';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { 
   submitActivationRequest, 
@@ -90,6 +89,17 @@ import {
 } from './services/firebase';
 
 // --- Types ---
+declare global {
+  interface Window {
+    pywebview?: {
+      api: {
+        select_file: () => Promise<string | null>;
+        save_file: (filename: string, content: string) => Promise<boolean>;
+      }
+    }
+  }
+}
+
 // (Local type definitions removed as they conflict with db.ts imports)
 
 interface Summary {
@@ -2560,12 +2570,29 @@ export default function App() {
       settings: await db.settings.toArray(),
       notes: await db.notes.toArray(),
     };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${storeName}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
+    const jsonString = JSON.stringify(data, null, 2);
+    const fileName = `${storeName}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
+
+    if (window.pywebview && window.pywebview.api) {
+      try {
+        const success = await window.pywebview.api.save_file(fileName, jsonString);
+        if (success) {
+          showNotification('تم حفظ النسخة الاحتياطية بنجاح عبر النظام');
+        } else {
+          showNotification('تم إلغاء حفظ الملف أو فشلت العملية', 'error');
+          return;
+        }
+      } catch (err) {
+        console.error("Pywebview save failed:", err);
+      }
+    } else {
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+    }
     
     // Update last backup date
     const now = new Date().toISOString();
@@ -2577,7 +2604,58 @@ export default function App() {
     }
     setLastBackupDate(now);
     
-    showNotification('تم تصدير نسخة احتياطية بنجاح');
+    if (!(window.pywebview && window.pywebview.api)) {
+      showNotification('تم تصدير نسخة احتياطية بنجاح');
+    }
+  };
+
+  const handleImportPython = async () => {
+    if (window.pywebview && window.pywebview.api) {
+      try {
+        const content = await window.pywebview.api.select_file();
+        if (!content) {
+          showNotification('تم إلغاء استيراد الملف', 'error');
+          return;
+        }
+        
+        let data;
+        try {
+          data = JSON.parse(content);
+        } catch (e) {
+          showNotification('الملف ليس بتنسيق JSON صحيح', 'error');
+          return;
+        }
+
+        await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
+          await db.products.clear();
+          await db.customers.clear();
+          await db.suppliers.clear();
+          await db.supplierPayments.clear();
+          await db.sales.clear();
+          await db.saleItems.clear();
+          await db.debts.clear();
+          await db.inventoryLogs.clear();
+          await db.settings.clear();
+          await db.notes.clear();
+
+          if (data.products) await db.products.bulkAdd(data.products);
+          if (data.customers) await db.customers.bulkAdd(data.customers);
+          if (data.suppliers) await db.suppliers.bulkAdd(data.suppliers);
+          if (data.supplierPayments) await db.supplierPayments.bulkAdd(data.supplierPayments);
+          if (data.sales) await db.sales.bulkAdd(data.sales);
+          if (data.saleItems) await db.saleItems.bulkAdd(data.saleItems);
+          if (data.debts) await db.debts.bulkAdd(data.debts);
+          if (data.inventoryLogs) await db.inventoryLogs.bulkAdd(data.inventoryLogs);
+          if (data.settings) await db.settings.bulkAdd(data.settings);
+          if (data.notes) await db.notes.bulkAdd(data.notes);
+        });
+        showNotification('تم استيراد البيانات بنجاح');
+        setTimeout(() => window.location.reload(), 1000);
+      } catch (err) {
+        console.error("Pywebview import failed:", err);
+        showNotification('خطأ في استيراد البيانات', 'error');
+      }
+    }
   };
 
   const importData = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3237,73 +3315,23 @@ export default function App() {
         playBeep?.();
         setIsScannerOpen(false); // Close the scanner to stop background feed and focus product creation
         
-        if (autoLookupBarcode) {
-          showNotification('جاري البحث عن المنتج عبر الإنترنت...', 'success');
-          lookupBarcodeOnline(code).then(onlineData => {
-            if (onlineData) {
-              setConfirmAction({
-                title: 'تم العثور على المنتج!',
-                message: `تم جلب بيانات "${onlineData.name}" من الإنترنت. هل ترغب في إضافته للمخزون الآن؟`,
-                onConfirm: () => {
-                  setConfirmAction(null);
-                  setNewProduct({ 
-                    name: onlineData.name, 
-                    category: onlineData.category || '', 
-                    cost: '', 
-                    sale: '', 
-                    stock: '', 
-                    barcode: code, 
-                    unit: onlineData.unit || '', 
-                    supplier_id: undefined,
-                    production_date: '',
-                    expiration_date: ''
-                  });
-                  setShowAddProduct(true);
-                  setActiveTab('inventory');
-                },
-                onCancel: () => {
-                  if (scannerMode === 'pos') {
-                    setIsScannerOpen(true);
-                  }
-                }
-              });
-            } else {
-              showNotification(`الرمز ${code} غير مرتبط بأي منتج محلياً ولا على الإنترنت`, 'error');
-              setConfirmAction({
-                title: 'منتج غير مسجل',
-                message: `لم يتم العثور على الباركود (${code}). هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
-                onConfirm: () => {
-                  setConfirmAction(null);
-                  setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined, production_date: '', expiration_date: '' });
-                  setShowAddProduct(true);
-                  setActiveTab('inventory');
-                },
-                onCancel: () => {
-                  if (scannerMode === 'pos') {
-                    setIsScannerOpen(true);
-                  }
-                }
-              });
+        showNotification(`الرمز ${code} غير مرتبط بأي منتج`, 'error');
+        setConfirmAction({
+          title: 'منتج غير مسجل',
+          message: `لم يتم العثور على الباركود (${code}) في المخزون. هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
+          onConfirm: () => {
+            setConfirmAction(null);
+            setScannerMode('add-product');
+            setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined, production_date: '', expiration_date: '' });
+            setShowAddProduct(true);
+            setActiveTab('inventory');
+          },
+          onCancel: () => {
+            if (scannerMode === 'pos') {
+              setIsScannerOpen(true);
             }
-          });
-        } else {
-          showNotification(`الرمز ${code} غير مرتبط بأي منتج`, 'error');
-          setConfirmAction({
-            title: 'منتج غير مسجل',
-            message: `لم يتم العثور على الباركود (${code}) في المخزون. هل ترغب في تسجيل صنف جديد بهذا الباركود الآن؟`,
-            onConfirm: () => {
-              setConfirmAction(null);
-              setNewProduct({ name: '', cost: '', sale: '', stock: '', category: '', barcode: code, unit: '', supplier_id: undefined, production_date: '', expiration_date: '' });
-              setShowAddProduct(true);
-              setActiveTab('inventory');
-            },
-            onCancel: () => {
-              if (scannerMode === 'pos') {
-                setIsScannerOpen(true);
-              }
-            }
-          });
-        }
+          }
+        });
       }
     }
   };
@@ -3403,7 +3431,7 @@ export default function App() {
   };
 
   const handlePrintCart = () => {
-    if (cart.length === 0) return showNotification('السلة فارغة', 'warning');
+    if (cart.length === 0) return showNotification('السلة فارغة', 'error');
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
     printWindow.document.write(`
@@ -3425,7 +3453,7 @@ export default function App() {
   };
 
   const handleDownloadCartPDF = () => {
-    if (cart.length === 0) return showNotification('السلة فارغة', 'warning');
+    if (cart.length === 0) return showNotification('السلة فارغة', 'error');
     const element = document.createElement('div');
     element.innerHTML = generateCartHTML();
     
@@ -3437,7 +3465,7 @@ export default function App() {
       jsPDF: { unit: 'mm', format: [80, 200], orientation: 'portrait' }
     };
     
-    html2pdf().set(opt).from(element).save();
+    html2pdf().set(opt as any).from(element).save();
   };
 
   const handleCheckout = async () => {
@@ -5920,35 +5948,6 @@ export default function App() {
                       </select>
                     </div>
                   </div>
-                  
-                  <div className="space-y-2 pt-4 border-t border-slate-100">
-                    <div className="flex justify-between items-center">
-                      <label className="text-sm font-bold text-slate-600">البحث التلقائي عن المنتجات المجهولة (عبر الإنترنت)</label>
-                      <button
-                        onClick={async () => {
-                          const newValue = !autoLookupBarcode;
-                          setAutoLookupBarcode(newValue);
-                          const existing = await db.settings.where('key').equals('autoLookupBarcode').first();
-                          if (existing) {
-                            await db.settings.update(existing.id!, { value: newValue });
-                          } else {
-                            await db.settings.add({ key: 'autoLookupBarcode', value: newValue });
-                          }
-                          showNotification(`تم ${newValue ? 'تفعيل' : 'تعطيل'} البحث التلقائي عبر الإنترنت بنجاح`, 'success');
-                        }}
-                        className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
-                          autoLookupBarcode ? 'bg-emerald-500' : 'bg-slate-300'
-                        }`}
-                      >
-                        <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                          autoLookupBarcode ? 'left-1 translate-x-6' : 'left-1'
-                        }`} />
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-slate-400 leading-relaxed">
-                      عند تفعيل هذا الخيار، سيحاول النظام التعرف على اسم وبيانات المنتج المجهول من قواعد بيانات عالمية عبر الإنترنت قبل طلب إدخاله يدوياً.
-                    </p>
-                  </div>
                 </Card>
 
                 <Card className="space-y-4 border-slate-200/90 shadow-sm hover:shadow-md transition-all relative overflow-hidden">
@@ -5996,18 +5995,25 @@ export default function App() {
                       <Download className="w-4 h-4" />
                       تصدير نسخة احتياطية (JSON)
                     </Button>
-                    <div className="relative">
-                      <input 
-                        type="file" 
-                        accept=".json" 
-                        onChange={importData}
-                        className="absolute inset-0 opacity-0 cursor-pointer"
-                      />
-                      <Button variant="secondary" className="w-full flex items-center justify-center gap-2">
+                    {window.pywebview && window.pywebview.api ? (
+                      <Button variant="secondary" className="w-full flex items-center justify-center gap-2" onClick={handleImportPython}>
                         <Upload className="w-4 h-4" />
-                        استيراد نسخة احتياطية
+                        استيراد نسخة احتياطية (عبر النظام)
                       </Button>
-                    </div>
+                    ) : (
+                      <div className="relative">
+                        <input 
+                          type="file" 
+                          accept=".json" 
+                          onChange={importData}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                        />
+                        <Button variant="secondary" className="w-full flex items-center justify-center gap-2">
+                          <Upload className="w-4 h-4" />
+                          استيراد نسخة احتياطية
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </Card>
 

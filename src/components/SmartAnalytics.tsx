@@ -727,7 +727,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     }
 
     // 7. System Tracking & Velocity
-    const velocity = performanceKPIs.salesTotal / Math.max(performanceKPIs.salesTransactionsCount, 1);
+    const velocity = performanceKPIs.salesTotal / Math.max(performanceKPIs.transactionsCount, 1);
     if (velocity > 100) {
        list.push({
         id: 7,
