@@ -43,6 +43,7 @@ import {
   Search,
   FileText,
   Filter,
+  X,
   Database,
   Wallet
 } from 'lucide-react';
@@ -56,6 +57,7 @@ interface SmartAnalyticsProps {
 export default function SmartAnalytics({ currency, formatPrice, onGoBack }: SmartAnalyticsProps) {
   // --- State for filter controls ---
   const [dateFilter, setDateFilter] = useState<'today' | '7days' | '30days' | 'month' | 'all'>('30days');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedProductCategory, setSelectedProductCategory] = useState<string>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<string>('all');
 
@@ -105,6 +107,23 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     return Array.from(cats);
   }, [products]);
 
+  // List of unique months available in sales data
+  const availableMonthsList = useMemo(() => {
+    const monthMap = new Map<string, string>();
+    sales.forEach(s => {
+      if (s.created_at) {
+        const monthKey = s.created_at.substring(0, 7); // 'YYYY-MM'
+        if (monthKey && monthKey.length === 7) {
+          const [y, m] = monthKey.split('-');
+          const dateObj = new Date(parseInt(y), parseInt(m) - 1, 1);
+          const formatted = dateObj.toLocaleDateString('ar-SA', { month: 'long', year: 'numeric' });
+          monthMap.set(monthKey, formatted);
+        }
+      }
+    });
+    return Array.from(monthMap.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [sales]);
+
   // Sub-filter calculation helper
   const filteredSalesData = useMemo(() => {
     const now = new Date();
@@ -115,8 +134,11 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     startOf30Days.setDate(startOfDay.getDate() - 30);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    // Filter sales based on Date Range
+    // Filter sales based on Date Range or Specific Selected Month
     const matchingSales = sales.filter(s => {
+      if (selectedMonth !== 'all') {
+        return s.created_at && s.created_at.startsWith(selectedMonth);
+      }
       const d = new Date(s.created_at);
       if (dateFilter === 'today') return d >= startOfDay;
       if (dateFilter === '7days') return d >= startOfWeek;
@@ -132,7 +154,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       if (selectedCustomer === 'cash') return s.payment_type === 'cash';
       return String(s.customer_id) === selectedCustomer;
     });
-  }, [sales, dateFilter, selectedCustomer]);
+  }, [sales, dateFilter, selectedMonth, selectedCustomer]);
 
   // Filtered sale items helper
   const filteredSaleItemsData = useMemo(() => {
@@ -463,11 +485,54 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     return customerSalesBreakdown.filter(cust => cust.name.toLowerCase().includes(customerSearchKey.toLowerCase()));
   }, [customerSalesBreakdown, customerSearchKey]);
 
-  // --- Chart 1: Sales and Profits Trend (By Date / Day of the week) ---
+  // --- Chart 1: Sales and Profits Trend (Grouped by Month uniquely to prevent duplication like 03/26, 05/26, 07/26) ---
   const salesAndProfitTrendChart = useMemo(() => {
-    // Generate beautiful sequential operational days chart line
-    return [...dailySalesBreakdown].reverse().slice(-12); 
-  }, [dailySalesBreakdown]);
+    const monthlyMap: { [key: string]: { dateStr: string, rawDate: Date, totalAmount: number, profit: number, count: number } } = {};
+
+    filteredSalesData.forEach(sale => {
+      const d = new Date(sale.created_at);
+      const year = d.getFullYear();
+      const month = d.getMonth() + 1;
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const displayMonth = `${String(month).padStart(2, '0')}/${String(year).slice(2)}`;
+
+      if (!monthlyMap[monthKey]) {
+        monthlyMap[monthKey] = {
+          dateStr: displayMonth,
+          rawDate: new Date(year, month - 1, 1),
+          totalAmount: 0,
+          profit: 0,
+          count: 0
+        };
+      }
+
+      monthlyMap[monthKey].totalAmount += sale.total_amount;
+      monthlyMap[monthKey].count += 1;
+    });
+
+    // Compute detailed profit for each month
+    filteredSaleItemsData.forEach(item => {
+      const sale = filteredSalesData.find(s => s.id === item.sale_id);
+      if (sale) {
+        const d = new Date(sale.created_at);
+        const year = d.getFullYear();
+        const month = d.getMonth() + 1;
+        const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+
+        const product = productMap.get(item.product_id);
+        const itemProfit = product 
+          ? (item.price_at_sale - product.cost_price) * item.quantity
+          : item.price_at_sale * item.quantity * 0.25;
+
+        if (monthlyMap[monthKey]) {
+          monthlyMap[monthKey].profit += itemProfit;
+        }
+      }
+    });
+
+    const sorted = Object.values(monthlyMap).sort((a, b) => a.rawDate.getTime() - b.rawDate.getTime());
+    return sorted.slice(-12);
+  }, [filteredSalesData, filteredSaleItemsData, productMap]);
 
   // --- Chart 1B: Live Integrated Cashflow (Receipts vs Outlays Timeline) ---
   const unifiedCashflowTimeline = useMemo(() => {
@@ -998,7 +1063,20 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
             تخصيص البيانات والتحليل البصري (Multi-Pivot Filters)
           </h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 block">📆 الشهر المحدد (تصفية بالشهر)</span>
+            <select 
+              value={selectedMonth} 
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-100 p-2.5 rounded-2xl font-black text-xs text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden cursor-pointer"
+            >
+              <option value="all">كل الأشهر (عرض إجمالي للعام)</option>
+              {availableMonthsList.map(([monthKey, formattedName]) => (
+                <option key={monthKey} value={monthKey}>{formattedName} ({monthKey})</option>
+              ))}
+            </select>
+          </div>
           <div className="space-y-1.5">
             <span className="text-[11px] font-bold text-slate-400 block">فئات المنتجات والسلع</span>
             <select 
@@ -1013,7 +1091,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
             </select>
           </div>
           <div className="space-y-1.5">
-            <span className="text-[11px] font-bold text-slate-400 block">حالة العميل أو طريق الدفع</span>
+            <span className="text-[11px] font-bold text-slate-400 block">حالة العميل أو طريقة الدفع</span>
             <select 
               value={selectedCustomer} 
               onChange={(e) => setSelectedCustomer(e.target.value)}
@@ -1197,7 +1275,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                         <BarChart3 className="w-4 h-4 text-indigo-500" />
                         <span>منحنيات تتبع الأداء الحركي والمالي بالدورة</span>
                       </h3>
-                      <p className="text-[10px] text-slate-400 mt-0.5">اضغط على التبويبات للتبديل بين اتجاهات الأرباح وسجل مسار الكاش</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">اختر الشهر من القائمة السريعة أدناه لتفحّص تفاصيل وأرباح ذلك الشهر تحديداً</p>
                     </div>
 
                     {/* Chart Tab Selectors */}
@@ -1220,6 +1298,36 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                       </button>
                     </div>
                   </div>
+
+                  {/* Quick Month Selectors Pills */}
+                  {availableMonthsList.length > 0 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 pt-0.5 scrollbar-thin">
+                      <span className="text-[10px] font-extrabold text-slate-400 shrink-0">تحويل سريع للشهر:</span>
+                      <button
+                        onClick={() => setSelectedMonth('all')}
+                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer shrink-0 ${
+                          selectedMonth === 'all' 
+                            ? 'bg-indigo-600 text-white shadow-xs' 
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        الكل ({availableMonthsList.length} أشهر)
+                      </button>
+                      {availableMonthsList.map(([mKey, mName]) => (
+                        <button
+                          key={mKey}
+                          onClick={() => setSelectedMonth(mKey)}
+                          className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer shrink-0 ${
+                            selectedMonth === mKey 
+                              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20 ring-2 ring-indigo-400/40' 
+                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                        >
+                          {mName}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Render Area/Line Charts */}
                   <div className="h-64 sm:h-72 w-full bg-slate-50/40 rounded-2xl p-2 border border-slate-100 flex flex-col justify-between">
@@ -1246,11 +1354,11 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                             <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
                             <Tooltip 
                               contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
-                              formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات اليومية' : 'أرباح اليوم الصافية']}
+                              formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات الشهرية' : 'أرباح الشهر الصافية']}
                             />
                             <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                            <Area type="monotone" dataKey="totalAmount" name="totalAmount" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorSalesNew)" />
-                            <Area type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfitNew)" />
+                            <Area type="monotone" dataKey="totalAmount" name="totalAmount" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorSalesNew)" animationDuration={250} />
+                            <Area type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfitNew)" animationDuration={250} />
                           </AreaChart>
                         </ResponsiveContainer>
                       )
@@ -1283,14 +1391,80 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                               ]}
                             />
                             <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                            <Area type="monotone" dataKey="moneyIn" name="moneyIn" stroke="#2563eb" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMoneyIn)" />
-                            <Area type="monotone" dataKey="moneyOut" name="moneyOut" stroke="#dc2626" strokeWidth={2} fillOpacity={1} fill="url(#colorMoneyOut)" />
-                            <Line type="monotone" dataKey="netRegisterChange" name="netRegisterChange" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4, strokeWidth: 1 }} />
+                            <Area type="monotone" dataKey="moneyIn" name="moneyIn" stroke="#2563eb" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMoneyIn)" animationDuration={250} />
+                            <Area type="monotone" dataKey="moneyOut" name="moneyOut" stroke="#dc2626" strokeWidth={2} fillOpacity={1} fill="url(#colorMoneyOut)" animationDuration={250} />
+                            <Line type="monotone" dataKey="netRegisterChange" name="netRegisterChange" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4, strokeWidth: 1 }} animationDuration={250} />
                           </AreaChart>
                         </ResponsiveContainer>
                       )
                     )}
                   </div>
+
+                  {/* Featured Selected Month Detailed Highlights Card */}
+                  {selectedMonth !== 'all' && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.98 }} 
+                      animate={{ opacity: 1, scale: 1 }} 
+                      className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 shadow-md border border-indigo-500/30 space-y-3 mt-3"
+                    >
+                      <div className="flex justify-between items-center pb-2.5 border-b border-white/10">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-400/30">
+                            <Calendar className="w-4 h-4" />
+                          </span>
+                          <div>
+                            <h4 className="text-xs font-black text-white">
+                              بطاقة تفاصيل وتحليل شهر: {availableMonthsList.find(([k]) => k === selectedMonth)?.[1] || selectedMonth}
+                            </h4>
+                            <p className="text-[10px] text-indigo-200">بيانات دقيقة تم تخصيص كافة مؤشرات المنظومة بناءً عليها</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setSelectedMonth('all')}
+                          className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-xl text-[10px] font-black transition-all cursor-pointer border border-white/10 flex items-center gap-1"
+                        >
+                          <X className="w-3 h-3" />
+                          <span>إلغاء التحديد (كل الأشهر)</span>
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-right">
+                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
+                          <span className="text-[10px] text-slate-300 font-bold block">مبيعات الشهر</span>
+                          <span className="text-sm font-black text-emerald-400 font-mono mt-0.5 block">
+                            {formatPrice(performanceKPIs.salesTotal)}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-medium">عدد الفواتير: {performanceKPIs.transactionsCount}</span>
+                        </div>
+
+                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
+                          <span className="text-[10px] text-slate-300 font-bold block">أرباح الشهر الصافية</span>
+                          <span className="text-sm font-black text-emerald-300 font-mono mt-0.5 block">
+                            {formatPrice(performanceKPIs.profitTotal)}
+                          </span>
+                          <span className="text-[9px] text-emerald-400 font-medium">الهامش: {performanceKPIs.profitMarginPercent.toFixed(1)}%</span>
+                        </div>
+
+                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
+                          <span className="text-[10px] text-slate-300 font-bold block">تكلفة شراء الموردين</span>
+                          <span className="text-sm font-black text-amber-300 font-mono mt-0.5 block">
+                            {formatPrice(performanceKPIs.costTotal)}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-medium">قيمة التأسيس</span>
+                        </div>
+
+                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
+                          <span className="text-[10px] text-slate-300 font-bold block">مقبوضات كاش / ديون</span>
+                          <div className="flex items-center gap-1 text-xs font-mono font-black mt-0.5">
+                            <span className="text-emerald-400">{formatPrice(performanceKPIs.cashSalesTotal)}</span>
+                            <span className="text-slate-500">/</span>
+                            <span className="text-amber-400">{formatPrice(performanceKPIs.debtSalesTotal)}</span>
+                          </div>
+                          <span className="text-[9px] text-slate-400 font-medium">نقدي مقابل آجل</span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
                 </div>
 
                 {/* Donut Chart Representation for business balances */}
@@ -1330,6 +1504,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                               outerRadius={60}
                               paddingAngle={4}
                               dataKey="value"
+                              animationDuration={250}
                             >
                               <Cell fill="#10b981" />
                               <Cell fill="#f59e0b" />
@@ -1348,6 +1523,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                               outerRadius={60}
                               paddingAngle={4}
                               dataKey="value"
+                              animationDuration={250}
                             >
                               <Cell fill="#3b82f6" />
                               <Cell fill="#f43f5e" />
@@ -1712,8 +1888,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                             formatter={(value: any, name: any) => [formatPrice(value), name === 'revenue' ? 'المبيعات' : 'الأرباح']}
                           />
                           <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                          <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={9} />
-                          <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={9} />
+                          <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
+                          <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
                         </BarChart>
                       </ResponsiveContainer>
                     )}
