@@ -60,7 +60,7 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
         <div className="space-y-5">
           {/* --- Section 1: Financial Summary General Cards --- */}
           <div className="space-y-2">
-            <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+            <h4 className="text-xs font-black text-slate-400 flex items-center gap-1.5 justify-start">
               <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
               الملخص المالي العام للموردين
             </h4>

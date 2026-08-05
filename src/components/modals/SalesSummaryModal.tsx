@@ -49,7 +49,7 @@ export const SalesSummaryModal: React.FC<SalesSummaryModalProps> = ({
         <div className="space-y-4">
           {/* --- Section 1: Sales / Projections (Sale price focus) --- */}
           <div className="space-y-2">
-            <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+            <h4 className="text-xs font-black text-slate-400 flex items-center gap-1.5 justify-start">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
               تحليل المبيعات (بسعر البيع الكلي)
             </h4>

@@ -440,6 +440,83 @@ async function startServer() {
     }
   });
 
+  // AI Smart Assistant chatbot endpoint
+  app.post('/api/gemini/assistant', async (req, res) => {
+    const { message, dbSummary, history } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ success: false, error: 'الرجاء كتابة رسالة أو سؤال للمساعد الذكي.' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({
+        success: false,
+        error: 'مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) غير متاح. يرجى تفعيل وضع (محلي بدون إنترنت) أو إضافة المفتاح في الإعدادات.'
+      });
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+
+      // Construct systemic prompt
+      const systemInstruction = `أنت "المساعد الحسابي الذكي" المدمج في نظام إدارة البقالة الذكي ومطابقة الصندوق والمخزون والديون.
+مهمتك هي الإجابة على أسئلة المستخدم (التاجر أو المحاسب) بالاعتماد المباشر على بيانات النظام المرفقة في طلب الخدمة.
+يجب أن تكون إجاباتك دقيقة مائة بالمائة، محاسبية، واضحة، وباللغة العربية الفصحى المبسطة والمفهومة للمحلات التجارية.
+
+معلومات وبيانات المحل المتوفرة حالياً في النظام:
+------------------------------------------
+${JSON.stringify(dbSummary, null, 2)}
+------------------------------------------
+
+إرشادات هامة عند الإجابة:
+1. اعتمد دائماً على الأرقام الحقيقية المذكورة في معلومات المحل أعلاه ولا تفترض أو تخترع أرقاماً غير موجودة.
+2. إذا سألك عن المبيعات أو الأرباح أو حالة الصندوق أو مديونية الزبائن، قم بحسابها أو قراءتها من البيانات المرفقة واعرضها له في نقاط منسقة وجميلة.
+3. قدم نصائح وإرشادات محاسبية ذكية لزيادة المبيعات أو تقليل الديون بناءً على حالة البيانات الحالية (مثلاً إذا كانت ديون الزبائن مرتفعة جداً مقارنة بالمبيعات، انصحه بوضع قيود على البيع الآجل).
+4. استخدم التنسيق الجميل (عناوين فرعية، نقاط واضحة، استخدام الرموز التعبيرية المناسبة لتبسيط القراءة).
+5. تجنب الحديث عن الأمور الفنية كأكواد البرمجة أو أسماء الجداول البرمجية، وتحدث كخبير محاسبي ومستشار مالي للمتجر.`;
+
+      const contents = [];
+      
+      // Add chat history if present
+      if (history && Array.isArray(history)) {
+        history.forEach((chatItem: any) => {
+          contents.push({
+            role: chatItem.role === 'user' ? 'user' : 'model',
+            parts: [{ text: chatItem.content }]
+          });
+        });
+      }
+      
+      contents.push({
+        role: 'user',
+        parts: [{ text: message }]
+      });
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.6-flash",
+        contents,
+        config: {
+          systemInstruction,
+          temperature: 0.7
+        }
+      });
+
+      res.json({ success: true, text: response.text });
+
+    } catch (err: any) {
+      console.error('Gemini assistant failed:', err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

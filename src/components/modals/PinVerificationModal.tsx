@@ -42,7 +42,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
         className="bg-slate-900 border border-slate-800 text-white w-full max-w-sm rounded-[2rem] p-6 shadow-[0_25px_60px_rgba(0,0,0,0.5)] text-center space-y-4"
       >
         <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-          <span className="text-xs font-black text-slate-500 tracking-wider">نظام صلاحيات المدير</span>
+          <span className="text-xs font-black text-slate-500">نظام صلاحيات المدير</span>
           <button 
             onClick={() => setPinModal((p: any) => ({ ...p, isOpen: false }))}
             className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"

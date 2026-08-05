@@ -48,7 +48,7 @@ export const ProfitSummaryModal: React.FC<ProfitSummaryModalProps> = ({
         <div className="space-y-4">
           {/* --- Section: Profit Projections --- */}
           <div className="space-y-3">
-            <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+            <h4 className="text-xs font-black text-slate-400 flex items-center gap-1.5 justify-start">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
               تحليل الأرباح الاستثمارية الصافية
             </h4>

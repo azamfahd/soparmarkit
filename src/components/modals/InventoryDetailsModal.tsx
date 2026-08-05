@@ -65,7 +65,7 @@ export const InventoryDetailsModal: React.FC<InventoryDetailsModalProps> = ({
           {/* --- Section 1: Overview (Cost price focus with click interactivity) --- */}
           <div className="space-y-2">
             <div className="flex justify-between items-center">
-              <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+              <h4 className="text-xs font-black text-slate-400 flex items-center gap-1.5 justify-start">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
                 تحليل تكاليف رأس المال (اضغط للتفاصيل بالأسفل)
               </h4>
@@ -240,7 +240,7 @@ export const InventoryDetailsModal: React.FC<InventoryDetailsModalProps> = ({
 
           {/* --- Section 2: Stock Quantities & Rates --- */}
           <div className="space-y-3">
-            <h4 className="text-xs font-black text-slate-400 tracking-wider flex items-center gap-1.5 justify-start">
+            <h4 className="text-xs font-black text-slate-400 flex items-center gap-1.5 justify-start">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
               القطع والمخزون الفعلي ومعدل التصفية
             </h4>

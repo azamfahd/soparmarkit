@@ -4,7 +4,7 @@ import {
   X, Camera, RefreshCw, Sparkles, Volume2, VolumeX, Zap, ZapOff, 
   ShoppingCart, Plus, Minus, Trash2, Check, CreditCard, DollarSign, User, AlertTriangle, Printer, Download 
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { type Customer } from '../db';
 
 interface BarcodeScannerProps {

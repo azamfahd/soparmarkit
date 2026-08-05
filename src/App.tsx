@@ -812,6 +812,7 @@ export default function App() {
   const [isCategorySidebarOpen, setIsCategorySidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [storeName, setStoreName] = useState('النظام المحاسبي');
+  const [storePhone, setStorePhone] = useState('');
   const [currency, setCurrency] = useState('ر.ي');
   const [roundingFactor, setRoundingFactor] = useState<number | null>(null);
   const [showReceipt, setShowReceipt] = useState<any>(null);
@@ -877,19 +878,23 @@ export default function App() {
 
   const [showPermissionsConfigModal, setShowPermissionsConfigModal] = useState(false);
 
-  const allCashWithdrawals = useLiveQuery(() => 
-    db.cashWithdrawals ? db.cashWithdrawals.orderBy('created_at').reverse().toArray() : Promise.resolve([])
-  ) || [];
+  const allCashWithdrawals = useLiveQuery(() => {
+    const isNeeded = activeTab === 'notes' || showSettleModal;
+    if (!isNeeded) return Promise.resolve([]);
+    return db.cashWithdrawals ? db.cashWithdrawals.orderBy('created_at').reverse().toArray() : Promise.resolve([]);
+  }, [activeTab, showSettleModal]) || [];
 
   const lastSettleDate = salesSettlements[0]?.created_at || null;
 
   const currentCycleSales = useLiveQuery(async () => {
+    const isNeeded = activeTab === 'notes' || showSettleModal;
+    if (!isNeeded) return [];
     const allSales = await db.sales.toArray();
     if (lastSettleDate) {
       return allSales.filter(s => s.created_at > lastSettleDate);
     }
     return allSales;
-  }, [lastSettleDate]) || [];
+  }, [lastSettleDate, activeTab, showSettleModal]) || [];
 
   const currentCycleWithdrawals = React.useMemo(() => {
     if (!lastSettleDate) return allCashWithdrawals;
@@ -915,37 +920,45 @@ export default function App() {
 
   // 2. All-time cash sales (direct cash sales)
   const allTimeCashSalesTotal = useLiveQuery(async () => {
+    const isNeeded = activeTab === 'notes' || showSettleModal;
+    if (!isNeeded) return 0;
     const allSales = await db.sales.toArray();
     return allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-  }) || 0;
+  }, [activeTab, showSettleModal]) || 0;
 
   // 3. Customer debt payments (تسديدات الديون)
   const allTimeDebtPaymentsTotal = useLiveQuery(async () => {
+    const isNeeded = activeTab === 'notes' || showSettleModal;
+    if (!isNeeded) return 0;
     const allDebts = await db.debts.toArray();
     return allDebts.filter(d => d.type === 'payment').reduce((sum, d) => sum + d.amount, 0);
-  }) || 0;
+  }, [activeTab, showSettleModal]) || 0;
 
   // 4. Current cycle customer debt payments
   const currentCycleDebtPayments = useLiveQuery(async () => {
+    const isNeeded = activeTab === 'notes' || showSettleModal;
+    if (!isNeeded) return [];
     const allDebts = await db.debts.toArray();
     const payments = allDebts.filter(d => d.type === 'payment');
     if (lastSettleDate) {
       return payments.filter(d => d.created_at > lastSettleDate);
     }
     return payments;
-  }, [lastSettleDate]) || [];
+  }, [lastSettleDate, activeTab, showSettleModal]) || [];
 
   const currentCycleDebtPaymentsTotal = React.useMemo(() => {
     return currentCycleDebtPayments.reduce((sum, d) => sum + d.amount, 0);
   }, [currentCycleDebtPayments]);
 
   const currentCycleSupplierPayments = useLiveQuery(async () => {
+    const isNeeded = activeTab === 'notes' || showSettleModal;
+    if (!isNeeded) return [];
     const allSPayments = await db.supplierPayments.toArray();
     if (lastSettleDate) {
       return allSPayments.filter(p => !p.payment_date || p.payment_date > lastSettleDate);
     }
     return allSPayments;
-  }, [lastSettleDate]) || [];
+  }, [lastSettleDate, activeTab, showSettleModal]) || [];
 
   const currentCycleSupplierPaymentsTotal = React.useMemo(() => {
     return currentCycleSupplierPayments.reduce((sum, p) => sum + p.amount, 0);
@@ -1071,6 +1084,10 @@ export default function App() {
     if (nameSetting) {
       setStoreName(nameSetting.value);
       setClientStoreName(nameSetting.value);
+    }
+    const phoneSetting = appSettings.find(s => s.key === 'storePhone' || s.key === 'phone');
+    if (phoneSetting) {
+      setStorePhone(phoneSetting.value);
     }
     const currencySetting = appSettings.find(s => s.key === 'currency');
     if (currencySetting) {
@@ -1717,22 +1734,36 @@ export default function App() {
       .reverse()
       .toArray();
     
-    const saleIds = customerSales.map(s => s.id!);
-    const allItems = await db.saleItems.where('sale_id').anyOf(saleIds).toArray();
-    const allProducts = await db.products.toArray();
-    const productMap = new Map(allProducts.map(p => [p.id, p]));
+    const saleIds = customerSales.map(s => s.id!).filter(Boolean);
+    const allItems = saleIds.length > 0
+      ? await db.saleItems.where('sale_id').anyOf(saleIds).toArray()
+      : [];
 
-    const salesWithItems = customerSales.map(s => ({
-      ...s,
-      items: JSON.stringify(allItems
-        .filter(si => si.sale_id === s.id)
-        .map(si => ({
+    const productIds = Array.from(new Set(allItems.map(si => si.product_id).filter(Boolean)));
+    const relevantProducts = productIds.length > 0
+      ? await db.products.where('id').anyOf(productIds).toArray()
+      : [];
+    const productMap = new Map(relevantProducts.map(p => [p.id, p]));
+
+    const itemsBySaleId = new Map<number, any[]>();
+    allItems.forEach(si => {
+      const list = itemsBySaleId.get(si.sale_id) || [];
+      list.push(si);
+      itemsBySaleId.set(si.sale_id, list);
+    });
+
+    const salesWithItems = customerSales.map(s => {
+      const sItems = itemsBySaleId.get(s.id!) || [];
+      return {
+        ...s,
+        items: JSON.stringify(sItems.map(si => ({
           name: productMap.get(si.product_id)?.name || 'منتج محذوف',
           quantity: si.quantity,
           price: si.price_at_sale,
           unit: productMap.get(si.product_id)?.unit || ''
         })))
-    }));
+      };
+    });
 
     const debts = await db.debts
       .where('customer_id')
@@ -2868,8 +2899,23 @@ export default function App() {
   };
 
   const handleShareWhatsApp = (customer: Customer) => {
-    const message = `مرحباً ${customer.name}، هذا كشف حسابك من ${storeName}:\nالرصيد المتبقي: ${customer.balance} ${currency}\nللمزيد من التفاصيل يرجى مراجعة المحل.`;
-    const whatsappUrl = `https://wa.me/${customer.phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
+    const statusText = customer.balance > 0
+      ? `🔴 *المبلغ المتبقي المستحق:* ${formatPrice(customer.balance)}`
+      : customer.balance < 0
+      ? `🟢 *رصيد دائن مقدّم متوفر:* ${formatPrice(Math.abs(customer.balance))}`
+      : `✅ *الحساب خالص تماماً (0 ${currency})*`;
+
+    const message = `🧾 *كشف حساب رسمي - ${storeName}*
+👤 *العميل المكرم:* ${customer.name}
+📱 *رقم الهاتف:* ${customer.phone || 'غير مسجل'}
+----------------------------------
+📌 ${statusText}
+
+شاكرين لكم حسن تعاونكم ودائمين في خدمتكم 🌹
+📞 للتواصل مع المتجر: ${storePhone || 'عبر هذا الرقم'}`;
+
+    const phoneNum = customer.phone ? customer.phone.replace(/\D/g, '') : '';
+    const whatsappUrl = `https://wa.me/${phoneNum}?text=${encodeURIComponent(message)}`;
     window.open(whatsappUrl, '_blank');
   };
 
@@ -3749,7 +3795,7 @@ export default function App() {
         <nav className="flex-1 p-4 space-y-4 overflow-y-auto no-scrollbar">
           {/* المجموعة الأولى: التحليلات والمتابعة */}
           <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5 tracking-wide">الرئيسية والتحليل</p>
+            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5">الرئيسية والتحليل</p>
             <SidebarButton 
               active={activeTab === 'dashboard'} 
               onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
@@ -3773,7 +3819,7 @@ export default function App() {
 
           {/* المجموعة الثانية: الكاونتر والمبيعات */}
           <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5 tracking-wide">العمليات والبيع</p>
+            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5">العمليات والبيع</p>
             <SidebarButton 
               active={activeTab === 'pos'} 
               onClick={() => { setActiveTab('pos'); setIsSidebarOpen(false); }} 
@@ -3792,7 +3838,7 @@ export default function App() {
 
           {/* المجموعة الثالثة: قواعد البيانات والسلع */}
           <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-455 mr-2 mb-1.5 tracking-wide">إحصاءات السلع والحلفاء</p>
+            <p className="text-[10px] font-black text-slate-455 mr-2 mb-1.5">إحصاءات السلع والحلفاء</p>
             <SidebarButton 
               active={activeTab === 'products'} 
               onClick={() => { setActiveTab('products'); setIsSidebarOpen(false); }} 
@@ -3821,7 +3867,7 @@ export default function App() {
 
           {/* المجموعة الرابعة: المحاسبة الذكية والمهام */}
           <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5 tracking-wide">الإدارة المالية والذكاء</p>
+            <p className="text-[10px] font-black text-slate-450 mr-2 mb-1.5">الإدارة المالية والذكاء</p>
             <SidebarButton 
               active={activeTab === 'notes'} 
               onClick={() => { setActiveTab('notes'); setIsSidebarOpen(false); }} 
@@ -3848,7 +3894,7 @@ export default function App() {
         </nav>
 
         <div className="p-3 border-t border-slate-150/40 bg-slate-50/40 rounded-b-3xl">
-          <p className="text-[9px] text-slate-400 font-extrabold uppercase tracking-wider mb-2 pr-1">النظام وأمان البيانات</p>
+          <p className="text-[9px] text-slate-400 font-extrabold uppercase mb-2 pr-1">النظام وأمان البيانات</p>
           
           <div className="grid grid-cols-2 gap-1.5">
             {/* زر الإعدادات العامة */}
@@ -5021,6 +5067,9 @@ export default function App() {
               formatDateTimeWithDay={formatDateTimeWithDay}
               setShowPaymentModal={setShowPaymentModal}
               setShowCustomerAdjustmentModal={setShowCustomerAdjustmentModal}
+              storeName={storeName}
+              storePhone={storePhone}
+              currency={currency}
             />
           )}
 
