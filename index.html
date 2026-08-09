@@ -5,28 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#059669" />
-    <meta name="google" content="notranslate" />
     <title>النظام المحاسبي الذكي</title>
     <script>
-      (function() {
-        const pngIcon = '/icon.png';
-        const svgIcon = '/icon.svg';
-        const link = document.createElement('link');
-        link.rel = 'icon';
-        
-        const img = new Image();
-        img.onload = () => {
-          link.type = 'image/png';
-          link.href = pngIcon;
-          document.head.appendChild(link);
-        };
-        img.onerror = () => {
-          link.type = 'image/svg+xml';
-          link.href = svgIcon;
-          document.head.appendChild(link);
-        };
-        img.src = pngIcon;
-      })();
+      window.addEventListener('error', function(e) {
+        document.body.innerHTML = '<div style="color:red;padding:20px;direction:ltr"><h1>Global Error</h1><pre>' + e.message + '\n' + e.filename + ':' + e.lineno + '</pre></div>';
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        document.body.innerHTML = '<div style="color:red;padding:20px;direction:ltr"><h1>Unhandled Promise Rejection</h1><pre>' + e.reason + '</pre></div>';
+      });
+      
+      // FORCE CLEAR ALL CACHES AND SERVICE WORKERS
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for(let registration of registrations) {
+            registration.unregister();
+          }
+        });
+      }
+      if (window.caches) {
+        caches.keys().then(function(names) {
+          for (let name of names) caches.delete(name);
+        });
+      }
     </script>
   </head>
   <body>
@@ -34,4 +34,3 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

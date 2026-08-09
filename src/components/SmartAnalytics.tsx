@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
+import { processUserQuery } from '../services/ai/aiRouter';
+import VisualModelsExtension from './VisualModelsExtension';
 import { motion, AnimatePresence } from 'motion/react';
 import html2pdf from 'html2pdf.js';
 import { 
@@ -111,6 +113,20 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const [ratedMessages, setRatedMessages] = useState<{[key: string]: 'up' | 'down'}>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -282,7 +298,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     setLearningRefreshKey(prev => prev + 1);
   };
 
-  const handleFeedback = (isPositive: boolean) => {
+  const handleFeedback = async (msgId: string, isPositive: boolean, userQueryText: string, answerText: string) => {
     const savedStateStr = localStorage.getItem('smart_analytics_learning_v1');
     const state = savedStateStr ? JSON.parse(savedStateStr) : {
       thumbsUp: 0,
@@ -300,9 +316,31 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
     localStorage.setItem('smart_analytics_learning_v1', JSON.stringify(state));
     setLearningRefreshKey(prev => prev + 1);
+
+    try {
+      const { submitAIFeedback } = await import('../services/ai/feedback');
+      await submitAIFeedback({
+        messageId: msgId,
+        userQuery: userQueryText || 'استعلام مباشر من المحادثة',
+        responseAnswer: answerText,
+        rating: isPositive ? 'THUMBS_UP' : 'THUMBS_DOWN',
+        intent: 'CONVERSATION_CHAT'
+      });
+    } catch (err) {
+      console.warn('Failed to save AI feedback to database:', err);
+    }
   };
 
-  const resolveOfflineQuery = async (query: string): Promise<string> => {
+  const resolveSmartQuery = async (query: string): Promise<string> => {
+    try {
+      const aiResponse = await processUserQuery(query);
+      if (aiResponse && aiResponse.answer && aiResponse.confidence >= 0.25) {
+        return aiResponse.answer;
+      }
+    } catch (err) {
+      console.warn('AI Engine Router error, falling back to legacy handler:', err);
+    }
+
     const rawQ = query.trim().toLowerCase();
     
     // Arabic Normalizer Helper (handles hamzas, prefixes, and common variations)
@@ -1141,10 +1179,10 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
     setChatMessages(prev => [...prev, newUserMessage]);
     setIsTyping(true);
 
-    // Fast local execution (100% offline local machine learning AI engine)
+    // Hybrid Execution Engine (Online Gemini 2.5 Flash Cloud RAG + 100% Offline Local Engine Fallback)
     setTimeout(async () => {
       try {
-        const responseText = await resolveOfflineQuery(query);
+        const responseText = await resolveSmartQuery(query);
         setChatMessages(prev => [...prev, {
           id: 'assistant-' + Date.now(),
           role: 'assistant' as const,
@@ -1155,7 +1193,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
         setChatMessages(prev => [...prev, {
           id: 'error-' + Date.now(),
           role: 'assistant' as const,
-          text: `⚠️ **حدث خطأ أثناء تحليل الاستفسار محلياً:**\n${error.message || String(error)}`,
+          text: `⚠️ **حدث خطأ أثناء معالجة الاستفسار:**\n${error.message || String(error)}`,
           timestamp: new Date()
         }]);
       } finally {
@@ -2483,7 +2521,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                           لا تتوفر حركة ملموسة للتواريخ الحالية في نطاق الفئات المحددة.
                         </div>
                       ) : (
-                        <ResponsiveContainer width="100%" height="95%">
+                        <ResponsiveContainer width="100%" height="95%" minWidth={0} minHeight={0}>
                           <AreaChart data={salesAndProfitTrendChart} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <defs>
                               <linearGradient id="colorSalesNew" x1="0" y1="0" x2="0" y2="1">
@@ -2497,7 +2535,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                             <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
+                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
                             <Tooltip 
                               contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
                               formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات الشهرية' : 'أرباح الشهر الصافية']}
@@ -2514,7 +2552,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                           لا تتوفر حركات مالية كحصد مبيعات، سحب نقد، أو تسوية جرد بالتاريخ الحالي.
                         </div>
                       ) : (
-                        <ResponsiveContainer width="100%" height="95%">
+                        <ResponsiveContainer width="100%" height="95%" minWidth={0} minHeight={0}>
                           <AreaChart data={unifiedCashflowTimeline} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <defs>
                               <linearGradient id="colorMoneyIn" x1="0" y1="0" x2="0" y2="1">
@@ -2528,7 +2566,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                             <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
+                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
                             <Tooltip 
                               contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
                               formatter={(value: any, name: any) => [
@@ -2636,7 +2674,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                     {performanceKPIs.salesTotal === 0 ? (
                       <span className="text-xs text-slate-400">لا تتوفر بيانات حية</span>
                     ) : (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                         <RechartsPieChart>
                           {liquidityDonutType === 'revenue_mix' ? (
                             <Pie
@@ -3024,10 +3062,10 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                         لم يتم تسجيل أي بضائع مباعة بالتصفية المحددة.
                       </div>
                     ) : (
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                         <BarChart data={topProductsChart} layout="vertical" margin={{ top: 10, right: 30, left: -20, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                          <XAxis type="number" stroke="#94a3b8" fontSize={9} fontWeight="bold" />
+                          <XAxis type="number" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
                           <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={9} fontWeight="extrabold" width={110} tickLine={false} />
                           <Tooltip 
                             contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', fontSize: '11px' }}
@@ -3096,6 +3134,17 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Visual Models Extension Component (Market Basket, Profit Scatter, Credit Risk, Cashflow Waterfall) */}
+      <VisualModelsExtension 
+        products={products}
+        customers={customers}
+        sales={sales}
+        saleItems={saleItems}
+        debts={debts}
+        withdrawals={cashWithdrawals}
+        formatPrice={formatPrice}
+      />
 
       {/* Accordion List 6: AI Intelligent Insights & Guidance */}
       <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
@@ -3175,11 +3224,27 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                           <div>
                             <div className="flex items-center gap-2">
                               <h3 className="text-xs sm:text-sm font-black text-white">المستشار الحسابي والمالي الذكي</h3>
-                              <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
-                                <WifiOff className="w-2.5 h-2.5" /> أوفلاين 100%
-                              </span>
+                              {(() => {
+                                const hasCustomKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key'));
+                                if (hasCustomKey && isOnline) {
+                                  return (
+                                    <span className="bg-sky-500/20 text-sky-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-sky-400/30">
+                                      <Globe className="w-2.5 h-2.5 animate-pulse text-sky-400" /> سحابي (مفتاحك الخاص)
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
+                                    <Shield className="w-2.5 h-2.5 text-emerald-400" /> محلي 100% (خصوصية وأمان)
+                                  </span>
+                                );
+                              })()}
                             </div>
-                            <p className="text-[10px] text-indigo-200/80 font-medium mt-0.5">إجابات حية ومطابقة ديون ومخزون فورية بدون إنترنت</p>
+                            <p className="text-[10px] text-indigo-200/80 font-medium mt-0.5">
+                              {typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key')) && isOnline 
+                                ? 'وضع الذكاء السحابي نشط باستخدام مفتاح Gemini API المخصص من الإعدادات' 
+                                : 'محرك محاسبي محلي آمن 100% يضمن سرية وخصوصية بياناتك بدون إرسالها للخارج'}
+                            </p>
                           </div>
                         </div>
 
@@ -3207,93 +3272,97 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                           </p>
                         </div>
                       ) : (
-                        chatMessages.map((msg) => (
-                          <div
-                            key={msg.id}
-                            className={`flex flex-col max-w-[92%] sm:max-w-[88%] rounded-2xl p-3 sm:p-4 text-xs shadow-md ${
-                              msg.role === 'user'
-                                ? 'bg-indigo-600 text-white self-start rounded-tr-none'
-                                : msg.id.startsWith('error')
-                                  ? 'bg-rose-950 border border-rose-800 text-rose-100 self-end rounded-tl-none'
-                                  : 'bg-slate-900 border border-slate-800 text-slate-100 self-end rounded-tl-none'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between text-[10px] opacity-75 mb-1.5 font-black border-b border-inherit pb-1">
-                              <span className="flex items-center gap-1.5">
-                                {msg.role === 'user' ? '👤 سؤالك' : '🤖 المستشار الذكي'}
-                              </span>
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-[9px] opacity-60">
-                                  {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                        chatMessages.map((msg, idx) => {
+                          const prevMsg = idx > 0 ? chatMessages[idx - 1] : null;
+                          const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
+                          return (
+                            <div
+                              key={msg.id}
+                              className={`flex flex-col max-w-[92%] sm:max-w-[88%] rounded-2xl p-3 sm:p-4 text-xs shadow-md ${
+                                msg.role === 'user'
+                                  ? 'bg-indigo-600 text-white self-start rounded-tr-none'
+                                  : msg.id.startsWith('error')
+                                    ? 'bg-rose-950 border border-rose-800 text-rose-100 self-end rounded-tl-none'
+                                    : 'bg-slate-900 border border-slate-800 text-slate-100 self-end rounded-tl-none'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between text-[10px] opacity-75 mb-1.5 font-black border-b border-inherit pb-1">
+                                <span className="flex items-center gap-1.5">
+                                  {msg.role === 'user' ? '👤 سؤالك' : '🤖 المستشار الذكي'}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteMessage(msg.id)}
-                                  className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                                  title="حذف هذه الرسالة"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                            <div className="whitespace-pre-wrap leading-relaxed">
-                              {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
-                            </div>
-                            {msg.role === 'assistant' && (
-                              <div className="flex justify-between items-center gap-1.5 mt-2 pt-1.5 border-t border-slate-800 text-right flex-wrap">
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-[9px] opacity-60">
+                                    {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
                                   <button
-                                    onClick={() => handleCopyText(msg.id, msg.text)}
-                                    className="px-2 py-0.5 hover:bg-slate-800 rounded text-[10px] flex items-center gap-1 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors"
-                                    title="نسخ التقرير"
+                                    type="button"
+                                    onClick={() => handleDeleteMessage(msg.id)}
+                                    className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
+                                    title="حذف هذه الرسالة"
                                   >
-                                    {copiedMessageId === msg.id ? (
-                                      <>
-                                        <Check className="w-3 h-3 text-emerald-400" />
-                                        <span className="text-emerald-400 font-bold">تم النسخ</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Copy className="w-3 h-3" />
-                                        <span>نسخ</span>
-                                      </>
-                                    )}
+                                    <Trash2 className="w-3 h-3" />
                                   </button>
                                 </div>
-                                {msg.id !== 'welcome' && (
-                                  ratedMessages[msg.id] ? (
-                                    <span className="text-[9px] text-emerald-400 font-bold">
-                                      {ratedMessages[msg.id] === 'up' ? 'تم التقييم 👍' : 'تم تدوين الملاحظة 👎'}
-                                    </span>
-                                  ) : (
-                                    <div className="flex gap-1">
-                                      <button
-                                        onClick={() => {
-                                          handleFeedback(true);
-                                          setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
-                                        }}
-                                        className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                                        title="مفيد"
-                                      >
-                                        <ThumbsUp className="w-3 h-3" />
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          handleFeedback(false);
-                                          setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
-                                        }}
-                                        className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                                        title="غير دقيق"
-                                      >
-                                        <ThumbsDown className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  )
-                                )}
                               </div>
-                            )}
-                          </div>
-                        ))
+                              <div className="whitespace-pre-wrap leading-relaxed">
+                                {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
+                              </div>
+                              {msg.role === 'assistant' && (
+                                <div className="flex justify-between items-center gap-1.5 mt-2 pt-1.5 border-t border-slate-800 text-right flex-wrap">
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleCopyText(msg.id, msg.text)}
+                                      className="px-2 py-0.5 hover:bg-slate-800 rounded text-[10px] flex items-center gap-1 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors"
+                                      title="نسخ التقرير"
+                                    >
+                                      {copiedMessageId === msg.id ? (
+                                        <>
+                                          <Check className="w-3 h-3 text-emerald-400" />
+                                          <span className="text-emerald-400 font-bold">تم النسخ</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Copy className="w-3 h-3" />
+                                          <span>نسخ</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                  {msg.id !== 'welcome' && (
+                                    ratedMessages[msg.id] ? (
+                                      <span className="text-[9px] text-emerald-400 font-bold">
+                                        {ratedMessages[msg.id] === 'up' ? 'تم التقييم 👍' : 'تم تدوين الملاحظة 👎'}
+                                      </span>
+                                    ) : (
+                                      <div className="flex gap-1">
+                                        <button
+                                          onClick={() => {
+                                            handleFeedback(msg.id, true, queryText, msg.text);
+                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
+                                          }}
+                                          className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+                                          title="مفيد"
+                                        >
+                                          <ThumbsUp className="w-3 h-3" />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            handleFeedback(msg.id, false, queryText, msg.text);
+                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
+                                          }}
+                                          className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                                          title="غير دقيق"
+                                        >
+                                          <ThumbsDown className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
                       )}
                       {isTyping && (
                         <div className="bg-slate-900 border border-slate-800 text-slate-300 max-w-[40%] rounded-2xl p-2.5 text-xs self-end rounded-tl-none flex items-center gap-2 shadow-xs">
@@ -3455,9 +3524,15 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                   <div>
                     <h3 className="text-sm font-black text-white leading-tight">المستشار الحسابي الذكي</h3>
                     <div className="flex items-center gap-1.5 mt-1">
-                      <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
-                        <WifiOff className="w-2.5 h-2.5" /> أوفلاين 100%
-                      </span>
+                      {isOnline ? (
+                        <span className="bg-indigo-500/25 text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-indigo-400/30 animate-pulse">
+                          <Globe className="w-2.5 h-2.5" /> هجين (أونلاين)
+                        </span>
+                      ) : (
+                        <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
+                          <WifiOff className="w-2.5 h-2.5" /> أوفلاين 100%
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -3494,85 +3569,89 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                   </p>
                 </div>
               ) : (
-                chatMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex flex-col max-w-[92%] rounded-2xl p-3 sm:p-4 text-xs shadow-md ${
-                      msg.role === 'user'
-                        ? 'bg-indigo-600 text-white self-start rounded-tr-none shadow-indigo-100'
-                        : msg.id.startsWith('error')
-                          ? 'bg-rose-950 border border-rose-800 text-rose-100 self-end rounded-tl-none'
-                          : 'bg-slate-900 border border-slate-800 text-slate-100 self-end rounded-tl-none'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-[10px] opacity-75 mb-2 font-black border-b border-inherit pb-1.5">
-                      <span className="flex items-center gap-1.5">
-                        {msg.role === 'user' ? '👤 أنت' : '🤖 المستشار الذكي'}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[9px] opacity-60">
-                          {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                chatMessages.map((msg, idx) => {
+                  const prevMsg = idx > 0 ? chatMessages[idx - 1] : null;
+                  const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex flex-col max-w-[92%] rounded-2xl p-3 sm:p-4 text-xs shadow-md ${
+                        msg.role === 'user'
+                          ? 'bg-indigo-600 text-white self-start rounded-tr-none shadow-indigo-100'
+                          : msg.id.startsWith('error')
+                            ? 'bg-rose-950 border border-rose-800 text-rose-100 self-end rounded-tl-none'
+                            : 'bg-slate-900 border border-slate-800 text-slate-100 self-end rounded-tl-none'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[10px] opacity-75 mb-2 font-black border-b border-inherit pb-1.5">
+                        <span className="flex items-center gap-1.5">
+                          {msg.role === 'user' ? '👤 أنت' : '🤖 المستشار الذكي'}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteMessage(msg.id)}
-                          className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                          title="حذف هذه الرسالة"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="whitespace-pre-wrap leading-relaxed">
-                      {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
-                    </div>
-                    {msg.role === 'assistant' && (
-                      <div className="flex justify-between items-center gap-1.5 mt-2.5 pt-2 border-t border-slate-800 text-right flex-wrap">
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[9px] opacity-60">
+                            {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
                           <button
-                            onClick={() => handleCopyText(msg.id, msg.text)}
-                            className="p-1.5 hover:bg-slate-800 rounded-md text-[10px] flex items-center gap-1 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors"
-                            title="نسخ التقرير"
+                            type="button"
+                            onClick={() => handleDeleteMessage(msg.id)}
+                            className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
+                            title="حذف هذه الرسالة"
                           >
-                            {copiedMessageId === msg.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
+                            <Trash2 className="w-3 h-3" />
                           </button>
                         </div>
-                        {msg.id !== 'welcome' && (
-                          ratedMessages[msg.id] ? (
-                            <span className="text-[9px] text-emerald-400 font-bold">
-                              تم التقييم
-                            </span>
-                          ) : (
-                            <div className="flex gap-1">
-                              <button
-                                onClick={() => {
-                                  handleFeedback(true);
-                                  setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
-                                }}
-                                className="p-1 hover:bg-slate-800 rounded-md text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                              >
-                                <ThumbsUp className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  handleFeedback(false);
-                                  setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
-                                }}
-                                className="p-1 hover:bg-slate-800 rounded-md text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                              >
-                                <ThumbsDown className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )
-                        )}
                       </div>
-                    )}
-                  </div>
-                ))
+                      <div className="whitespace-pre-wrap leading-relaxed">
+                        {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
+                      </div>
+                      {msg.role === 'assistant' && (
+                        <div className="flex justify-between items-center gap-1.5 mt-2.5 pt-2 border-t border-slate-800 text-right flex-wrap">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleCopyText(msg.id, msg.text)}
+                              className="p-1.5 hover:bg-slate-800 rounded-md text-[10px] flex items-center gap-1 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors"
+                              title="نسخ التقرير"
+                            >
+                              {copiedMessageId === msg.id ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
+                          {msg.id !== 'welcome' && (
+                            ratedMessages[msg.id] ? (
+                              <span className="text-[9px] text-emerald-400 font-bold">
+                                تم التقييم 👍
+                              </span>
+                            ) : (
+                              <div className="flex gap-1">
+                                <button
+                                  onClick={() => {
+                                    handleFeedback(msg.id, true, queryText, msg.text);
+                                    setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
+                                  }}
+                                  className="p-1 hover:bg-slate-800 rounded-md text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
+                                >
+                                  <ThumbsUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    handleFeedback(msg.id, false, queryText, msg.text);
+                                    setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
+                                  }}
+                                  className="p-1 hover:bg-slate-800 rounded-md text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                                >
+                                  <ThumbsDown className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
               {isTyping && (
                 <div className="bg-slate-900 border border-slate-800 text-slate-300 max-w-[35%] rounded-2xl p-2.5 text-xs self-end rounded-tl-none flex items-center gap-1.5 shadow-sm">

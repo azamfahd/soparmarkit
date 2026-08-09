@@ -318,12 +318,18 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                     {showItems && (
                       <div className="mt-3 pt-3 border-t border-slate-100">
                         <div className="space-y-1">
-                          {JSON.parse(entry.items || '[]').map((item: any, i: number) => (
-                            <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-xs text-slate-600">
-                              <span>{item.name} <span className="text-slate-400 font-mono">× {item.quantity}</span></span>
-                              <span className="font-semibold">{formatPrice(item.price * item.quantity)}</span>
-                            </div>
-                          ))}
+                          {(() => {
+                            let parsedItems: any[] = [];
+                            try {
+                              parsedItems = typeof entry.items === 'string' ? JSON.parse(entry.items) : (entry.items || []);
+                            } catch (e) {}
+                            return Array.isArray(parsedItems) ? parsedItems.map((item: any, i: number) => (
+                              <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-xs text-slate-600">
+                                <span>{item.name} <span className="text-slate-400 font-mono">× {item.quantity}</span></span>
+                                <span className="font-semibold">{formatPrice(item.price * item.quantity)}</span>
+                              </div>
+                            )) : null;
+                          })()}
                         </div>
                         <div className="mt-3 flex justify-end">
                           <button 

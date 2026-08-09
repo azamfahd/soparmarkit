@@ -248,6 +248,33 @@ async function startServer() {
     res.json(sales);
   });
 
+  // Helper function to call Gemini models with resilient fallback across valid model aliases
+  async function generateGeminiContentWithFallback(ai: GoogleGenAI, params: { contents: any; config?: any }) {
+    const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    let lastErr: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const result = await ai.models.generateContent({
+          model: modelName,
+          contents: params.contents,
+          config: params.config,
+        });
+        return { response: result, modelUsed: modelName };
+      } catch (err: any) {
+        console.warn(`Gemini generation with model [${modelName}] failed, trying next alias...`, err?.message || String(err));
+        lastErr = err;
+        
+        // If quota exceeded or 429, don't fallback, bubble up immediately
+        const errMsg = err?.message?.toLowerCase() || '';
+        if (err?.status === 429 || errMsg.includes('quota') || errMsg.includes('429')) {
+           throw new Error('المفتاح صحيح، لكن رصيدك المجاني نفد أو أن الخدمة المجانية غير متاحة في بلدك (Quota Exceeded). يرجى الترقية أو استخدام مفتاح جديد.');
+        }
+      }
+    }
+    throw lastErr || new Error('تعذر الاتصال بنماذج Gemini المتاحة عبر السحابة.');
+  }
+
   // AI Smart Import endpoint
   app.post('/api/gemini/smart-import', async (req, res) => {
     const { dataType, text, fileData } = req.body;
@@ -256,11 +283,12 @@ async function startServer() {
       return res.status(400).json({ success: false, error: 'الرجاء توفير نوع البيانات والمدخلات النصية أو ملف الصورة.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const rawApiKey = req.body?.customApiKey || req.headers['x-api-key'];
+    const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : rawApiKey;
     if (!apiKey) {
-      return res.status(500).json({
+      return res.status(401).json({
         success: false,
-        error: 'مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) غير متاح. يرجى إضافته من قائمة الإعدادات > أسرار التطبيق.'
+        error: 'لم يتم توفير مفتاح Gemini API. يرجى إضافة مفتاحك الخاص في الإعدادات.'
       });
     }
 
@@ -421,8 +449,7 @@ async function startServer() {
         };
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+      const { response, modelUsed } = await generateGeminiContentWithFallback(ai, {
         contents,
         config: {
           responseMimeType: "application/json",
@@ -432,7 +459,7 @@ async function startServer() {
       });
 
       const parsedResult = JSON.parse(response.text || '{}');
-      res.json({ success: true, data: parsedResult });
+      res.json({ success: true, data: parsedResult, modelUsed });
 
     } catch (err: any) {
       console.error('Gemini smart import failed:', err);
@@ -442,17 +469,18 @@ async function startServer() {
 
   // AI Smart Assistant chatbot endpoint
   app.post('/api/gemini/assistant', async (req, res) => {
-    const { message, dbSummary, history } = req.body;
+    const { message, dbSummary, history, ragContext, evidence } = req.body;
 
     if (!message) {
       return res.status(400).json({ success: false, error: 'الرجاء كتابة رسالة أو سؤال للمساعد الذكي.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const rawApiKey = req.body?.customApiKey || req.headers['x-api-key'];
+    const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : rawApiKey;
     if (!apiKey) {
-      return res.status(500).json({
+      return res.status(401).json({
         success: false,
-        error: 'مفتاح الذكاء الاصطناعي (GEMINI_API_KEY) غير متاح. يرجى تفعيل وضع (محلي بدون إنترنت) أو إضافة المفتاح في الإعدادات.'
+        error: 'لم يتم توفير مفتاح Gemini API. يرجى إضافة مفتاحك الخاص في الإعدادات.'
       });
     }
 
@@ -466,22 +494,42 @@ async function startServer() {
         }
       });
 
-      // Construct systemic prompt
-      const systemInstruction = `أنت "المساعد الحسابي الذكي" المدمج في نظام إدارة البقالة الذكي ومطابقة الصندوق والمخزون والديون.
-مهمتك هي الإجابة على أسئلة المستخدم (التاجر أو المحاسب) بالاعتماد المباشر على بيانات النظام المرفقة في طلب الخدمة.
-يجب أن تكون إجاباتك دقيقة مائة بالمائة، محاسبية، واضحة، وباللغة العربية الفصحى المبسطة والمفهومة للمحلات التجارية.
+      let groundingBlock = '';
+      if (ragContext && Array.isArray(ragContext) && ragContext.length > 0) {
+        groundingBlock += `\n\n📑 وثائق ومستندات قاعدة المعرفة المرجعية المسترجعة (RAG Context):\n------------------------------------------\n`;
+        ragContext.forEach((doc: any, i: number) => {
+          const cit = doc.citation || {};
+          groundingBlock += `[المستند ${i+1}]: ${doc.title}\n`;
+          if (doc.sectionTitle || cit.sectionTitle) groundingBlock += `القسم الفرعي: ${doc.sectionTitle || cit.sectionTitle}\n`;
+          if (cit.fileName) groundingBlock += `الملف المصدري: ${cit.fileName} (النوع: ${cit.fileType} | الحجم: ${cit.fileSize || 'غير معروف'} | التصنيف: ${cit.category || 'عام'})\n`;
+          groundingBlock += `المحتوى النصي المفصل: ${doc.content}\n`;
+          if (doc.confidencePercent) groundingBlock += `مؤشر مطابقة الرغ: %${doc.confidencePercent} (${doc.explanation || 'مطابقة دلالية'})\n`;
+          groundingBlock += `------------------------------------------\n`;
+        });
+      }
 
-معلومات وبيانات المحل المتوفرة حالياً في النظام:
+      if (evidence && Array.isArray(evidence) && evidence.length > 0) {
+        groundingBlock += `\n\n📊 البيانات والأرقام المحاسبية المسحوبة من قاعدة البيانات المحلية (Evidence):\n------------------------------------------\n${JSON.stringify(evidence, null, 2)}\n------------------------------------------\n`;
+      }
+
+      // Construct systemic prompt
+      const systemInstruction = `أنت "المساعد الحسابي الذكي" (النسخة السحابية الفائقة المتكاملة بـ RAG) المدمج في نظام إدارة البقالة الذكي ومطابقة الصندوق والمخزون والديون.
+مهمتك هي الإجابة على أسئلة المستخدم (التاجر أو المحاسب) بالاعتماد المباشر والدقيق على البيانات والمستندات المرفقة في طلب الخدمة.
+يجب أن تكون إجاباتك دقيقة مائة بالمائة، محاسبية، واضحة، باللغة العربية الفصحى المبسطة والمفهومة للمحلات التجارية.
+
+معلومات وبيانات المحل العامة المتوفرة حالياً في النظام:
 ------------------------------------------
 ${JSON.stringify(dbSummary, null, 2)}
 ------------------------------------------
+${groundingBlock}
 
-إرشادات هامة عند الإجابة:
-1. اعتمد دائماً على الأرقام الحقيقية المذكورة في معلومات المحل أعلاه ولا تفترض أو تخترع أرقاماً غير موجودة.
-2. إذا سألك عن المبيعات أو الأرباح أو حالة الصندوق أو مديونية الزبائن، قم بحسابها أو قراءتها من البيانات المرفقة واعرضها له في نقاط منسقة وجميلة.
-3. قدم نصائح وإرشادات محاسبية ذكية لزيادة المبيعات أو تقليل الديون بناءً على حالة البيانات الحالية (مثلاً إذا كانت ديون الزبائن مرتفعة جداً مقارنة بالمبيعات، انصحه بوضع قيود على البيع الآجل).
-4. استخدم التنسيق الجميل (عناوين فرعية، نقاط واضحة، استخدام الرموز التعبيرية المناسبة لتبسيط القراءة).
-5. تجنب الحديث عن الأمور الفنية كأكواد البرمجة أو أسماء الجداول البرمجية، وتحدث كخبير محاسبي ومستشار مالي للمتجر.`;
+إرشادات محاسبية وقانونية هامة جداً وصارمة عند الإجابة:
+1. اعتمد دائماً على الأرقام الحقيقية المذكورة في "البيانات المحاسبية" أو "قاعدة المعرفة" أعلاه ولا تخترع أو تفترض أرقاماً غير موجودة مطلقاً.
+2. إذا سألك عن المبيعات أو الأرباح أو مديونية الزبائن، اقرأ البيانات المرفقة من جدول الـ Evidence بدقة واعرضها له في نقاط محاسبية مرتبة.
+3. الإشارة الصريحة للمستندات (Source Attribution): عندما تجيب بالاعتماد على "وثائق قاعدة المعرفة المرجعية" المسترجعة، يجب عليك الإشارة صراحة وبشكل مبهج واحترافي إلى اسم الملف المصدري وقسمه ورقم المستند كبينة ملموسة (مثال: "وفقاً لـ 'دليل السياسات والعمليات.pdf' (القسم: سياسة المبيعات)...").
+4. قدم استشارات مالية وإرشادات محاسبية ذكية لزيادة المبيعات أو تقليل الديون أو معالجة النواقص بناءً على حالة البيانات الحالية.
+5. حافظ على سرية أكواد البرمجة وهندسة البرمجيات الداخلية، وتحدث دائماً بصفتك خبيراً مالياً، مستشاراً تجارياً، ومحاسباً محترفاً لبقالات ومحلات التجزئة.
+6. استخدم التنسيق الجميل (عناوين فرعية عريضة، نقاط واضحة، استخدام الرموز التعبيرية المناسبة لتبسيط القراءة).`;
 
       const contents = [];
       
@@ -500,16 +548,15 @@ ${JSON.stringify(dbSummary, null, 2)}
         parts: [{ text: message }]
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.6-flash",
+      const { response, modelUsed } = await generateGeminiContentWithFallback(ai, {
         contents,
         config: {
           systemInstruction,
-          temperature: 0.7
+          temperature: 0.6
         }
       });
 
-      res.json({ success: true, text: response.text });
+      res.json({ success: true, text: response.text, modelUsed });
 
     } catch (err: any) {
       console.error('Gemini assistant failed:', err);
@@ -535,6 +582,75 @@ ${JSON.stringify(dbSummary, null, 2)}
       }
     });
   }
+
+  // Verify API key endpoint
+  app.post('/api/gemini/verify', async (req, res) => {
+    const rawApiKey = req.body?.customApiKey;
+    const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : rawApiKey;
+    if (!apiKey) {
+      return res.status(400).json({ success: false, error: 'لم يتم توفير مفتاح.' });
+    }
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+      // Test the key with a fast, cheap call
+      await ai.models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: 'test',
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.warn('API Key verification failed:', err?.message || String(err));
+      
+      const errMsg = err?.message?.toLowerCase() || '';
+      
+      if (err?.status === 400 || errMsg.includes('invalid') || errMsg.includes('400')) {
+         return res.status(400).json({ success: false, error: 'المفتاح غير صالح (Invalid API Key). يرجى التأكد من نسخه بشكل صحيح بدون مسافات إضافية.' });
+      }
+      if (err?.status === 403 || errMsg.includes('permission') || errMsg.includes('403')) {
+         return res.status(403).json({ success: false, error: 'المفتاح لا يملك صلاحيات كافية (Permission Denied). تأكد من تفعيل Gemini API.' });
+      }
+      if (err?.status === 429 || errMsg.includes('quota') || errMsg.includes('429')) {
+         return res.status(429).json({ success: false, error: 'المفتاح صحيح، لكن رصيدك المجاني نفد أو أن الخدمة المجانية غير متاحة في بلدك (Quota Exceeded).' });
+      }
+      
+      // Fallback model check if 1.5-flash isn't available
+      try {
+        const ai = new GoogleGenAI({
+          apiKey,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
+            }
+          }
+        });
+        await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: 'test',
+        });
+        res.json({ success: true });
+      } catch(fallbackErr: any) {
+        const fallErrMsg = fallbackErr?.message?.toLowerCase() || '';
+        if (fallbackErr?.status === 400 || fallErrMsg.includes('invalid') || fallErrMsg.includes('400')) {
+           return res.status(400).json({ success: false, error: 'المفتاح غير صالح (Invalid API Key). يرجى التأكد من نسخه بشكل صحيح.' });
+        }
+        if (fallbackErr?.status === 403 || fallErrMsg.includes('permission') || fallErrMsg.includes('403')) {
+           return res.status(403).json({ success: false, error: 'المفتاح لا يملك صلاحيات كافية (Permission Denied).' });
+        }
+        if (fallbackErr?.status === 429 || fallErrMsg.includes('quota') || fallErrMsg.includes('429')) {
+           return res.status(429).json({ success: false, error: 'المفتاح صحيح، لكن رصيدك المجاني نفد أو أن الخدمة المجانية غير متاحة في بلدك.' });
+        }
+        res.status(401).json({ success: false, error: 'المفتاح غير صالح أو هنالك مشكلة في الاتصال.' });
+      }
+    }
+  });
 
   const PORT = parseInt(process.env.PORT || '3000', 10);
   app.listen(PORT, '0.0.0.0', () => {

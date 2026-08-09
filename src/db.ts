@@ -116,6 +116,61 @@ export interface CashWithdrawal {
   repay_date?: string;
 }
 
+export interface AIConversationRecord {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AIMessageRecord {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  intent?: string;
+  evidence?: any;
+}
+
+export interface KnowledgeDocumentRecord {
+  id?: number;
+  title: string;
+  category: string;
+  content: string;
+  tags?: string[];
+  embedding?: number[];
+  fileName?: string;
+  fileType?: 'TXT' | 'CSV' | 'JSON' | 'PDF' | 'DOCX' | 'MANUAL';
+  fileSize?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface DocumentChunkRecord {
+  id?: number;
+  documentId: number;
+  chunkIndex: number;
+  sectionTitle?: string;
+  content: string;
+  cleanContent: string;
+  wordCount: number;
+  tags?: string[];
+  embedding?: number[];
+  createdAt: number;
+}
+
+export interface AIFeedbackRecord {
+  id?: number;
+  messageId: string;
+  userQuery: string;
+  responseAnswer: string;
+  rating: 'THUMBS_UP' | 'THUMBS_DOWN';
+  userComment?: string;
+  intent?: string;
+  timestamp: number;
+}
+
 export class GroceryDatabase extends Dexie {
   products!: Table<Product>;
   customers!: Table<Customer>;
@@ -130,6 +185,11 @@ export class GroceryDatabase extends Dexie {
   cashWithdrawals!: Table<CashWithdrawal>;
   suppliers!: Table<Supplier>;
   supplierPayments!: Table<SupplierPayment>;
+  aiConversations!: Table<AIConversationRecord>;
+  aiMessages!: Table<AIMessageRecord>;
+  knowledgeDocuments!: Table<KnowledgeDocumentRecord>;
+  documentChunks!: Table<DocumentChunkRecord>;
+  aiFeedback!: Table<AIFeedbackRecord>;
 
   constructor() {
     super('GroceryDB');
@@ -219,6 +279,80 @@ export class GroceryDatabase extends Dexie {
       suppliers: '++id, name, phone',
       supplierPayments: '++id, supplier_id, payment_date'
     });
+    this.version(11).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date',
+      aiConversations: 'id, createdAt, updatedAt',
+      aiMessages: 'id, conversationId, timestamp, role'
+    });
+    this.version(12).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date',
+      aiConversations: 'id, createdAt, updatedAt',
+      aiMessages: 'id, conversationId, timestamp, role',
+      knowledgeDocuments: '++id, title, category, *tags, createdAt'
+    });
+    this.version(13).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date',
+      aiConversations: 'id, createdAt, updatedAt',
+      aiMessages: 'id, conversationId, timestamp, role',
+      knowledgeDocuments: '++id, title, category, *tags, createdAt',
+      aiFeedback: '++id, messageId, rating, timestamp'
+    });
+    this.version(14).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date',
+      aiConversations: 'id, createdAt, updatedAt',
+      aiMessages: 'id, conversationId, timestamp, role',
+      knowledgeDocuments: '++id, title, category, *tags, createdAt',
+      documentChunks: '++id, documentId, chunkIndex, *tags, createdAt',
+      aiFeedback: '++id, messageId, rating, timestamp'
+    });
   }
 }
 
@@ -246,6 +380,47 @@ export async function seedDatabase() {
       { name: "سارة علي", phone: "0557654321", balance: 0 },
       { name: "خالد عبدالله", phone: "0561112223", balance: 45 }
     ]);
+
+    if (db.knowledgeDocuments) {
+      const count = await db.knowledgeDocuments.count();
+      if (count === 0) {
+        const now = Date.now();
+        await db.knowledgeDocuments.bulkAdd([
+          {
+            title: 'كيفية إضافة منتج جديد إلى النظام',
+            category: 'دليل استخدام',
+            content: 'لإضافة منتج جديد، اذهب إلى قائمة المنتجات والمخزون، اضغط على زر "إضافة منتج جديد"، ادخل الاسم، سعر التكلفة، سعر البيع، الكمية، والباركود ثم اضغط حفظ.',
+            tags: ['إضافة', 'منتج', 'مخزون', 'طريقة'],
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            title: 'كيفية تسديد دين أو تسجيل دين لزبون',
+            category: 'دليل استخدام',
+            content: 'لتسجيل دين، اختر الدفع الآجل (دين) عند إتمام الفاتورة واختيار الزبون. لتسديد الدين، افتح قائمة العملاء، اختر الزبون المطلوب، واضغط "تسديد مبلغ" وادخل القيمة.',
+            tags: ['دين', 'عملاء', 'زبون', 'تسديد'],
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            title: 'طريقة طباعة الفواتير وكشوفات الحساب',
+            category: 'دليل استخدام',
+            content: 'يمكنك طباعة الفاتورة فور إتمام البيع عبر زر الطباعة، أو تصدير كشف حساب زبون أو مورد إلى ملف PDF بضغط زر "تصدير كشف حساب".',
+            tags: ['طباعة', 'فاتورة', 'كشف حساب', 'PDF'],
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            title: 'سياسة إرجاع واستبدال البضائع',
+            category: 'سياسة',
+            content: 'يمكن للعميل إرجاع البضائع السليمة خلال 3 أيام من تاريخ الشراء بشرط وجود الفاتورة الأصلية وأن تكون السلعة في حالتها الأصلية.',
+            tags: ['إرجاع', 'استبدال', 'سياسة', 'فاتورة'],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]);
+      }
+    }
     
     await db.settings.add({ key: 'isFirstRun', value: false });
   }

@@ -572,6 +572,26 @@ export const CustomerStatementCardModal: React.FC<CustomerStatementCardModalProp
       ? `🟢 *رصيد دائن متوفر لحسابك:* ${formatPrice(Math.abs(netBalance))}`
       : `✅ *الحساب خالص تماماً (0 ${currency})*`;
 
+    const detailsList = ledgerEntries.map(entry => {
+      let isSale = entry.entryType === 'sale';
+      let isPayment = !isSale && (entry.type === 'payment' || entry.amount > 0);
+      let dateStr = formatDateTimeWithDay(entry.created_at);
+      let title = isSale ? `فاتورة شراء #${entry.id || ''}` : (entry.notes || (entry.type === 'purchase' ? 'زيادة حساب' : 'دفعة سداد'));
+      let amtText = isSale ? `+${formatPrice(entry.total_amount)}` : isPayment ? `-${formatPrice(entry.amount)}` : `+${formatPrice(entry.amount)}`;
+
+      let itemsStr = '';
+      if (isSale && entry.items) {
+        try {
+          const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            itemsStr = '\n   📦 الأصناف: ' + parsed.map((i: any) => `${i.name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
+          }
+        } catch (e) {}
+      }
+
+      return `▫️ ${dateStr}\n   ${title}: *${amtText}*${itemsStr}`;
+    }).join('\n\n');
+
     return `🧾 *كشف حساب رسمي - ${storeName}*
 👤 *العميل المكرم:* ${customer.name}
 📅 *الفترة / الفترة الزمنية:* ${monthLabel}
@@ -581,6 +601,10 @@ export const CustomerStatementCardModal: React.FC<CustomerStatementCardModalProp
 ----------------------------------
 📌 ${statusText}
 
+📋 *تفاصيل العمليات والأصناف:*
+${detailsList}
+
+----------------------------------
 شاكرين لكم حسن تعاونكم ودائمين في خدمتكم 🌹
 📞 للتواصل والاستفسار: ${storePhone || 'عبر هذا الرقم'}`;
   };
@@ -861,6 +885,16 @@ export const CustomerStatementCardModal: React.FC<CustomerStatementCardModalProp
                           ? `فاتورة شراء #${entry.id || ''}`
                           : entry.notes || (entry.type === 'purchase' ? 'زيادة حساب' : 'دفعة سداد');
 
+                        let itemsSummary = '';
+                        if (isSale && entry.items) {
+                          try {
+                            const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
+                            if (Array.isArray(parsed) && parsed.length > 0) {
+                              itemsSummary = parsed.map((i: any) => `${i.name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
+                            }
+                          } catch (e) {}
+                        }
+
                         let amtText = isSale ? formatPrice(entry.total_amount) : formatPrice(entry.amount);
 
                         return (
@@ -869,10 +903,30 @@ export const CustomerStatementCardModal: React.FC<CustomerStatementCardModalProp
                               {formatDateTimeWithDay(entry.created_at)}
                             </td>
                             <td className="py-1.5 px-2.5 font-medium text-[11px]">
-                              <span className={`inline-block w-2 h-2 rounded-full ml-1.5 ${
-                                isSale ? 'bg-rose-500' : isPayment ? 'bg-emerald-400' : 'bg-amber-400'
-                              }`}></span>
-                              {title}
+                              <div className="flex items-start gap-1">
+                                <span className={`inline-block w-2 h-2 rounded-full ml-1 mt-1 shrink-0 ${
+                                  isSale ? 'bg-rose-500' : isPayment ? 'bg-emerald-400' : 'bg-amber-400'
+                                }`}></span>
+                                <div>
+                                  <span className="font-bold">{title}</span>
+                                  {itemsSummary ? (
+                                    <div className={`text-[10px] leading-tight mt-0.5 ${
+                                      theme === 'modern_light' ? 'text-slate-600' : 'text-slate-300'
+                                    }`}>
+                                      <span className={theme === 'modern_light' ? 'text-emerald-700 font-bold' : 'text-emerald-400 font-bold'}>
+                                        الأصناف: 
+                                      </span>{' '}
+                                      {itemsSummary}
+                                    </div>
+                                  ) : isSale && entry.notes ? (
+                                    <div className={`text-[10px] leading-tight mt-0.5 ${
+                                      theme === 'modern_light' ? 'text-slate-500' : 'text-slate-400'
+                                    }`}>
+                                      {entry.notes}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
                             </td>
                             <td className={`py-1.5 px-2.5 font-bold text-[11px] text-left font-mono whitespace-nowrap ${
                               isSale 

@@ -1,7 +1,21 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { ErrorBoundary } from './ErrorBoundary';
 import './index.css';
+
+// Catch and ignore benign HMR websocket connection failures
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (event) => {
+    if (event.reason && (
+      event.reason.message?.includes('WebSocket') || 
+      event.reason.message?.includes('HMR') ||
+      event.reason.message?.includes('closed without opened')
+    )) {
+      event.preventDefault();
+    }
+  });
+}
 
 // --- Global html2canvas compatibility patch for oklch, oklab, and color-mix colors ---
 try {
@@ -187,12 +201,12 @@ try {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js');
+    navigator.serviceWorker.getRegistrations().then(function(registrations) { for(let registration of registrations) { registration.unregister(); } });
   });
 }
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary><App /></ErrorBoundary>
   </StrictMode>,
 );
