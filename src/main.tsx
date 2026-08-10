@@ -199,12 +199,6 @@ try {
   console.warn('Failed to inject safety compatibility patch for PDF generation:', err);
 }
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.getRegistrations().then(function(registrations) { for(let registration of registrations) { registration.unregister(); } });
-  });
-}
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary><App /></ErrorBoundary>

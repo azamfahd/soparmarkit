@@ -8,23 +8,31 @@
     <title>النظام المحاسبي الذكي</title>
     <script>
       window.addEventListener('error', function(e) {
-        document.body.innerHTML = '<div style="color:red;padding:20px;direction:ltr"><h1>Global Error</h1><pre>' + e.message + '\n' + e.filename + ':' + e.lineno + '</pre></div>';
+        if (e.message && (e.message.includes('WebSocket') || e.message.includes('Script error'))) {
+          return;
+        }
+        console.error('Global Error caught:', e.message, e.filename, e.lineno);
       });
       window.addEventListener('unhandledrejection', function(e) {
-        document.body.innerHTML = '<div style="color:red;padding:20px;direction:ltr"><h1>Unhandled Promise Rejection</h1><pre>' + e.reason + '</pre></div>';
+        var msg = String(e.reason || '');
+        if (msg.includes('WebSocket') || msg.includes('websocket') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          e.preventDefault();
+          console.warn('Suppressed benign offline/websocket network rejection:', e.reason);
+          return;
+        }
+        console.error('Unhandled Rejection:', e.reason);
       });
       
-      // FORCE CLEAR ALL CACHES AND SERVICE WORKERS
+      // Register Service Worker for offline PWA support
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for(let registration of registrations) {
-            registration.unregister();
-          }
-        });
-      }
-      if (window.caches) {
-        caches.keys().then(function(names) {
-          for (let name of names) caches.delete(name);
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js')
+            .then(function(reg) {
+              console.log('Offline SW registered successfully:', reg.scope);
+            })
+            .catch(function(err) {
+              console.warn('SW registration failed:', err);
+            });
         });
       }
     </script>
