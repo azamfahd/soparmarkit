@@ -3225,11 +3225,16 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                             <div className="flex items-center gap-2">
                               <h3 className="text-xs sm:text-sm font-black text-white">المستشار الحسابي والمالي الذكي</h3>
                               {(() => {
+                                const aiEngineMode = typeof localStorage !== 'undefined'
+                                  ? (localStorage.getItem('grocery_ai_embedding_mode') || 'local')
+                                  : 'local';
                                 const hasCustomKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key'));
-                                if (hasCustomKey && isOnline) {
+                                const isCloudActive = aiEngineMode !== 'local' && isOnline && (hasCustomKey || aiEngineMode === 'server');
+
+                                if (isCloudActive) {
                                   return (
                                     <span className="bg-sky-500/20 text-sky-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-sky-400/30">
-                                      <Globe className="w-2.5 h-2.5 animate-pulse text-sky-400" /> سحابي (مفتاحك الخاص)
+                                      <Globe className="w-2.5 h-2.5 animate-pulse text-sky-400" /> {hasCustomKey ? 'سحابي (مفتاحك الخاص)' : 'سحابي (Gemini)'}
                                     </span>
                                   );
                                 }
@@ -3241,9 +3246,17 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                               })()}
                             </div>
                             <p className="text-[10px] text-indigo-200/80 font-medium mt-0.5">
-                              {typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key')) && isOnline 
-                                ? 'وضع الذكاء السحابي نشط باستخدام مفتاح Gemini API المخصص من الإعدادات' 
-                                : 'محرك محاسبي محلي آمن 100% يضمن سرية وخصوصية بياناتك بدون إرسالها للخارج'}
+                              {(() => {
+                                const aiEngineMode = typeof localStorage !== 'undefined'
+                                  ? (localStorage.getItem('grocery_ai_embedding_mode') || 'local')
+                                  : 'local';
+                                const hasCustomKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key'));
+                                const isCloudActive = aiEngineMode !== 'local' && isOnline && (hasCustomKey || aiEngineMode === 'server');
+
+                                return isCloudActive
+                                  ? (hasCustomKey ? 'وضع الذكاء السحابي نشط باستخدام مفتاح Gemini API المخصص من الإعدادات' : 'وضع الذكاء السحابي نشط عبر خادم Gemini')
+                                  : 'محرك محاسبي محلي آمن 100% يضمن سرية وخصوصية بياناتك بدون إرسالها للخارج';
+                              })()}
                             </p>
                           </div>
                         </div>

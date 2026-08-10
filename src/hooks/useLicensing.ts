@@ -175,22 +175,27 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
   useEffect(() => {
     if (!deviceID) return;
     
+    // Skip subscribing if offline to ensure 100% resilient offline operation
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
+
     const unsubscribe = subscribeToDeviceActivation(deviceID, (request) => {
+      if (!request) {
+        // Missing request or offline snapshot -> Keep local activation state untouched!
+        setCloudRequest(null);
+        return;
+      }
+
       setCloudRequest(request);
       
-      if (activationDetails) {
-        if (!request) {
-          if (activationDetails.isCloud) {
-            performSilentDeactivation();
-          }
-        } else if (request.status === 'rejected') {
-          performSilentDeactivation();
-        } else if (request.status === 'pending' && activationDetails.isCloud) {
-          performSilentDeactivation();
-        }
+      // Auto-deactivation ONLY if explicitly rejected by owner while connected
+      if (request.status === 'rejected') {
+        performSilentDeactivation();
       }
       
-      if (request && request.status === 'approved' && request.licenseKey) {
+      // Auto-activation on the fly when approved
+      if (request.status === 'approved' && request.licenseKey) {
         const currentKey = activationDetails?.licenseKey;
         if (currentKey !== request.licenseKey) {
           handleActivateApp(request.licenseKey, true);
@@ -203,6 +208,7 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
 
   useEffect(() => {
     if (!isDeveloperMode) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     
     const unsubscribe = subscribeToAllActivationRequests((requests) => {
       setAllCloudRequests(requests);

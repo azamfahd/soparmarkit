@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef , lazy, Suspense} from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import BarcodeScanner from './components/BarcodeScanner';
-const SmartAnalytics = lazy(() => import('./components/SmartAnalytics'));
-const SmartImport = lazy(() => import('./components/SmartImport'));
+import SmartAnalytics from './components/SmartAnalytics';
+import SmartImport from './components/SmartImport';
 import { Card } from './components/ui/Card';
 import { Button } from './components/ui/Button';
 import { DashboardView } from './features/dashboard/DashboardView';
@@ -728,9 +728,7 @@ export default function App() {
     const cached = localStorage.getItem('cache_activationDaysLeft');
     return cached ? (cached === 'null' ? null : parseInt(cached, 10)) : null;
   });
-  const [isLicensingLoading, setIsLicensingLoading] = useState<boolean>(() => {
-    return localStorage.getItem('cache_deviceID') ? false : true;
-  });
+  const [isLicensingLoading, setIsLicensingLoading] = useState<boolean>(false);
   
   // Failsafe timeout for IndexedDB hanging
   useEffect(() => {
@@ -739,7 +737,7 @@ export default function App() {
         console.warn('IndexedDB loading timed out. Forcing app to load.');
         setIsLicensingLoading(false);
       }
-    }, 2500);
+    }, 600);
     return () => clearTimeout(timer);
   }, [isLicensingLoading]);
   const backupWarningShownRef = useRef<boolean>(false);
@@ -1251,27 +1249,27 @@ export default function App() {
   useEffect(() => {
     if (!deviceID) return;
     
+    // Skip subscribing if offline to ensure 100% resilient offline operation
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
+    
     const unsubscribe = subscribeToDeviceActivation(deviceID, (request) => {
+      if (!request) {
+        // Missing request or offline snapshot -> Keep local activation state untouched!
+        setCloudRequest(null);
+        return;
+      }
+
       setCloudRequest(request);
       
-      // Auto-deactivation if cloud license is revoked, frozen, or deleted
-      if (activationDetails) {
-        if (!request) {
-          // Deleted from cloud completely
-          if (activationDetails.isCloud) {
-            performSilentDeactivation();
-          }
-        } else if (request.status === 'rejected') {
-          // Rejected (frozen) - immediately lock out
-          performSilentDeactivation();
-        } else if (request.status === 'pending' && activationDetails.isCloud) {
-          // Reset to pending - lock out if it was cloud-activated
-          performSilentDeactivation();
-        }
+      // Auto-deactivation ONLY if explicitly rejected by owner while connected
+      if (request.status === 'rejected') {
+        performSilentDeactivation();
       }
       
       // Auto-activation on the fly when approved
-      if (request && request.status === 'approved' && request.licenseKey) {
+      if (request.status === 'approved' && request.licenseKey) {
         const currentKey = activationDetails?.licenseKey;
         if (currentKey !== request.licenseKey) {
           handleActivateApp(request.licenseKey, true); // true marks it as cloud-activated!
@@ -1285,6 +1283,7 @@ export default function App() {
   // 2. Subscribe to all cloud activation requests when Developer Mode is active
   useEffect(() => {
     if (!isDeveloperMode) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     
     const unsubscribe = subscribeToAllActivationRequests((requests) => {
       setAllCloudRequests(requests);
@@ -3865,26 +3864,25 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Sidebar Overlay */}
+      {/* Sidebar Overlay and Drawer */}
       <AnimatePresence>
         {isSidebarOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
-          />
-        )}
-      </AnimatePresence>
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
+            />
 
-      {/* Sidebar */}
-      <motion.aside
-        initial={{ x: '100%' }}
-        animate={{ x: isSidebarOpen ? 0 : '100%' }}
-        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-        className="fixed top-0 right-0 bottom-0 w-72 bg-white z-50 shadow-2xl border-l border-slate-100 flex flex-col"
-      >
+            <motion.aside
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 250 }}
+              className="fixed top-0 right-0 bottom-0 w-72 bg-white z-50 shadow-2xl border-l border-slate-100 flex flex-col"
+            >
         <div className="p-6 border-b border-slate-50 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="bg-emerald-600 p-2 rounded-xl">
@@ -4057,6 +4055,9 @@ export default function App() {
           </div>
         </div>
       </motion.aside>
+    </>
+  )}
+</AnimatePresence>
 
       {/* لوحة الأقسام التفصيلية الجانبية المرنة */}
       <AnimatePresence>
@@ -4191,7 +4192,15 @@ export default function App() {
           >
             <Menu className="w-6 h-6 text-slate-600" />
           </button>
-          <h1 className="text-xl font-bold text-emerald-700">{storeName}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-emerald-700">{storeName}</h1>
+            {isBackupSyncing && (
+              <span className="text-[10px] font-bold text-violet-600 bg-violet-50 px-2 py-0.5 rounded-full border border-violet-200 animate-pulse flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-ping" />
+                تحديث...
+              </span>
+            )}
+          </div>
           <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
             <TrendingUp className="text-emerald-600 w-5 h-5" />
           </div>
@@ -4199,13 +4208,7 @@ export default function App() {
       </header>
 
       <main className="p-4 max-w-lg mx-auto pb-10">
-          <Suspense fallback={<div className="flex items-center justify-center h-full w-full p-20"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-600"></div></div>}>
-        {isLicensingLoading ? (
-          <div className="flex flex-col items-center justify-center h-full w-full p-20 text-gray-500">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-indigo-600 mb-4"></div>
-            <p>جاري تحميل إعدادات النظام...</p>
-          </div>
-        ) : (
+        {false ? null : (
           <>
             {/* 1. Free Trial Banner */}
             {!isActivated && isInTrial && (
@@ -4276,7 +4279,12 @@ export default function App() {
           </motion.div>
         )}
         <div className="relative">
-          <div className={activeTab === 'dashboard' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'dashboard' ? 1 : 0, y: activeTab === 'dashboard' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'dashboard' ? 'block' : 'hidden'}
+          >
             <DashboardView
               summary={summary}
               formatPrice={formatPrice}
@@ -4298,9 +4306,14 @@ export default function App() {
               yearlySalesTrend={yearlySalesTrend}
               topProducts={topProducts}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'pos' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'pos' ? 1 : 0, y: activeTab === 'pos' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'pos' ? 'block' : 'hidden'}
+          >
             <PosView
               setActiveTab={setActiveTab}
               setScannerMode={setScannerMode}
@@ -4336,9 +4349,14 @@ export default function App() {
               handleCheckout={handleCheckout}
               db={db}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'products' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'products' ? 1 : 0, y: activeTab === 'products' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'products' ? 'block' : 'hidden'}
+          >
             <ProductsView
               setActiveTab={setActiveTab}
               handleDownloadInventoryPDF={handleDownloadInventoryPDF}
@@ -4358,9 +4376,14 @@ export default function App() {
               setEditingProduct={setEditingProduct}
               handleDeleteProduct={handleDeleteProduct}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'customers' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'customers' ? 1 : 0, y: activeTab === 'customers' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'customers' ? 'block' : 'hidden'}
+          >
             <CustomersView
               setActiveTab={setActiveTab}
               setShowAddCustomer={setShowAddCustomer}
@@ -4370,9 +4393,14 @@ export default function App() {
               setShowPaymentModal={setShowPaymentModal}
               handleDeleteCustomer={handleDeleteCustomer}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'notes' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'notes' ? 1 : 0, y: activeTab === 'notes' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'notes' ? 'block' : 'hidden'}
+          >
             <NotesView
               setActiveTab={setActiveTab}
               setEditingNoteId={setEditingNoteId}
@@ -4406,9 +4434,14 @@ export default function App() {
               salesSettlements={salesSettlements}
               handleDeleteSettlement={handleDeleteSettlement}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'suppliers' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'suppliers' ? 1 : 0, y: activeTab === 'suppliers' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'suppliers' ? 'block' : 'hidden'}
+          >
             <SuppliersView
               setActiveTab={setActiveTab}
               setShowAddSupplier={setShowAddSupplier}
@@ -4416,9 +4449,14 @@ export default function App() {
               fetchSupplierHistory={fetchSupplierHistory}
               formatPrice={formatPrice}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'smart-import' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'smart-import' ? 1 : 0, y: activeTab === 'smart-import' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'smart-import' ? 'block' : 'hidden'}
+          >
             <div className="space-y-6">
               <SmartImport 
                 storeName={storeName}
@@ -4430,9 +4468,14 @@ export default function App() {
                 }}
               />
             </div>
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'settings' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'settings' ? 1 : 0, y: activeTab === 'settings' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'settings' ? 'block' : 'hidden'}
+          >
             <SettingsView
               isAutoBackupEnabled={isAutoBackupEnabled}
               setIsAutoBackupEnabled={setIsAutoBackupEnabled}
@@ -4510,17 +4553,27 @@ export default function App() {
               handleChangeDeveloperPIN={handleChangeDeveloperPIN}
               handleResetDeveloperPIN={handleResetDeveloperPIN}
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'analytics' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'analytics' ? 1 : 0, y: activeTab === 'analytics' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'analytics' ? 'block' : 'hidden'}
+          >
             <SmartAnalytics 
               currency={currency} 
               formatPrice={formatPrice} 
               onGoBack={() => setActiveTab('dashboard')} 
             />
-          </div>
+          </motion.div>
 
-          <div className={activeTab === 'history' ? 'block' : 'hidden'}>
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: activeTab === 'history' ? 1 : 0, y: activeTab === 'history' ? 0 : 6 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className={activeTab === 'history' ? 'block' : 'hidden'}
+          >
             <HistoryView
               setActiveTab={setActiveTab}
               enrichedSales={enrichedSales}
@@ -4535,7 +4588,7 @@ export default function App() {
               formatDateTimeWithDay={formatDateTimeWithDay}
               formatPrice={formatPrice}
             />
-          </div>
+          </motion.div>
         </div>
 
         {/* Modals */}
@@ -5259,11 +5312,7 @@ export default function App() {
             />
           )}
         </AnimatePresence>
-      
-          </Suspense>
-        </main>
-
-      {/* Bottom Navigation removed and replaced by Sidebar */}
+      </main>
     </div>
   );
 }

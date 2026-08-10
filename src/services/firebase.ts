@@ -67,32 +67,46 @@ export async function getActivationRequest(deviceId: string): Promise<Activation
  * Useful for real-time auto-activation when owner approves.
  */
 export function subscribeToDeviceActivation(deviceId: string, callback: (request: ActivationRequest | null) => void) {
-  const docRef = doc(cloudDb, 'activation_requests', deviceId);
-  return onSnapshot(docRef, (docSnap) => {
-    if (docSnap.exists()) {
-      callback(docSnap.data() as ActivationRequest);
-    } else {
-      callback(null);
-    }
-  }, (error) => {
-    console.error("Firestore listening error:", error);
-  });
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return () => {};
+  }
+  try {
+    const docRef = doc(cloudDb, 'activation_requests', deviceId);
+    return onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data() as ActivationRequest);
+      }
+    }, (error) => {
+      console.warn("Firestore listening error (likely offline):", error);
+    });
+  } catch (err) {
+    console.warn("Failed to subscribe to device activation:", err);
+    return () => {};
+  }
 }
 
 /**
  * Subscribes to all activation requests (for the developer/admin dashboard)
  */
 export function subscribeToAllActivationRequests(callback: (requests: ActivationRequest[]) => void) {
-  const q = query(collection(cloudDb, 'activation_requests'), orderBy('requestedAt', 'desc'));
-  return onSnapshot(q, (querySnapshot) => {
-    const requests: ActivationRequest[] = [];
-    querySnapshot.forEach((doc) => {
-      requests.push(doc.data() as ActivationRequest);
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return () => {};
+  }
+  try {
+    const q = query(collection(cloudDb, 'activation_requests'), orderBy('requestedAt', 'desc'));
+    return onSnapshot(q, (querySnapshot) => {
+      const requests: ActivationRequest[] = [];
+      querySnapshot.forEach((doc) => {
+        requests.push(doc.data() as ActivationRequest);
+      });
+      callback(requests);
+    }, (error) => {
+      console.warn("Firestore loading requests error (likely offline):", error);
     });
-    callback(requests);
-  }, (error) => {
-    console.error("Firestore loading requests error:", error);
-  });
+  } catch (err) {
+    console.warn("Failed to subscribe to all activation requests:", err);
+    return () => {};
+  }
 }
 
 /**

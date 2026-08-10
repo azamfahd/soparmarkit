@@ -11,13 +11,18 @@ export async function generateResponse(
 ): Promise<AgentResponse> {
   let onlineFallbackReason: string | null = null;
 
+  // Check the AI / RAG engine mode setting from localStorage ('local', 'server', 'auto')
+  const aiEngineMode = typeof localStorage !== 'undefined'
+    ? (localStorage.getItem('grocery_ai_embedding_mode') || 'local')
+    : 'local';
+
   // Retrieve custom API key provided manually by user in Settings (Privacy & Security First)
   const customApiKey = typeof localStorage !== 'undefined' 
     ? (localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key') || undefined)
     : undefined;
 
-  // Only invoke Online Gemini AI Cloud API if user manually entered their private key in Settings
-  if (customApiKey && typeof navigator !== 'undefined' && navigator.onLine) {
+  // Only invoke Online Gemini AI Cloud API if mode is NOT 'local' (i.e. 'server' or 'auto') AND online
+  if (aiEngineMode !== 'local' && typeof navigator !== 'undefined' && navigator.onLine) {
     try {
       // Extract the RAG matched documents
       const ragEvidence = evidence?.find(e => e.source === 'RAG');

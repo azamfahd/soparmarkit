@@ -476,7 +476,7 @@ async function startServer() {
     }
 
     const rawApiKey = req.body?.customApiKey || req.headers['x-api-key'];
-    const apiKey = typeof rawApiKey === 'string' ? rawApiKey.trim() : rawApiKey;
+    const apiKey = (typeof rawApiKey === 'string' && rawApiKey.trim() ? rawApiKey.trim() : process.env.GEMINI_API_KEY);
     if (!apiKey) {
       return res.status(401).json({
         success: false,
