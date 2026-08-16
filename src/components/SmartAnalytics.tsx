@@ -1,8 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useLiveQuery } from '../hooks/useLiveQuery';
 import { db } from '../db';
 import { processUserQuery } from '../services/ai/aiRouter';
+import { preloadTrainingData } from '../services/ai/engine/trainingManager';
 import VisualModelsExtension from './VisualModelsExtension';
+import { DailyLogModal } from './modals/DailyLogModal';
+import { CustomerReceivablesModal } from './modals/CustomerReceivablesModal';
+import { AnomalyReviewModal } from './modals/AnomalyReviewModal';
 import { motion, AnimatePresence } from 'motion/react';
 import html2pdf from 'html2pdf.js';
 import { 
@@ -60,7 +64,8 @@ import {
   Lock,
   Copy,
   Check,
-  Trash2
+  Trash2,
+  Maximize2
 } from 'lucide-react';
 
 interface SmartAnalyticsProps {
@@ -68,6 +73,370 @@ interface SmartAnalyticsProps {
   formatPrice: (price: number) => string;
   onGoBack: () => void;
 }
+
+interface QuickQuestionItem {
+  id: string;
+  category: 'profit_sales' | 'debts_customers' | 'inventory_stock' | 'suppliers_purchases' | 'cash_expenses' | 'reports_forecasts' | 'system_knowledge';
+  question: string;
+  shortTitle: string;
+  description: string;
+  icon: string;
+  badge: string;
+  themeColor: 'emerald' | 'rose' | 'amber' | 'sky' | 'indigo' | 'purple' | 'teal';
+}
+
+const QUICK_QUESTION_CATEGORIES = [
+  { id: 'all', name: 'الكل ✨', icon: '✨' },
+  { id: 'system_knowledge', name: 'أقسام وشاشات النظام 🧭', icon: '🧭' },
+  { id: 'profit_sales', name: 'الأرباح والمبيعات 📈', icon: '📈' },
+  { id: 'debts_customers', name: 'الديون والعملاء 👥', icon: '👥' },
+  { id: 'inventory_stock', name: 'المخزون والنواقص 📦', icon: '📦' },
+  { id: 'suppliers_purchases', name: 'الموردين والمشتريات 🏬', icon: '🏬' },
+  { id: 'cash_expenses', name: 'الصندوق والمصاريف 💵', icon: '💵' },
+  { id: 'reports_forecasts', name: 'التقارير والتوقعات 🔮', icon: '🔮' },
+];
+
+const COMPREHENSIVE_QUICK_QUESTIONS: QuickQuestionItem[] = [
+  // 0. أقسام وشاشات النظام
+  {
+    id: 'import_section_guide',
+    category: 'system_knowledge',
+    question: 'معلومات عن قسم الاستيراد الذكي',
+    shortTitle: 'قسم الاستيراد الذكي',
+    description: 'شرح استيراد الفواتير والأصناف والعملاء من إكسل، PDF، وصور الكاميرا',
+    icon: '📥',
+    badge: 'استيراد',
+    themeColor: 'sky'
+  },
+  {
+    id: 'system_all_sections',
+    category: 'system_knowledge',
+    question: 'ماذا يعني كل قسم في البرنامج؟',
+    shortTitle: 'دليل كافة أقسام النظام',
+    description: 'شرح شامل وموجز لجميع شاشات وأقسام وبطاقات المحل وإمكانياتها',
+    icon: '🗺️',
+    badge: 'دليل شامل',
+    themeColor: 'purple'
+  },
+  {
+    id: 'pos_section_guide',
+    category: 'system_knowledge',
+    question: 'ما هي مميزات قسم نقطة البيع والكاشير؟',
+    shortTitle: 'قسم نقطة البيع (POS)',
+    description: 'إصدار الفواتير، الباركود السريع، الخصومات والطباعة الحرارية',
+    icon: '⚡',
+    badge: 'كاشير',
+    themeColor: 'emerald'
+  },
+  {
+    id: 'diff_customer_supplier',
+    category: 'system_knowledge',
+    question: 'ما الفرق بين كشف حساب العميل والمورد؟',
+    shortTitle: 'الفرق بين العملاء والموردين',
+    description: 'توضيح الذمم المدينة للعملاء مقابل الالتزامات الدائنة للموردين',
+    icon: '⚖️',
+    badge: 'مقارنة',
+    themeColor: 'teal'
+  },
+
+  // 1. الأرباح والمبيعات
+  {
+    id: 'profit_today',
+    category: 'profit_sales',
+    question: 'ماهو صافي أرباح اليوم؟',
+    shortTitle: 'صافي أرباح اليوم',
+    description: 'حساب الإيرادات والأرباح الصافية لليوم الحالي بدقة',
+    icon: '💰',
+    badge: 'يومي',
+    themeColor: 'emerald'
+  },
+  {
+    id: 'sales_month',
+    category: 'profit_sales',
+    question: 'أعطني تقرير مبيعات هذا الشهر',
+    shortTitle: 'مبيعات هذا الشهر',
+    description: 'إجمالي المبيعات، عدد الفواتير، ونشاط المبيعات',
+    icon: '📅',
+    badge: 'شهري',
+    themeColor: 'emerald'
+  },
+  {
+    id: 'top_selling',
+    category: 'profit_sales',
+    question: 'ما هي المنتجات الأكثر مبيعاً والأعلى ربحاً؟',
+    shortTitle: 'أفضل المنتجات مبيعاً',
+    description: 'ترتيب الأصناف بحسب المبيعات ومساهمتها بالربح',
+    icon: '🏆',
+    badge: 'أصناف',
+    themeColor: 'emerald'
+  },
+  {
+    id: 'sales_comparison',
+    category: 'profit_sales',
+    question: 'مقارنة مبيعات هذا الشهر بالشهر الماضي',
+    shortTitle: 'مقارنة أداء المبيعات',
+    description: 'نسبة النمو والتغير في المبيعات بين الفترات',
+    icon: '📊',
+    badge: 'مقارنة',
+    themeColor: 'emerald'
+  },
+  {
+    id: 'profit_decline_reason',
+    category: 'profit_sales',
+    question: 'لماذا انخفضت الأرباح والمبيعات؟',
+    shortTitle: 'تشخيص أسباب الأرباح',
+    description: 'تحليل الأسباب المؤثرة على هامش الربح والنشاط',
+    icon: '🧐',
+    badge: 'تشخيص',
+    themeColor: 'emerald'
+  },
+
+  // 2. الديون والعملاء
+  {
+    id: 'top_debtors',
+    category: 'debts_customers',
+    question: 'من هم أكثر العملاء ديناً (كبار المدينين)؟',
+    shortTitle: 'كبار المدينين بالدفتر',
+    description: 'كشف بأعلى المديونيات المعلقة وأسماء الزبائن وأرصدتهم',
+    icon: '🚨',
+    badge: 'تنبيه',
+    themeColor: 'rose'
+  },
+  {
+    id: 'total_customer_debts',
+    category: 'debts_customers',
+    question: 'كم إجمالي الديون المستحقة بالذمة على العملاء؟',
+    shortTitle: 'إجمالي ديون الزبائن',
+    description: 'حجم المبالغ الآجلة الكلية المطلوب تحصيلها',
+    icon: '📑',
+    badge: 'ذمم',
+    themeColor: 'rose'
+  },
+  {
+    id: 'unpaid_invoices',
+    category: 'debts_customers',
+    question: 'كشف الذمم المدينة (الفواتير الآجلة)',
+    shortTitle: 'الفواتير غير المسددة',
+    description: 'استعراض الفواتير المعلقة وتواريخ استحقاقها',
+    icon: '⏳',
+    badge: 'فواتير',
+    themeColor: 'rose'
+  },
+  {
+    id: 'collection_rate',
+    category: 'debts_customers',
+    question: 'ما هي نسبة السداد والتحصيل من الزبائن هذا الشهر؟',
+    shortTitle: 'معدل سداد الديون',
+    description: 'متابعة نسبة الكاش المحصل من إجمالي الديون',
+    icon: '✅',
+    badge: 'تحصيل',
+    themeColor: 'rose'
+  },
+
+  // 3. المخزون والنواقص
+  {
+    id: 'low_stock_report',
+    category: 'inventory_stock',
+    question: 'ما هي البضاعة الناقصة التي قاربت على النفاد؟',
+    shortTitle: 'النواقص والحد الأدنى',
+    description: 'قائمة الأصناف التي قاربت على النفاد للطلب الفوري',
+    icon: '⚠️',
+    badge: 'عاجل',
+    themeColor: 'amber'
+  },
+  {
+    id: 'expired_products',
+    category: 'inventory_stock',
+    question: 'هل توجد منتجات منتهية الصلاحية أو قريبة الانتهاء؟',
+    shortTitle: 'تواريخ الصلاحية',
+    description: 'كشف المنتجات التالفة أو القريبة من تاريخ الانتهاء',
+    icon: '⏰',
+    badge: 'صلاحية',
+    themeColor: 'amber'
+  },
+  {
+    id: 'slow_moving',
+    category: 'inventory_stock',
+    question: 'ما هي المنتجات الراكدة بطيئة الحركة؟',
+    shortTitle: 'الأصناف الراكدة',
+    description: 'بضائع لم تسجل حركة مبيعات لتصفيتها',
+    icon: '💤',
+    badge: 'تصفية',
+    themeColor: 'amber'
+  },
+  {
+    id: 'inventory_valuation',
+    category: 'inventory_stock',
+    question: 'كم إجمالي القيمة المالية للمخزون الحالي؟',
+    shortTitle: 'تقييم رأس مال المخزون',
+    description: 'حساب رأس المال المجمد في البضاعة بأسعار التكلفة',
+    icon: '🏷️',
+    badge: 'تقييم',
+    themeColor: 'amber'
+  },
+
+  // 4. الموردين والمشتريات
+  {
+    id: 'total_supplier_debts',
+    category: 'suppliers_purchases',
+    question: 'كم إجمالي المبالغ والديون المستحقة للموردين؟',
+    shortTitle: 'مستحقات الموردين',
+    description: 'إجمالي المبالغ الواجب دفعها لشركات التوريد',
+    icon: '🏢',
+    badge: 'موردين',
+    themeColor: 'sky'
+  },
+  {
+    id: 'due_suppliers_list',
+    category: 'suppliers_purchases',
+    question: 'من هم الموردين الذين لديهم مستحقات واجبة السداد؟',
+    shortTitle: 'قائمة الموردين الدائنين',
+    description: 'تفصيل حسابات كل شركة ومبالغ الفواتير المعلقة',
+    icon: '📋',
+    badge: 'التزامات',
+    themeColor: 'sky'
+  },
+  {
+    id: 'monthly_purchases',
+    category: 'suppliers_purchases',
+    question: 'ملخص فواتير المشتريات خلال هذا الشهر',
+    shortTitle: 'مشتريات الشهر',
+    description: 'حجم التوريدات والبضائع المشتراة وتكلفتها',
+    icon: '🚛',
+    badge: 'شراء',
+    themeColor: 'sky'
+  },
+
+  // 5. الصندوق والمصاريف
+  {
+    id: 'cash_reconciliation',
+    category: 'cash_expenses',
+    question: 'أعطني تقرير مطابقة الصندوق ورصيد النقدية الحالي',
+    shortTitle: 'مطابقة الصندوق والدرج',
+    description: 'مقارنة النقد الفعلي بالصندوق مع حركة المبيعات والمصروفات',
+    icon: '🏦',
+    badge: 'كاش',
+    themeColor: 'indigo'
+  },
+  {
+    id: 'monthly_expenses',
+    category: 'cash_expenses',
+    question: 'كم مجموع المصاريف والمسحوبات التشغيلية؟',
+    shortTitle: 'المصاريف والمسحوبات',
+    description: 'إجمالي النفقات وفواتير الكهرباء والإيجار ومسحوبات المالك',
+    icon: '💸',
+    badge: 'نفقات',
+    themeColor: 'indigo'
+  },
+  {
+    id: 'cash_flow_summary',
+    category: 'cash_expenses',
+    question: 'ملخص حركة التدفقات النقدية الداخلة والخارجة',
+    shortTitle: 'حركة التدفق النقدي',
+    description: 'صافي السيولة النقدية وتفاصيل المبالغ الداخلة والخارجة',
+    icon: '🔄',
+    badge: 'سيولة',
+    themeColor: 'indigo'
+  },
+
+  // 6. التقارير والتوقعات الذكية
+  {
+    id: 'sales_forecast',
+    category: 'reports_forecasts',
+    question: 'ما هي توقعات المبيعات للشهر القادم؟',
+    shortTitle: 'توقعات الشهر القادم',
+    description: 'تنبؤ ذكي يعتمد على الأداء التاريخي لتقدير الإيرادات',
+    icon: '📈',
+    badge: 'تنبؤ ذكي',
+    themeColor: 'purple'
+  },
+  {
+    id: 'anomaly_audit',
+    category: 'reports_forecasts',
+    question: 'هل توجد أي عمليات أو فواتير مشبوهة أو غير اعتيادية؟',
+    shortTitle: 'التدقيق والرقابة الذكية',
+    description: 'فحص الحركات لكشف الخصومات المرتفعة أو التعديلات المريبة',
+    icon: '🛡️',
+    badge: 'حماية',
+    themeColor: 'purple'
+  },
+  {
+    id: 'financial_health_report',
+    category: 'reports_forecasts',
+    question: 'أعطني التقرير المالي الشامل وتقييم صحة المحل',
+    shortTitle: 'التقرير المالي الشامل',
+    description: 'تشخيص متكامل للنشاط المالي ومؤشرات السيولة والربحية',
+    icon: '🩺',
+    badge: 'شامل',
+    themeColor: 'purple'
+  },
+  {
+    id: 'growth_tips',
+    category: 'reports_forecasts',
+    question: 'كيف أزيد مبيعاتي وأرباح المحل؟',
+    shortTitle: 'نصائح زيادة الأرباح',
+    description: 'استراتيجيات عملية لرفع متوسط قيمة الفاتورة وتحسين الهامش',
+    icon: '🚀',
+    badge: 'توصيات',
+    themeColor: 'purple'
+  }
+];
+
+// Interactive Multi-Stage Processing Visualization Widget
+const MessageStagesWidget = ({ stages }: { stages: any[] }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  if (!stages || stages.length === 0) return null;
+
+  return (
+    <div className="mt-3 mb-1 bg-gradient-to-br from-slate-950/90 to-indigo-950/60 border border-indigo-500/30 rounded-2xl p-2.5 text-right shadow-md backdrop-blur-sm">
+      <button
+        type="button"
+        onClick={() => setIsOpen(prev => !prev)}
+        className="w-full flex items-center justify-between text-[11px] font-black text-indigo-200 hover:text-white transition-colors cursor-pointer py-1 px-2"
+      >
+        <div className="flex items-center gap-2">
+          <div className="p-1 bg-indigo-500/25 border border-indigo-400/30 text-amber-300 rounded-lg shrink-0 shadow-2xs">
+            <Brain className="w-3.5 h-3.5 animate-pulse" />
+          </div>
+          <span className="font-extrabold text-xs">مراحل التدقيق والتفكير المحاسبي ({stages.length} مراحل)</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9.5px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-black">
+            مكتمل 100%
+          </span>
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180 text-indigo-300' : 'text-slate-400'}`} />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="mt-2.5 pt-2.5 border-t border-indigo-500/20 space-y-2 text-[10px]">
+          {stages.map((stg: any, i: number) => (
+            <div key={i} className="bg-slate-900/95 border border-indigo-900/40 rounded-xl p-2.5 space-y-1.5 shadow-xs">
+              <div className="flex items-center justify-between gap-1 flex-wrap">
+                <span className="font-black text-amber-300 flex items-center gap-1.5 text-[11px]">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  المرحلة {stg.stageNumber}: {stg.title}
+                </span>
+                {stg.badge && (
+                  <span className="text-[9px] bg-indigo-950/80 text-indigo-300 px-2 py-0.5 rounded-md border border-indigo-700/50 font-mono font-black">
+                    {stg.badge}
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-300 font-medium leading-relaxed">{stg.description}</p>
+              {stg.details && (
+                <div className="bg-slate-950/90 p-2 rounded-lg text-[9.5px] font-mono text-indigo-200 border border-slate-800/80 whitespace-pre-wrap leading-relaxed">
+                  {stg.details}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function SmartAnalytics({ currency, formatPrice, onGoBack }: SmartAnalyticsProps) {
   // --- State for filter controls ---
@@ -81,14 +450,40 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const [liquidityDonutType, setLiquidityDonutType] = useState<'revenue_mix' | 'liquidity_allocation'>('revenue_mix');
 
   // --- Interactive Ledger explorer category ---
-  const [activeExplorerTab, setActiveExplorerTab] = useState<'daily' | 'customers' | 'products'>('daily');
+  const [activeExplorerTab, setActiveExplorerTab] = useState<'products'>('products');
+  const [showDailyLogModal, setShowDailyLogModal] = useState(false);
+  const [showCustomerReceivablesModal, setShowCustomerReceivablesModal] = useState(false);
 
-  // --- Accordion collapse states ---
+  // --- Accordion collapse states & Modals ---
   const [isOverviewOpen, setIsOverviewOpen] = useState(true);
   const [isTrendsAndLiquidityOpen, setIsTrendsAndLiquidityOpen] = useState(true);
   const [isInsightsOpen, setIsInsightsOpen] = useState(true);
-  const [isQuickQuestionsOpen, setIsQuickQuestionsOpen] = useState(false);
-  const [isChatWidgetOpen, setIsChatWidgetOpen] = useState(false);
+  const [selectedQuickCategory, setSelectedQuickCategory] = useState<string>('all');
+  const [quickQuestionFilter, setQuickQuestionFilter] = useState<string>('');
+  const [isStagesModalOpen, setIsStagesModalOpen] = useState(false);
+  const [isQuestionBankModalOpen, setIsQuestionBankModalOpen] = useState(false);
+  const [isSmartAdvisorModalOpen, setIsSmartAdvisorModalOpen] = useState(false);
+  const [anomalyModalType, setAnomalyModalType] = useState<'withdrawals' | 'odd_hours_sales' | 'pricing' | null>(null);
+  const [resolvedAnomalies, setResolvedAnomalies] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('smart_resolved_anomalies');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleResolveAnomaly = (key: string) => {
+    setResolvedAnomalies(prev => {
+      const next = Array.from(new Set([...prev, key]));
+      try {
+        localStorage.setItem('smart_resolved_anomalies', JSON.stringify(next));
+      } catch (err) {
+        console.error(err);
+      }
+      return next;
+    });
+  };
 
   // --- Search keys within lists ---
   const [dailySearchKey, setDailySearchKey] = useState('');
@@ -108,7 +503,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
   // --- AI Smart Assistant State (100% Offline Local Machine Learning Engine) ---
   const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<{ id: string; role: 'user' | 'assistant'; text: string; timestamp: Date }[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ id: string; role: 'user' | 'assistant'; text: string; stages?: any[]; timestamp: Date }[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string>(() => 'session_' + Date.now());
   const [isTyping, setIsTyping] = useState(false);
   const [ratedMessages, setRatedMessages] = useState<{[key: string]: 'up' | 'down'}>({});
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -116,6 +512,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
   useEffect(() => {
+    preloadTrainingData();
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -138,7 +535,18 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     setTimeout(() => setCopiedMessageId(null), 2000);
   };
 
-  const handleResetChat = () => {
+  const handleResetChat = async () => {
+    try {
+      const { deleteConversation, createNewConversation } = await import('../services/ai/memory');
+      if (activeConversationId) {
+        await deleteConversation(activeConversationId);
+      }
+      const newId = await createNewConversation();
+      setActiveConversationId(newId);
+    } catch (err) {
+      console.warn('Failed to clear conversation session memory:', err);
+      setActiveConversationId('session_' + Date.now());
+    }
     setChatMessages([]);
     setRatedMessages({});
     setChatInput('');
@@ -331,833 +739,21 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     }
   };
 
-  const resolveSmartQuery = async (query: string): Promise<string> => {
+  const resolveSmartQuery = async (query: string): Promise<{ answer: string; stages?: any[] } | string> => {
     try {
-      const aiResponse = await processUserQuery(query);
-      if (aiResponse && aiResponse.answer && aiResponse.confidence >= 0.25) {
-        return aiResponse.answer;
+      const aiResponse = await processUserQuery(query, activeConversationId);
+      if (aiResponse && aiResponse.answer && aiResponse.confidence >= 0.2) {
+        return {
+          answer: aiResponse.answer,
+          stages: aiResponse.processingStages
+        };
+      } else {
+        return { answer: 'عذراً، لم أتمكن من فهم طلبك بدقة كافية. يرجى توضيح سؤالك.' };
       }
     } catch (err) {
-      console.warn('AI Engine Router error, falling back to legacy handler:', err);
+      console.warn('AI Engine Router error:', err);
+      return { answer: 'عذراً، أواجه مشكلة في معالجة طلبك محلياً.' };
     }
-
-    const rawQ = query.trim().toLowerCase();
-    
-    // Arabic Normalizer Helper (handles hamzas, prefixes, and common variations)
-    const normalizeArabic = (str: string) => {
-      return str
-        .replace(/[أإآآ]/g, 'ا')
-        .replace(/ة/g, 'ه')
-        .replace(/ى/g, 'ي')
-        .replace(/^(ال|ب|ل|و|ك)/, '');
-    };
-
-    const q = rawQ;
-    const normQ = normalizeArabic(rawQ);
-    
-    const allSales = await db.sales.toArray();
-    const allProducts = await db.products.toArray();
-    const allCustomers = await db.customers.toArray();
-    const allDebts = await db.debts.toArray();
-    const allSuppliers = await db.suppliers?.toArray() || [];
-    const allSupplierPayments = await db.supplierPayments?.toArray() || [];
-    const allWithdrawals = await db.cashWithdrawals?.toArray() || [];
-    const saleItems = await db.saleItems?.toArray() || [];
-    
-    // Helper to calculate sales stats dynamically
-    const totalSalesSum = allSales.reduce((sum, s) => sum + s.total_amount, 0);
-    const cashSalesSum = allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-    const debtSalesSum = allSales.filter(s => s.payment_type === 'debt').reduce((sum, s) => sum + s.total_amount, 0);
-
-    // --- A. EXPLANATORY & DIAGNOSTIC ENGINE ("WHY" / "سبب" QUESTIONS) ---
-    if (q.includes('لماذا') || q.includes('ليه') || q.includes('سبب') || q.includes('ليش') || q.includes('تفسير') || q.includes('علل')) {
-      recordQueryCategory('advice');
-
-      const totalCustomerDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
-      const totalSupplierDebts = allSuppliers.reduce((sum, s) => sum + s.balance, 0);
-      const totalWithdrawals = allWithdrawals.reduce((sum, w) => sum + w.amount, 0);
-      const outOfStockCount = allProducts.filter(p => p.stock_quantity <= 0).length;
-      const lowStockCount = allProducts.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5).length;
-      const debtRatio = totalSalesSum > 0 ? (debtSalesSum / totalSalesSum) * 100 : 0;
-      
-      let totalCostOfGoods = 0;
-      const productCostMap = new Map(allProducts.map(p => [p.id, p.cost_price]));
-      saleItems.forEach(item => {
-        const cPrice = productCostMap.get(item.product_id) || 0;
-        totalCostOfGoods += (cPrice * item.quantity);
-      });
-      if (totalCostOfGoods === 0 && totalSalesSum > 0) {
-        totalCostOfGoods = totalSalesSum * 0.75;
-      }
-      const grossProfit = totalSalesSum - totalCostOfGoods;
-      const netProfit = grossProfit - totalWithdrawals;
-
-      if (q.includes('مبيعات') || q.includes('البيع') || q.includes('انخفاض') || q.includes('تراجع') || q.includes('قليلة')) {
-        return `🧐 **التحليل التشخيصي والسبب الجذري لتذبذب المبيعات:**
-
-بناءً على مطابقة السجلات المالية الحالية لمتجرك، إليك الأسباب الكامنة:
-
-1. **حالة المخزون والنواقص:**
-   - لديك **${outOfStockCount} صنف منتهي بالكامل** و **${lowStockCount} صنف وشك النفاد**. نفاد الأصناف المطلوبة يتسبب في ضياع مبيعات مباشرة.
-2. **سياسة البيع الآجل (الديون):**
-   - **${debtRatio.toFixed(1)}%** من مبيعاتك تتم بالدين! هذا يقلل السيولة النقدية المتاحة لشراء بضائع جديدة.
-3. **معدل الفواتير:**
-   - تم تنفيذ **${allSales.length} فاتورة** بمعدل **${formatPrice(allSales.length > 0 ? totalSalesSum / allSales.length : 0)}** لكل فاتورة.
-
-💡 **السبب المباشر الأكثر تأثيراً:** ${outOfStockCount > 0 ? `توقف البيع في ${outOfStockCount} صنف منتهي بالمخزن.` : debtRatio > 30 ? 'ارتفاع نسبة البيع الآجل المقتطع من الكاش.' : 'انخفاض متوسط قيمة السلة الشرائية للزبون.'}`;
-      }
-
-      if (q.includes('أرباح') || q.includes('ارباح') || q.includes('ربح') || q.includes('ضعف')) {
-        return `🧐 **التحليل التشخيصي لأسباب مستوى الأرباح (Profit Diagnostic Engine):**
-
-إليك القراءة المالية لسبب صافي الأرباح الحالي (**${formatPrice(netProfit)}**):
-
-1. **الهامش بين سعر الشراء وسعر البيع:**
-   - إجمالي إيرادات المبيعات: **${formatPrice(totalSalesSum)}**
-   - تكلفة البضاعة الأصلية: **${formatPrice(totalCostOfGoods)}** (مجمل الربح: **${formatPrice(grossProfit)}**)
-2. **المصاريف والمسحوبات التشغيلية:**
-   - تم سحب **${formatPrice(totalWithdrawals)}** كمسحوبات ومصاريف. المسحوبات تقتطع مباشرة من صافي الربح المتبقي.
-3. **تأثير الديون المعلقة:**
-   - هناك **${formatPrice(totalCustomerDebts)}** أرباح ومبالغ محتجزة لدى الزبائن كديون.
-
-💡 **السبب الأساسي:** ${totalWithdrawals > grossProfit * 0.35 ? 'ارتفاع نسبة المسحوبات الشخصية والمصاريف التشغيلية بالنسبة لمجمل الربح.' : totalCustomerDebts > totalSalesSum * 0.3 ? 'تأخر تحصيل مستحقات الديون لدى العملاء.' : 'ضيق هامش الربح في بعض الأصناف المبيعة.'}`;
-      }
-
-      if (q.includes('دين') || q.includes('ديون') || q.includes('عملاء') || q.includes('زبائن')) {
-        return `🧐 **التحليل التشخيصي لسبب تراكم الديون:**
-
-1. **تراكم المبالغ لدى كبار المدينين:**
-   - إجمالي الديون المعلقة: **${formatPrice(totalCustomerDebts)}** على **${allCustomers.filter(c => c.balance > 0).length} عميل**.
-2. **نسبة البيع الآجل:**
-   - تشكل الديون **${debtRatio.toFixed(1)}%** من المبيعات الكلية.
-3. **ضعف المتابعة الدورية:**
-   - بعض العملاء تجاوزوا حدود الأمان بدون تسديد جزئي.
-
-💡 **الحل التشخيصي:** إيقاف البيع بالآجل للعملاء المصنفين باللون الأحمر فوراً ومتابعة التحصيل.`;
-      }
-
-      return `🧐 **التحليل التشخيصي والسبب المالي العام لمتجرك:**
-
-تحليل البيانات المسجلة يوضح ما يلي:
-- **إجمالي المبيعات:** ${formatPrice(totalSalesSum)} (${allSales.length} فاتورة)
-- **صافي الربح التقديري:** ${formatPrice(netProfit)} (بعد خصم تكلفة البضاعة والمصاريف)
-- **إجمالي الديون على العملاء:** ${formatPrice(totalCustomerDebts)}
-- **ديون الموردين والشركات:** ${formatPrice(totalSupplierDebts)}
-- **المصاريف والمسحوبات:** ${formatPrice(totalWithdrawals)}
-
-💡 **النقطة المفتاحية:** ${netProfit <= 0 ? 'المصاريف وتكلفة البضاعة تتجاوز الإيرادات الكلية، يلزم تقليل المسحوبات وتعديل أسعار البيع.' : totalCustomerDebts > totalSalesSum * 0.3 ? 'تراكم ديون الزبائن هو التحدي الأكبر للسيولة حالياً.' : 'المتجر يسير بأداء جيد، والتركيز القادم يجب أن يكون على توفير البضائع سريعة الدوران.'}`;
-    }
-
-    // --- B. GROWTH & IMPROVEMENT STRATEGY ENGINE ("HOW TO" / "كيف" / "اقتراحات") ---
-    if (q.includes('كيف') || q.includes('اقتراح') || q.includes('اقتراحات') || q.includes('خطة') || q.includes('تحسين') || q.includes('تطوير') || q.includes('زيادة') || q.includes('افكار') || q.includes('أفكار') || q.includes('نصائح') || q.includes('طريقة')) {
-      recordQueryCategory('advice');
-
-      const outOfStock = allProducts.filter(p => p.stock_quantity <= 0);
-      const lowStock = allProducts.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5);
-      const topDebtors = [...allCustomers].filter(c => c.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 3);
-      const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
-      const totalSuppDebt = allSuppliers.reduce((sum, s) => sum + s.balance, 0);
-
-      const topProfitableProducts = [...allProducts]
-        .map(p => ({ ...p, margin: p.sale_price - p.cost_price }))
-        .sort((a, b) => b.margin - a.margin)
-        .slice(0, 3);
-
-      return `🚀 **خطة ومقترحات الذكاء الاصطناعي لتطوير المتجر وزيادة الأرباح:**
-
-بناءً على قراءة البيانات الفعلية، إليك **خطة عمل من 5 خطوات فورية لرفع المبيعات والسيولة:**
-
-1. 📦 **توفير النواقص فوراً (سلسلة الإمداد):**
-   ${outOfStock.length > 0 ? `قم بشراء الأصناف المنتهية فوراً (${outOfStock.slice(0, 3).map(p => p.name).join('، ')}) لتجنب خسارة الزبائن.` : 'المخزون الأساسي متوفر، حافظ على استمرار التوريد.'}
-
-2. 💎 **ترويج المنتجات ذات هامش الربح العالي:**
-   ركز على بيع الأصناف التالية لكونها تحقق أعلى ربحية في الحبة الواحدة:
-${topProfitableProducts.map(p => `   - **${p.name}**: ربح الحبة **${formatPrice(p.margin)}**`).join('\n')}
-
-3. 💰 **خطة تحصيل السيولة النقدية (الكاش):**
-   لديك **${formatPrice(totalDebts)}** ديون معلقة لدى الزبائن. ابدأ بتحصيل المبالغ من أعلى المدينين:
-${topDebtors.map(c => `   - **${c.name}**: عليه **${formatPrice(c.balance)}**`).join('\n')}
-
-4. 🏷️ **عروض حزم المنتجات (Bundling Strategy):**
-   قم بدمج الأصناف بطيئة الحركة مع الأصناف الأكثر مبيعاً في عرض واحد بسعر تشجيعي لتسريع دوران البضاعة.
-
-5. 🛡️ **إدارة المسحوبات والموردين:**
-   ${totalSuppDebt > 0 ? `جدولة سداد مستحقات الموردين (${formatPrice(totalSuppDebt)}) أولاً بأول للحصول على خصومات كمية ورصيد ائتماني أفضل.` : 'حسابات الموردين ممتازة ومستقرة.'}
-
-🎯 **النتيجة المتوقعة:** تطبيق هذه الخطوات سيرفع صافي أرباحك اليومية بنسبة **15% - 25%** ويضمن استقرار التدفق النقدي!`;
-    }
-
-    // --- C. ADVANCED PREDICTIVE FORECASTING ENGINE (التنبؤات والتوقعات) ---
-    if (q.includes('تنبؤ') || q.includes('توقع') || q.includes('توقعات') || q.includes('مستقبل') || q.includes('الشهر القادم') || q.includes('المستقبلية') || q.includes('قادم') || q.includes('القادم')) {
-      recordQueryCategory('sales');
-
-      const nowMs = Date.now();
-      const last7DaysSales: { [key: string]: number } = {};
-
-      allSales.forEach(s => {
-        if (!s.created_at) return;
-        const sTime = new Date(s.created_at).getTime();
-        const daysDiff = Math.floor((nowMs - sTime) / (1000 * 60 * 60 * 24));
-        
-        if (daysDiff <= 7) {
-          const dayKey = new Date(s.created_at).toDateString();
-          last7DaysSales[dayKey] = (last7DaysSales[dayKey] || 0) + s.total_amount;
-        }
-      });
-
-      const daily7Amounts = Object.values(last7DaysSales);
-      const avgDailySales = daily7Amounts.length > 0 ? daily7Amounts.reduce((a, b) => a + b, 0) / Math.max(1, daily7Amounts.length) : (totalSalesSum / Math.max(1, allSales.length)) * 3;
-      
-      let tomorrowForecast = avgDailySales;
-      if (daily7Amounts.length >= 2) {
-        const momentum = daily7Amounts[daily7Amounts.length - 1] - daily7Amounts[0];
-        tomorrowForecast += momentum * 0.15;
-      }
-      tomorrowForecast = Math.max(10, tomorrowForecast);
-
-      const weeklyForecast = tomorrowForecast * 7 * 0.95;
-      const monthlyForecast = tomorrowForecast * 30 * 0.92;
-      const estimatedMonthlyInvoices = Math.round((monthlyForecast / Math.max(1, totalSalesSum || 1)) * Math.max(1, allSales.length));
-
-      return `🔮 **المحرك التنبئي الشامل للمبيعات والأرباح (Predictive AI Engine):**
-
-بناءً على الخوارزميات الرياضية وتحليل الزخم اليومي والأسبوعي للمبيعات، إليك التوقعات المستقبلية:
-
-📅 **1. توقعات الغد (مبيعات اليوم القادم):**
-- **المبيعات المتوقعة لليوم القادم:** **${formatPrice(tomorrowForecast)}**
-- **مستوى النشاط:** ${tomorrowForecast >= avgDailySales ? '📈 نشاط إيجابي أعلى من المتوسط المعتاد.' : '📊 نشاط اعتيادي مستقر.'}
-
-🗓️ **2. توقعات الأسبوع القادم (7 أيام):**
-- **إجمالي المبيعات المتوقعة للأسبوع:** **${formatPrice(weeklyForecast)}**
-- **معدل الحركة اليومي التقديري:** **${formatPrice(weeklyForecast / 7)}** / يوم
-
-📆 **3. توقعات الشهر القادم (30 يوماً):**
-- **إجمالي مبيعات الشهر التقديرية:** **${formatPrice(monthlyForecast)}**
-- **العدد التقديري للفواتير المتوقعة:** حوالي **${estimatedMonthlyInvoices > 0 ? estimatedMonthlyInvoices : Math.round(monthlyForecast / 50)} فاتورة**
-- **صافي الربح التقديري المتوقع للشهر:** **${formatPrice(monthlyForecast * 0.25)}** (بفرض متوسط هامش ربح 25%)
-
-💡 **التوصية التنبئية للمستقبل:**
-لتلبية هذه التوقعات بدون انقطاع، يُوصى بتخصيص ميزانية شراء بضائع بقيمة **${formatPrice(monthlyForecast * 0.7)}** للشهر القادم لتأمين المخزون الكافي.`;
-    }
-
-    // --- 1. SUPPLIERS & SUPPLIER DEBTS INTENT & LOOKUP ---
-    const matchedSupplier = allSuppliers.find(s => {
-      const sName = s.name.toLowerCase();
-      const normSName = normalizeArabic(sName);
-      if (q.includes(sName) || normQ.includes(normSName)) return true;
-      const parts = sName.split(/\s+/).filter(p => p.length >= 3);
-      return parts.some(part => q.includes(part) || normQ.includes(normalizeArabic(part)));
-    });
-
-    if (matchedSupplier || q.includes('مورد') || q.includes('الموردين') || q.includes('ديون الموردين') || q.includes('كم علينا للموردين') || q.includes('المستحقات علينا') || q.includes('مستحقات الموردين')) {
-      recordQueryCategory('debt');
-
-      if (matchedSupplier) {
-        const suppPayments = allSupplierPayments.filter(p => p.supplier_id === matchedSupplier.id);
-        const totalPaidToSupp = suppPayments.reduce((sum, p) => sum + p.amount, 0);
-
-        return `🏬 **بطاقة ومعلومات المورد: ${matchedSupplier.name}**
-- **المبلغ المتبقي/المستحق له علينا:** ${formatPrice(matchedSupplier.balance)} ${matchedSupplier.balance > 0 ? '🔴 (مستحق السداد)' : '✅ (حساب مسدد بالكامل)'}
-- **رقم الهاتف:** ${matchedSupplier.phone || 'غير مسجل'}
-- **إجمالي الدفعات المسددة له تاريخياً:** ${formatPrice(totalPaidToSupp)} (${suppPayments.length} عملية سداد)
-
-💡 **توصية المساعد الذكي:**
-${matchedSupplier.balance > 0 ? `⚠️ يتوجب جدولة سداد المبلغ المتبقي (${formatPrice(matchedSupplier.balance)}) للمورد لتجنب تأخير توريد البضائع.` : '✅ الحساب نظيف ومستقر مع هذا المورد.'}`;
-      }
-
-      const totalSupplierDebt = allSuppliers.reduce((sum, s) => sum + s.balance, 0);
-      const topSuppliersOwed = [...allSuppliers].filter(s => s.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 5);
-
-      return `🏬 **تقرير ديون ومستحقات الموردين والشركات:**
-- **إجمالي المبالغ المطلوبة منا للموردين:** **${formatPrice(totalSupplierDebt)}**
-- **عدد الموردين المسجلين:** ${allSuppliers.length} مورد.
-- **عدد الموردين الذين لهم مستحقات حالية:** ${allSuppliers.filter(s => s.balance > 0).length} مورد.
-
-🔝 **أعلى الموردين استحقاقاً للمبالغ:**
-${topSuppliersOwed.length > 0 ? topSuppliersOwed.map((s, i) => `${i + 1}. **${s.name}**: ${formatPrice(s.balance)} (هاتف: ${s.phone || 'غير مسجل'})`).join('\n') : '✅ الحمد لله! لا يوجد أي ديون معلقة للموردين حالياً.'}
-
-💡 **استشارة السيولة:** ${totalSupplierDebt > cashSalesSum ? '⚠️ إجمالي ديون الموردين يتجاوز كاش المبيعات المتوفر. يُنصح بترتيب أولويات السداد للموردين الأساسيين.' : '✅ وضع ديون الموردين آمن ضمن نطاق التدفق النقدي.'}`;
-    }
-
-    // --- 2. EXPENSES & CASH WITHDRAWALS INTENT ---
-    if (q.includes('مصاريف') || q.includes('المصاريف') || q.includes('مسحوبات') || q.includes('المسحوبات') || q.includes('مصروفات') || q.includes('كم صرفنا') || q.includes('سحبنا') || q.includes('التكاليف')) {
-      recordQueryCategory('cash');
-
-      const todayStr = new Date().toDateString();
-      const todayWithdrawals = allWithdrawals.filter(w => w.created_at && new Date(w.created_at).toDateString() === todayStr);
-      const todayWithdrawalsSum = todayWithdrawals.reduce((sum, w) => sum + w.amount, 0);
-      const totalWithdrawalsSum = allWithdrawals.reduce((sum, w) => sum + w.amount, 0);
-
-      const topReasonsMap: { [key: string]: number } = {};
-      allWithdrawals.forEach(w => {
-        const reason = w.reason || 'مصاريف عامة';
-        topReasonsMap[reason] = (topReasonsMap[reason] || 0) + w.amount;
-      });
-
-      const topReasons = Object.entries(topReasonsMap).sort((a, b) => b[1] - a[1]).slice(0, 4);
-
-      return `💸 **تقرير المصاريف والمسحوبات النقدية:**
-- **إجمالي مسحوبات ومصاريف اليوم:** **${formatPrice(todayWithdrawalsSum)}** (${todayWithdrawals.length} عملية سحب)
-- **إجمالي المصاريف والمسحوبات التاريخية:** **${formatPrice(totalWithdrawalsSum)}** (${allWithdrawals.length} عملية)
-
-📊 **أبرز أبواب النفقات والمصاريف:**
-${topReasons.length > 0 ? topReasons.map(([r, amt], i) => `${i + 1}. **${r}**: ${formatPrice(amt)}`).join('\n') : 'لا توجد بيانات تفصيلية مسجلة للمصاريف.'}
-
-💡 **توصية المساعد المالي:** ${todayWithdrawalsSum > 0 ? `تم تسجيل ${formatPrice(todayWithdrawalsSum)} مصاريف اليوم. تأكد من أن جميع المسحوبات الشخصية أو التشغيلية موثقة بوضوح لحماية كاش الصندوق.` : 'لم يتم تسجيل أي مصاريف جديدة اليوم.'}`;
-    }
-
-    // --- 3. ENTITY EXTRACTION & CUSTOMER DIRECT LOOKUP ---
-    const matchedCustomer = allCustomers.find(c => {
-      const cName = c.name.toLowerCase();
-      const normCName = normalizeArabic(cName);
-      if (q.includes(cName) || normQ.includes(normCName)) return true;
-      const parts = cName.split(/\s+/).filter(p => p.length >= 3);
-      return parts.some(part => q.includes(part) || normQ.includes(normalizeArabic(part)));
-    });
-
-    if (matchedCustomer && (q.includes('دين') || q.includes('ديون') || q.includes('حساب') || q.includes('كم على') || q.includes('سدد') || q.includes('معلومات') || q.includes('تفاصيل') || q.includes('عميل') || q.includes('زبون'))) {
-      const custDebts = allDebts.filter(d => d.customer_id === matchedCustomer.id);
-      const custPurchases = custDebts.filter(d => d.type === 'purchase');
-      const custPayments = custDebts.filter(d => d.type === 'payment');
-
-      const totalPurchasesAmt = custPurchases.reduce((sum, d) => sum + d.amount, 0);
-      const totalPaymentsAmt = custPayments.reduce((sum, d) => sum + d.amount, 0);
-
-      recordQueryCategory('debt');
-
-      return `👤 **كشف حساب ومعلومات العميل: ${matchedCustomer.name}**
-- **الرصيد/الديون الحالية المستحقة:** ${formatPrice(matchedCustomer.balance)} ${matchedCustomer.balance >= 1500 ? '🔴 (خطر عالي)' : matchedCustomer.balance > 500 ? '🟡 (خطر متوسط)' : matchedCustomer.balance > 0 ? '🟢 (دين آمن)' : '✅ (حساب مسدد بالكامل)'}
-- **رقم الهاتف:** ${matchedCustomer.phone || 'غير مسجل'}
-- **إجمالي الآجل التاريخي (المشتريات):** ${formatPrice(totalPurchasesAmt)} (${custPurchases.length} عملية)
-- **إجمالي المبالغ المسددة:** ${formatPrice(totalPaymentsAmt)} (${custPayments.length} عملية تسديد)
-
-💡 **تقييم الذكاء الاصطناعي لسلوك السداد:**
-${matchedCustomer.balance <= 0 ? '✅ هذا العميل ملتزم و حسابه نظيف تماماً بدون أي ديون معلقة.' : matchedCustomer.balance >= 1500 ? '⚠️ **تحذير:** الرصيد يتجاوز حد الخطر. يُفضل عدم إضافة أي ديون جديدة له حتى يقوم بتسديد جزئي.' : 'ℹ️ يمكن قبول مبيعات آجلة إضافية ضمن النطاق المعتاد.'}`;
-    }
-
-    // --- 4. ENTITY EXTRACTION & PRODUCT DIRECT LOOKUP ---
-    const matchedProduct = allProducts.find(p => {
-      const pName = p.name.toLowerCase();
-      const normPName = normalizeArabic(pName);
-      if (q.includes(pName) || normQ.includes(normPName)) return true;
-      const parts = pName.split(/\s+/).filter(part => part.length >= 3);
-      return parts.some(part => q.includes(part) || normQ.includes(normalizeArabic(part)));
-    });
-
-    if (matchedProduct && (q.includes('كم') || q.includes('مخزون') || q.includes('سعر') || q.includes('منتج') || q.includes('بضاعة') || q.includes('بكم') || q.includes('ربح') || q.includes('صنف') || q.includes('متبقي') || q.includes('حجم'))) {
-      const productSales = saleItems.filter(item => item.product_id === matchedProduct.id);
-      const totalSoldQty = productSales.reduce((sum, item) => sum + item.quantity, 0);
-      const unitProfit = matchedProduct.sale_price - matchedProduct.cost_price;
-
-      recordQueryCategory('inventory');
-
-      return `📦 **معلومات وبطاقة الصنف: ${matchedProduct.name}**
-- **الكمية المتوفرة بالمخزن:** ${matchedProduct.stock_quantity} حبة ${matchedProduct.stock_quantity <= 0 ? '🚨 (منتهي بالكامل!)' : matchedProduct.stock_quantity <= 5 ? '⚠️ (وشك النفاد)' : '✅ (كمية متوفرة)'}
-- **سعر البيع للزبون:** ${formatPrice(matchedProduct.sale_price)}
-- **سعر الشراء (التكلفة):** ${formatPrice(matchedProduct.cost_price)}
-- **هامش الربح في الحبة الواحدة:** ${formatPrice(unitProfit)} (${((unitProfit / Math.max(1, matchedProduct.cost_price)) * 100).toFixed(1)}%)
-- **إجمالي الكميات المباعة تاريخياً:** ${totalSoldQty} حبة
-${matchedProduct.expiration_date ? `- **تاريخ انتهاء الصلاحية:** ${matchedProduct.expiration_date}` : ''}
-
-💡 **نصيحة المساعد الذكي للصنف:**
-${matchedProduct.stock_quantity <= 5 ? `⚠️ متبقي ${matchedProduct.stock_quantity} قطع فقط! يُوصى بإصدار أمر شراء جديد للمورد فوراً.` : '✅ حالة المخزون ممتازة لهذا المنتج ولا داعي للقلق.'}`;
-    }
-
-    // --- 5. NET PROFIT & MARGIN ENGINE ---
-    if (q.includes('صافي الربح') || q.includes('صافي الارباح') || q.includes('الربح الحقيقي') || q.includes('الأرباح الصافية') || q.includes('هامش الربح الكلي') || q.includes('ربحنا الصافي')) {
-      recordQueryCategory('sales');
-
-      // Calculate Product Cost from SaleItems or Fallback Product Cost
-      let totalCostOfGoods = 0;
-      const productCostMap = new Map(allProducts.map(p => [p.id, p.cost_price]));
-
-      saleItems.forEach(item => {
-        const cPrice = productCostMap.get(item.product_id) || 0;
-        totalCostOfGoods += (cPrice * item.quantity);
-      });
-
-      // If sale items are sparse, estimate COGS based on average margin
-      if (totalCostOfGoods === 0 && totalSalesSum > 0) {
-        const avgMargin = allProducts.length > 0
-          ? allProducts.reduce((acc, p) => acc + (p.cost_price / Math.max(1, p.sale_price)), 0) / allProducts.length
-          : 0.75;
-        totalCostOfGoods = totalSalesSum * avgMargin;
-      }
-
-      const grossProfit = totalSalesSum - totalCostOfGoods;
-      const totalExpensesSum = allWithdrawals.reduce((sum, w) => sum + w.amount, 0);
-      const netProfit = grossProfit - totalExpensesSum;
-      const netMargin = totalSalesSum > 0 ? (netProfit / totalSalesSum) * 100 : 0;
-
-      return `📈 **المحرك الحسابي لصافي الأرباح (Net Profit Engine):**
-- **إجمالي إيرادات المبيعات الكلية:** ${formatPrice(totalSalesSum)}
-- **تكلفة البضاعة المباعة (COGS):** ${formatPrice(totalCostOfGoods)}
-- **مجمل الربح (Gross Profit):** ${formatPrice(grossProfit)}
-- **إجمالي المصاريف والمسحوبات التشغيلية (-):** ${formatPrice(totalExpensesSum)}
-- **💰 صافي الربح الحقيقي النهائي (Net Profit):** **${formatPrice(netProfit)}**
-- **نسبة هامش الأرباح الصافية:** **${netMargin.toFixed(1)}%**
-
-💡 **التحليل الاستراتيجي لصافي الأرباح:**
-${netProfit <= 0 ? '⚠️ **تنبيه:** صافي الربح منخفض أو سلبي بسبب ارتفاع المصاريف التشغيلية أو ارتفاع تكاليف البضائع. يُوصى بمراجعة شروط الشراء مع الموردين وضبط المصروفات.' : netMargin >= 20 ? '🌟 **أداء ممتاز!** هامش صافي الربح يتجاوز 20%، مما يدل على كفاءة تسعير ممتازة وضبط دقيق للنفقات.' : '✅ أداء مستقر. يمكنك زيادة صافي الربح عبر ترويج المنتجات ذات هامش الربح العالي وتقليل المسحوبات الشخصية.'}`;
-    }
-
-    // --- 6. TIME PERIOD FILTERS (THIS WEEK, THIS MONTH, LAST MONTH) ---
-    const now = new Date();
-    const todayStr = now.toDateString();
-    
-    // Check "This Week"
-    if (q.includes('هذا الاسبوع') || q.includes('هذا الأسبوع') || q.includes('خلال الاسبوع') || q.includes('ارباح الاسبوع') || q.includes('مبيعات الاسبوع')) {
-      recordQueryCategory('sales');
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-      const weekSales = allSales.filter(s => s.created_at && new Date(s.created_at) >= sevenDaysAgo);
-      const weekTotal = weekSales.reduce((sum, s) => sum + s.total_amount, 0);
-      const weekCash = weekSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-      const weekDebt = weekSales.filter(s => s.payment_type === 'debt').reduce((sum, s) => sum + s.total_amount, 0);
-
-      return `📅 **تقرير أداء الأسبوع الحالي (آخر 7 أيام):**
-- **إجمالي مبيعات الأسبوع:** **${formatPrice(weekTotal)}**
-- **المبيعات النقدية (الكاش):** ${formatPrice(weekCash)}
-- **المبيعات بالدين:** ${formatPrice(weekDebt)}
-- **عدد الفواتير الصادرة:** ${weekSales.length} فاتورة
-- **متوسط المبيعات اليومية:** ${formatPrice(weekTotal / 7)} / يوم
-
-💡 **ملاحظة المساعد:** ${weekTotal > 0 ? `حققت متوسط ${formatPrice(weekTotal / 7)} يومياً هذا الأسبوع.` : 'لم يتم تسجيل مبيعات كافية خلال السبعة أيام الماضية.'}`;
-    }
-
-    // Check "This Month"
-    if (q.includes('هذا الشهر') || q.includes('الشهر الحالي') || q.includes('خلال الشهر') || q.includes('ارباح الشهر') || q.includes('مبيعات الشهر')) {
-      recordQueryCategory('sales');
-      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-      const monthSales = allSales.filter(s => s.created_at && new Date(s.created_at) >= firstDayOfMonth);
-      const monthTotal = monthSales.reduce((sum, s) => sum + s.total_amount, 0);
-      const daysPassed = Math.max(1, now.getDate());
-
-      return `🗓️ **تقرير المبيعات المالي لهذا الشهر (${now.toLocaleString('ar-SA', { month: 'long', year: 'numeric' })}):**
-- **إجمالي مبيعات الشهر حتى الآن:** **${formatPrice(monthTotal)}**
-- **عدد الفواتير المنفذة:** ${monthSales.length} فاتورة
-- **معدل البيع اليومي للشهر:** ${formatPrice(monthTotal / daysPassed)} / يوم
-- **المبيعات المتوقعة لنهاية الشهر:** ${formatPrice((monthTotal / daysPassed) * 30)}
-
-💡 **تقييم الشهر:** معدل البيع الحالي يسير نحو تحقيق **${formatPrice((monthTotal / daysPassed) * 30)}** بنهاية الشهر.`;
-    }
-
-    // Check Today & Yesterday
-    const yesterdayDate = new Date();
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterdayStr = yesterdayDate.toDateString();
-
-    const isTodayQuery = q.includes('اليوم') || q.includes('ليومنا') || q.includes('النهاردة') || q.includes('توداي');
-    const isYesterdayQuery = q.includes('امس') || q.includes('أمس') || q.includes('البارحة') || q.includes('إمبارح');
-
-    if (isTodayQuery && (q.includes('مبيعات') || q.includes('ارباح') || q.includes('أرباح') || q.includes('كم بعنا') || q.includes('دخل') || q.includes('مكسب'))) {
-      const todaySales = allSales.filter(s => s.created_at && new Date(s.created_at).toDateString() === todayStr);
-      const todayTotal = todaySales.reduce((sum, s) => sum + s.total_amount, 0);
-      const todayCash = todaySales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-      const todayDebt = todaySales.filter(s => s.payment_type === 'debt').reduce((sum, s) => sum + s.total_amount, 0);
-
-      recordQueryCategory('sales');
-
-      return `📅 **موجز مبيعات وأرباح اليوم (${new Date().toLocaleDateString('ar-SA')}):**
-- **إجمالي مبيعات اليوم:** **${formatPrice(todayTotal)}**
-- **المبيعات النقدية (كاش):** ${formatPrice(todayCash)}
-- **المبيعات الآجلة (ديون):** ${formatPrice(todayDebt)}
-- **عدد الفواتير المنفذة اليوم:** ${todaySales.length} فاتورة
-
-📈 **التحليل الفوري لمبيعات اليوم:**
-${todayTotal > 0 ? `عمل رائع! تم تسجيل ${todaySales.length} فاتورة اليوم بإجمالي مدخول ${formatPrice(todayTotal)}.` : 'لم يتم تسجيل أي فواتير بيع جديدة حتى الآن لهذا اليوم.'}`;
-    }
-
-    if (isYesterdayQuery && (q.includes('مبيعات') || q.includes('ارباح') || q.includes('أرباح') || q.includes('كم بعنا') || q.includes('دخل'))) {
-      const yestSales = allSales.filter(s => s.created_at && new Date(s.created_at).toDateString() === yesterdayStr);
-      const yestTotal = yestSales.reduce((sum, s) => sum + s.total_amount, 0);
-
-      recordQueryCategory('sales');
-
-      return `📆 **تقرير مبيعات يوم أمس:**
-- **إجمالي مبيعات أمس:** **${formatPrice(yestTotal)}**
-- **عدد فواتير يوم أمس:** ${yestSales.length} فاتورة`;
-    }
-
-    // --- 7. CATEGORIES PERFORMANCE INTENT ---
-    if (q.includes('أقسام') || q.includes('اقسام') || q.includes('فئات') || q.includes('الفئات') || q.includes('حسب القسم')) {
-      recordQueryCategory('inventory');
-      const categoryMap: { [key: string]: { count: number; totalVal: number } } = {};
-      
-      allProducts.forEach(p => {
-        const cat = p.category || 'عام';
-        if (!categoryMap[cat]) categoryMap[cat] = { count: 0, totalVal: 0 };
-        categoryMap[cat].count += 1;
-        categoryMap[cat].totalVal += (p.sale_price * p.stock_quantity);
-      });
-
-      const categoriesList = Object.entries(categoryMap).map(([cat, info]) => `- **قسم ${cat}**: ${info.count} صنف (القيمة المالية: ${formatPrice(info.totalVal)})`).join('\n');
-
-      return `🏷️ **تقرير وتصنيف الأقسام في المتجر:**
-${categoriesList || 'لا توجد أقسام مسجلة للبضائع.'}
-
-💡 **توصية:** يمكنك تركيز التوسع والعروض على القسم صاحب القيمة المالية والأصناف الأكثر حركة.`;
-    }
-
-    // --- 8. EXPIRATION DATE TRACKING ---
-    if (q.includes('انتهاء') || q.includes('الصلاحية') || q.includes('صلاحية') || q.includes('المنتهي الصلاحية') || q.includes('تاريخ الانتهاء')) {
-      recordQueryCategory('inventory');
-      const todayDateObj = new Date();
-      
-      const expiringSoon = allProducts.filter(p => {
-        if (!p.expiration_date) return false;
-        const exp = new Date(p.expiration_date);
-        const daysLeft = Math.ceil((exp.getTime() - todayDateObj.getTime()) / (1000 * 60 * 60 * 24));
-        return daysLeft <= 30; // Expiring in less than 30 days or already expired
-      });
-
-      return `⏳ **تقرير تتبع صلاحية المنتجات والبضائع:**
-- **عدد المنتجات التي تنتهي صلاحيتها قريباً (أقل من 30 يوم):** ${expiringSoon.length} صنف.
-${expiringSoon.length > 0 ? expiringSoon.map(p => `- **${p.name}**: تنتهي في ${p.expiration_date} (المتبقي: ${p.stock_quantity} حبة)`).join('\n') : '✅ جميع البضائع المسجلة لها تاريخ صلاحية آمن ولا يوجد أي صنف وشك الانتهاء!'}
-
-💡 **توصية تسويقية:** قم بعمل خصم ترويجي وتصفية سريعة للأصناف التي تقترب صلاحيتها لمنع تلفها.`;
-    }
-
-    // --- 9. GREETINGS & INTENT WELCOME ---
-    if (q === 'مرحبا' || q === 'سلام' || q === 'أهلا' || q === 'اهلين' || q === 'مساء الخير' || q === 'صباح الخير' || q.includes('من انت') || q.includes('مين انت')) {
-      const outOfStockCount = allProducts.filter(p => p.stock_quantity <= 0).length;
-      const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
-      const totalSuppDebt = allSuppliers.reduce((sum, s) => sum + s.balance, 0);
-      
-      return `👋 **أهلاً بك! أنا مساعدك الحسابي والمالي الفائق (الذكاء الاصطناعي أوفلاين 100%):**
-
-أنا هنا بمثابة مديرك المالي الذكي لتوفير إجابات عبقرية وفورية عن متجرك:
-- 📊 **المبيعات الكلية:** ${formatPrice(totalSalesSum)} (${allSales.length} فاتورة)
-- 👥 **ديون الزبائن:** ${formatPrice(totalDebts)} على العملاء
-- 🏬 **مستحقات الموردين:** ${formatPrice(totalSuppDebt)} للشركات والموردين
-- 📦 **حالة المخزون:** ${outOfStockCount > 0 ? `⚠️ يوجد ${outOfStockCount} أصناف منتهية` : '✅ المخزون ممتاز'}
-
-**أسئلة يمكنك طرحها مباشرة:**
-1. *"صافي الأرباح"* أو *"أرباح هذا الشهر"*
-2. *"كم حساب محمد؟"* أو *"ديون الموردين"*
-3. *"كم كمية البيبسي؟"* أو *"البضاعة الناقصة"*
-4. *"كم المصاريف والمسحوبات اليوم؟"*
-5. *"مطابقة الصندوق"* أو *"التوقعات التنبئية لغد"*`;
-    }
-
-    // --- 10. DIRECT HIGH-PRECISION INTENT RESPONSES ---
-
-    // Direct Out-of-Stock / Low Stock Query
-    if (q.includes('ناقص') || q.includes('نواقص') || q.includes('منتهي') || q.includes('المنتهية') || q.includes('مخلص') || q.includes('وش ناقص') || q.includes('ايش ناقص') || q.includes('البضاعة الناقصة')) {
-      const outOfStock = allProducts.filter(p => p.stock_quantity <= 0);
-      const lowStock = allProducts.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5);
-      recordQueryCategory('inventory');
-
-      return `🚨 **تقرير الأصناف الناقصة والمنتهية فوراً:**
-- **أصناف نافدة بالكامل (0 حبة):** ${outOfStock.length} صنف ${outOfStock.length > 0 ? `\n  (${outOfStock.slice(0, 5).map(p => p.name).join(' ، ')})` : '✅ لا يوجد'}
-- **أصناف تحت حد الأمان (أقل من 5 حبات):** ${lowStock.length} صنف ${lowStock.length > 0 ? `\n  (${lowStock.slice(0, 5).map(p => `${p.name}: المتبقي ${p.stock_quantity}`).join(' ، ')})` : '✅ لا يوجد'}
-
-💡 **توصية:** ${outOfStock.length > 0 ? 'يُنصح بإصدار أمر طلب جديد للموردين لهذه الأصناف لمنع خسارة الزبائن.' : 'مستويات المخزون النواقص آمنة حالياً.'}`;
-    }
-
-    // Direct Best Sellers / Top Products Query
-    if (q.includes('الاكثر مبيعا') || q.includes('الأكثر مبيعا') || q.includes('الاكثر طلبا') || q.includes('الأكثر طلباً') || q.includes('وش ينباع') || q.includes('أكثر منتج') || q.includes('اكثر منتج') || q.includes('أفضل صنف') || q.includes('افضل صنف')) {
-      const productFreq: { [key: number]: number } = {};
-      saleItems.forEach(item => {
-        productFreq[item.product_id] = (productFreq[item.product_id] || 0) + item.quantity;
-      });
-
-      const topProducts = [...allProducts]
-        .map(p => ({ ...p, soldQty: productFreq[p.id || 0] || 0 }))
-        .filter(p => p.soldQty > 0)
-        .sort((a, b) => b.soldQty - a.soldQty)
-        .slice(0, 5);
-
-      recordQueryCategory('inventory');
-
-      if (topProducts.length === 0) {
-        return `🔥 **الأصناف الأكثر مبيعاً:**\nلم يتم تسجيل مبيعات تفصيلية للأصناف بعد لحساب الأكثر مبيعاً.`;
-      }
-
-      return `🔥 **قائمة الأصناف الأكثر مبيعاً وطلباً في المحل:**
-${topProducts.map((p, i) => `${i + 1}. **${p.name}**: تم بيع **${p.soldQty}** قطعة (المتبقي بالمخزن: ${p.stock_quantity} حبة)`).join('\n')}
-
-💡 **توصية:** تأكد دائماً من توفر كميات إضافية من هذه الأصناف في المخزن لكونها المحرك الأساسي للمبيعات.`;
-    }
-
-    // Direct Top Debtors Query
-    if (q.includes('من عليه') || q.includes('منو عليه') || q.includes('من مديون') || q.includes('من متأخر') || q.includes('أعلى عميل') || q.includes('اعلى عميل') || q.includes('كبار المدينين') || q.includes('اكثر شخص مديون') || q.includes('من هم المدينين') || q.includes('من هم اكثر الزبائن دينا') || q.includes('ديون العملاء')) {
-      const topDebtors = [...allCustomers].filter(c => c.balance > 0).sort((a, b) => b.balance - a.balance).slice(0, 5);
-      recordQueryCategory('debt');
-
-      if (topDebtors.length === 0) {
-        return `👥 **تقرير كبار المدينين:**\n✅ ممتازة جداً! لا يوجد أي ديون مستحقة على أي عميل حالياً.`;
-      }
-
-      return `👥 **أعلى العملاء مديونية ورصيد قائم:**
-${topDebtors.map((c, i) => `${i + 1}. **${c.name}**: ${formatPrice(c.balance)} ${c.balance >= 1500 ? '🔴 (خطر عالي)' : c.balance > 500 ? '🟡 (متوسط)' : '🟢 (آمن)'}`).join('\n')}
-
-💡 **توصية:** يُنصح بالتركيز على تحصيل الديون من الأسماء المصنفة باللون الأحمر قبل فتح سقف ائتماني جديد لهم.`;
-    }
-
-    // Direct Cash Drawer Matching Query
-    if (q.includes('مطابقة الصندوق') || q.includes('كم الكاش') || q.includes('كم بالدرج') || q.includes('فلوس الدرج') || q.includes('كم في الصندوق') || q.includes('درج الكاش') || q.includes('تصفية الصندوق') || q.includes('النقدية في الدرج')) {
-      const cashSales = allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-      const debtPayments = allDebts.filter(d => d.type === 'payment').reduce((sum, d) => sum + d.amount, 0);
-      const withdrawals = allWithdrawals.reduce((sum, w) => sum + w.amount, 0);
-      const supplierPayments = allSupplierPayments.reduce((sum, p) => sum + p.amount, 0);
-      const settlements = (await db.salesSettlements?.toArray() || []).reduce((sum, s) => sum + s.delivered_amount, 0);
-
-      const calculatedCash = (cashSales + debtPayments) - (withdrawals + supplierPayments + settlements);
-      recordQueryCategory('cash');
-
-      return `💵 **المطابقة النقدية الفورية لدرج الصندوق:**
-- **الرصيد النقدي المحسوب بالدرج الآن:** **${formatPrice(Math.max(0, calculatedCash))}**
-- **مقبوضات الكاش المباشرة:** ${formatPrice(cashSales)}
-- **تحصيلات ديون الزبائن:** ${formatPrice(debtPayments)}
-- **إجمالي الخصومات والمسحوبات:** ${formatPrice(withdrawals + supplierPayments + settlements)}
-
-🎯 **خطوة المطابقة:** قم بعد النقدية الفعلية في الدرج الآن وقارنها بمبلغ **${formatPrice(Math.max(0, calculatedCash))}**.`;
-    }
-
-    // --- 11. LOCAL NLP CLASSIFIER MODEL ---
-    const words = q.split(/\s+/);
-    let scores = { sales: 0, inventory: 0, debt: 0, cash: 0, advice: 0 };
-    
-    const keywords = {
-      sales: [
-        'مبيعات', 'مبيعاتي', 'بيع', 'البيع', 'أرباح', 'ارباح', 'ربح', 'الربح', 'توقع', 'تنبؤ', 'نمو', 'تطور', 'دخل', 'الدخل', 'توقعات', 'بكم', 'باع', 'باعت', 'إيراد', 'ايراد', 'فلوس',
-        'كسبنا', 'مكسب', 'ارباحنا', 'أرباح المحل', 'كم دخلنا', 'شقد بعنا', 'جم بعنا', 'مبيعات اليوم', 'كم المبيعات', 'الارباح والمبيعات', 'كم ربحنا', 'الربح اليوم', 'وش بعنا', 'شنو بعنا', 
-        'ايش بعنا', 'كام المبيعات', 'ايه المبيعات', 'مكسبنا كام', 'شكد بعنا', 'مبيعاتنا', 'المدخول', 'ايرادات', 'النشاط', 'مبيعاتك'
-      ],
-      inventory: [
-        'منتج', 'منتجات', 'المخزون', 'بضاعة', 'أصناف', 'الاصناف', 'بضاعه', 'ناقص', 'نواقص', 'حركة', 'سرعة', 'سعر', 'الاسعار', 'الكميات', 'كمية', 'مخزن', 'البضائع', 'صنف', 'الأصناف', 
-        'البضايع', 'السلع', 'وش ناقص', 'ايش مخلص', 'وش الي ينباع', 'الناقص', 'المنتهية', 'الأكثر مبيعا', 'الاكثر مبيعا', 'صنف سريع', 'شصار عالمخزن', 'البضاعة الناقصة', 'كم صنف', 'كم حبة', 'كم حبه'
-      ],
-      debt: [
-        'زبون', 'الزبائن', 'عميل', 'العملاء', 'دين', 'الديون', 'مديونية', 'تسديد', 'مخاطر', 'خطر', 'ملتزم', 'سداد', 'ديون', 'مسدد', 'المستحقة', 'أجل', 'اجل', 'دفعة', 'دفعه', 
-        'زبائن', 'من عليه', 'شكون يسالنا', 'منو ما سدد', 'شقد يطلبونا', 'الديون المتاخرة', 'حساب الزباين', 'مديونين', 'زبون مديون', 'شكد ديون', 'منو عليه', 'من مديون', 'من متأخر', 'المتأخرين'
-      ],
-      cash: [
-        'صندوق', 'الصندوق', 'النقدية', 'كاش', 'تصفية', 'المطابقة', 'مطابقة', 'درج', 'سحب', 'مصاريف', 'مصروف', 'نقد', 'موجودات', 'مطابقه', 'الدرج', 'الحساب', 
-        'فلوس الصندوق', 'مطابقة الصندوق', 'درج الكاش', 'كم في الدرج', 'كاش اليوم', 'حساب الصندوق', 'تصفية الدرج', 'وش في الصندوق', 'كم الكاش', 'ايش في الصندوق', 'فلوس الدرج', 'تصفيه', 'تصفية صندوق'
-      ],
-      advice: [
-        'تحليل', 'نصيحة', 'نصيحه', 'توصية', 'توصيه', 'ذكاء', 'مستقبل', 'تعلم', 'تحسين', 'استشارة', 'توجيه', 'استشاري', 'تطور', 'مؤشرات', 'مستشار', 'استشاره', 'اداء', 'أداء', 
-        'انصحني', 'وش رايك', 'مستشار مالي', 'تحسين الأرباح', 'كيف اطور', 'كيف المبيعات', 'رأيك', 'كيف أحسن', 'الوضع المالي', 'استشيرك', 'توجيهات', 'نصائح'
-      ]
-    };
-
-    words.forEach(word => {
-      const cleanWord = normalizeArabic(word);
-      Object.entries(keywords).forEach(([cat, list]) => {
-        if (list.some(k => k === cleanWord || cleanWord.includes(k) || k.includes(cleanWord) || q.includes(k))) {
-          scores[cat as keyof typeof scores] += 1;
-        }
-      });
-    });
-
-    let mappedCategory: 'sales' | 'inventory' | 'debt' | 'cash' | 'advice' | null = null;
-    let maxVal = 0;
-    Object.entries(scores).forEach(([cat, val]) => {
-      if (val > maxVal) {
-        maxVal = val;
-        mappedCategory = cat as any;
-      }
-    });
-
-    if (mappedCategory) {
-      recordQueryCategory(mappedCategory);
-    }
-
-    // Sales & Predictive Forecasting
-    if (mappedCategory === 'sales') {
-      const hoursMap: { [key: number]: number } = {};
-      const daysMap: { [key: number]: number } = {};
-      
-      allSales.forEach(s => {
-        if (!s.created_at) return;
-        const d = new Date(s.created_at);
-        if (isNaN(d.getTime())) return;
-        const hr = d.getHours();
-        const dy = d.getDay();
-        hoursMap[hr] = (hoursMap[hr] || 0) + s.total_amount;
-        daysMap[dy] = (daysMap[dy] || 0) + s.total_amount;
-      });
-
-      let peakHour = -1;
-      let maxHourSales = 0;
-      Object.entries(hoursMap).forEach(([hr, amt]) => {
-        if (amt > maxHourSales) {
-          maxHourSales = amt;
-          peakHour = parseInt(hr);
-        }
-      });
-
-      const dayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-      let peakDay = -1;
-      let maxDaySales = 0;
-      Object.entries(daysMap).forEach(([dy, amt]) => {
-        if (amt > maxDaySales) {
-          maxDaySales = amt;
-          peakDay = parseInt(dy);
-        }
-      });
-
-      const last7DaysSales: { [key: string]: number } = {};
-      const nowMs = Date.now();
-      allSales.forEach(s => {
-        if (!s.created_at) return;
-        const d = new Date(s.created_at);
-        if (isNaN(d.getTime())) return;
-        const daysDiff = Math.floor((nowMs - d.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysDiff <= 7) {
-          const key = d.toDateString();
-          last7DaysSales[key] = (last7DaysSales[key] || 0) + s.total_amount;
-        }
-      });
-      
-      const dailyAmounts = Object.values(last7DaysSales);
-      const avgDailySales = dailyAmounts.length > 0 ? dailyAmounts.reduce((a, b) => a + b, 0) / dailyAmounts.length : (totalSalesSum / Math.max(1, allSales.length)) * 3;
-      
-      let tomorrowForecast = avgDailySales;
-      if (dailyAmounts.length >= 2) {
-        const momentum = dailyAmounts[dailyAmounts.length - 1] - dailyAmounts[0];
-        tomorrowForecast += momentum * 0.15;
-      }
-      tomorrowForecast = Math.max(50, tomorrowForecast);
-
-      return `📊 **التحليل الذكي والتعلم للمبيعات والأرباح (أوفلاين):**
-- **إجمالي المبيعات التاريخية:** ${formatPrice(totalSalesSum)}
-- **المبيعات النقدية (الكاش):** ${formatPrice(cashSalesSum)} (${((cashSalesSum / Math.max(1, totalSalesSum)) * 100).toFixed(1)}%)
-- **المبيعات الآجلة (الديون):** ${formatPrice(debtSalesSum)} (${((debtSalesSum / Math.max(1, totalSalesSum)) * 100).toFixed(1)}%)
-- **إجمالي الفواتير الصادرة:** ${allSales.length} فاتورة.
-
-🔍 **نمط التعلم الآلي للنشاط والذروة (Peak Patterns):**
-- **ساعة الذروة اليومية:** ${peakHour !== -1 ? `الساعة ${peakHour === 0 ? 12 : peakHour > 12 ? peakHour - 12 : peakHour} ${peakHour >= 12 ? 'مساءً' : 'صباحاً'} (حجم المبيعات: ${formatPrice(maxHourSales)})` : 'لا توجد بيانات كافية حالياً'}
-- **اليوم الأكثر نشاطاً في الأسبوع:** ${peakDay !== -1 ? `${dayNames[peakDay]} (حجم المبيعات: ${formatPrice(maxDaySales)})` : 'لا توجد بيانات كافية حالياً'}
-
-🔮 **التوقع والذكاء التنبئي لليوم القادم (Sales Forecast):**
-- **المبيعات المتوقعة ليوم غد:** ${formatPrice(tomorrowForecast)}
-- **الاستنتاج المحلي:** ${tomorrowForecast > avgDailySales ? '📈 يتجه النظام لزيادة المبيعات نتيجة للزخم الإيجابي الأخير!' : '📉 يتوقع النظام نشاطاً اعتيادياً أو هادئاً نسبياً، يُنصح بمتابعة العروض وجذب الزبائن.'}`;
-    }
-
-    // Inventory & Products
-    if (mappedCategory === 'inventory') {
-      const totalProducts = allProducts.length;
-      const outOfStock = allProducts.filter(p => p.stock_quantity <= 0);
-      const lowStock = allProducts.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5);
-      const totalValueCost = allProducts.reduce((sum, p) => sum + (p.cost_price * p.stock_quantity), 0);
-      const totalValueSale = allProducts.reduce((sum, p) => sum + (p.sale_price * p.stock_quantity), 0);
-      const profitMargin = totalValueSale - totalValueCost;
-      
-      const productFreq: { [key: number]: number } = {};
-      saleItems.forEach(item => {
-        productFreq[item.product_id] = (productFreq[item.product_id] || 0) + item.quantity;
-      });
-
-      const fastMoving = [...allProducts]
-        .map(p => ({ ...p, soldQty: productFreq[p.id || 0] || 0 }))
-        .filter(p => p.soldQty > 0)
-        .sort((a, b) => b.soldQty - a.soldQty)
-        .slice(0, 3);
-
-      let fastMovingText = fastMoving.map(p => `- **${p.name}** (تم بيع ${p.soldQty} وحدات، المتبقي: ${p.stock_quantity})`).join('\n');
-
-      return `📦 **تقرير المخزون والذكاء التنبئي للأصناف (أوفلاين):**
-- **إجمالي عدد الأصناف:** ${totalProducts} صنف مسجل.
-- **القيمة المالية بسعر الشراء:** ${formatPrice(totalValueCost)}
-- **القيمة المالية المتوقعة بسعر البيع:** ${formatPrice(totalValueSale)}
-- **الأرباح الكامنة في المخزون الحالي:** ${formatPrice(profitMargin)} (${((profitMargin / Math.max(1, totalValueCost)) * 100).toFixed(1)}%)
-- **أصناف غير متوفرة (0):** ${outOfStock.length} صنف.
-- **أصناف تحت حد الأمان (أقل من 5):** ${lowStock.length} صنف.
-
-🔥 **الأصناف الأكثر حركة وطلباً (تعلم محلي من المبيعات):**
-${fastMovingText || 'لا توجد مبيعات مسجلة بالتفصيل حالياً لمعرفة الأصناف سريعة الحركة.'}
-
-🔮 **التوصية التنبئية للمخزون:**
-${outOfStock.length > 0 ? `⚠️ يوجد عدد ${outOfStock.length} صنف منتهي الكمية بالكامل، يُنصح بطلبها فوراً من الموردين لمنع خسارة الزبائن.` : '✅ مستويات البضائع ممتازة ولا توجد نواقص حرجة حالياً.'}`;
-    }
-
-    // Debts & Risk
-    if (mappedCategory === 'debt') {
-      const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
-      const highRiskDebtors = allCustomers.filter(c => c.balance >= 1500);
-      const mediumRiskDebtors = allCustomers.filter(c => c.balance > 500 && c.balance < 1500);
-      const lowRiskDebtors = allCustomers.filter(c => c.balance > 0 && c.balance <= 500);
-      
-      const totalPayments = allDebts.filter(d => d.type === 'payment').reduce((sum, d) => sum + d.amount, 0);
-      const totalDebtsCreated = allDebts.filter(d => d.type === 'purchase').reduce((sum, d) => sum + d.amount, 0);
-      const collectionRate = totalDebtsCreated > 0 ? (totalPayments / totalDebtsCreated) * 100 : 100;
-
-      const topDebtors = [...allCustomers].sort((a, b) => b.balance - a.balance).slice(0, 5);
-      let debtorsList = topDebtors.map((c, i) => `${i+1}. **${c.name}**: ${formatPrice(c.balance)} ${c.balance >= 1500 ? '🔴 (خطر مرتفع)' : '🟡 (خطر متوسط)'}`).join('\n');
-      
-      return `👥 **تقرير مخاطر الديون ومؤشر التحصيل المالي الذكي (أوفلاين):**
-- **إجمالي الديون المعلقة على الزبائن:** ${formatPrice(totalDebts)}
-- **إجمالي المبالغ التي تم تحصيلها تاريخياً:** ${formatPrice(totalPayments)}
-- **معدل كفاءة التحصيل المالي:** ${collectionRate.toFixed(1)}% 
-
-📊 **تصنيف درجات المخاطر للعملاء المدينين (Risk Grading Model):**
-- **🔴 عملاء ذوي مديونية حرجة (أكبر من 1500):** ${highRiskDebtors.length} عميل.
-- **🟡 عملاء خطر متوسط (500 - 1500):** ${mediumRiskDebtors.length} عميل.
-- **🟢 عملاء مديونية آمنة (أقل من 500):** ${lowRiskDebtors.length} عميل.
-
-🔝 **أعلى المدينين وتصنيفهم الاحترازي:**
-${debtorsList || "لا توجد ديون مستحقة حالياً للزبائن."}
-
-💡 **استشاري الديون التلقائي:**
-${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إجمالي الديون يتجاوز 35% من مبيعات المحل. هذا يمثل خطراً حقيقياً على السيولة النقدية لديك. ننصح بوقف البيع الآجل فوراً للعملاء المصنفين باللون الأحمر (🔴) والبدء في حملة تحصيل سريعة.' : '✅ مستوى الديون معتدل ومقبول وضمن الحدود الآمنة بالنسبة لإجمالي مبيعاتك.'}`;
-    }
-
-    // Cash & Box Auditing
-    if (mappedCategory === 'cash') {
-      const cashSales = allSales.filter(s => s.payment_type === 'cash').reduce((sum, s) => sum + s.total_amount, 0);
-      const debtPayments = allDebts.filter(d => d.type === 'payment').reduce((sum, d) => sum + d.amount, 0);
-      const withdrawals = allWithdrawals.reduce((sum, w) => sum + w.amount, 0);
-      const supplierPayments = allSupplierPayments.reduce((sum, p) => sum + p.amount, 0);
-      const settlements = (await db.salesSettlements?.toArray() || []).reduce((sum, s) => sum + s.delivered_amount, 0);
-      
-      const calculatedCash = (cashSales + debtPayments) - (withdrawals + supplierPayments + settlements);
-      
-      return `💵 **تدقيق ومطابقة الصندوق الآلية (أوفلاين):**
-- **النقد المتبقي المحسوب في الصندوق:** ${formatPrice(Math.max(0, calculatedCash))}
-- **إجمالي المقبوضات النقدية (+):** ${formatPrice(cashSales + debtPayments)}
-  - مبيعات الكاش المباشرة: ${formatPrice(cashSales)}
-  - مقبوضات تسديد ديون الزبائن: ${formatPrice(debtPayments)}
-- **إجمالي المصروفات والمسلمات والمدفوعات (-):** ${formatPrice(withdrawals + supplierPayments + settlements)}
-  - مسحوبات ومصاريف نقدية: ${formatPrice(withdrawals)}
-  - مدفوعات نقدية للموردين: ${formatPrice(supplierPayments)}
-  - مبالغ تمت تصفيتها وتسليمها: ${formatPrice(settlements)}
-
-💡 **توصية تدقيق الصندوق:**
-1. قم بعد النقدية الورقية والمعدنية الموجودة فعلياً في الدرج الآن.
-2. قارنها بالرقم المحسوب أعلاه: **${formatPrice(Math.max(0, calculatedCash))}**.`;
-    }
-
-    // Comprehensive Executive Summary Fallback for General / Unclassified Queries
-    const totalDebts = allCustomers.reduce((sum, c) => sum + c.balance, 0);
-    const totalSuppDebt = allSuppliers.reduce((sum, s) => sum + s.balance, 0);
-    const outOfStockCount = allProducts.filter(p => p.stock_quantity <= 0).length;
-    const lowStockCount = allProducts.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5).length;
-    
-    // Calculate Store Health Score dynamically (0 - 100)
-    let storeHealthScore = 100;
-    if (totalSalesSum > 0 && totalDebts / totalSalesSum > 0.3) storeHealthScore -= 20;
-    if (allProducts.length > 0 && outOfStockCount / allProducts.length > 0.2) storeHealthScore -= 20;
-    if (totalSuppDebt > cashSalesSum) storeHealthScore -= 15;
-
-    return `📊 **التقرير المحاسبي والشامل لاستفسارك:**
-
-لقد قمت بتحليل جميع السجلات والسندات وقواعد البيانات المحلية لتقديم صورة متكاملة عن متجرك:
-
-- 📈 **مبيعات المتجر الكلية:** ${formatPrice(totalSalesSum)} (${allSales.length} فاتورة)
-- 💰 **ديون العملاء المستحقة:** ${formatPrice(totalDebts)} (${allCustomers.filter(c => c.balance > 0).length} عميل)
-- 🏬 **ديون ومستحقات الموردين:** ${formatPrice(totalSuppDebt)} (${allSuppliers.filter(s => s.balance > 0).length} مورد)
-- 📦 **النواقص والمخزون:** ${outOfStockCount} أصناف منتهية، و ${lowStockCount} أصناف وشك النفاد.
-- 🎯 **مؤشر السلامة المالية للمتجر:** **${storeHealthScore}%** ${storeHealthScore >= 80 ? '🟢 (ممتاز)' : storeHealthScore >= 60 ? '🟡 (متوسط)' : '🔴 (يحتاج تدخل)'}
-
-💡 **أبرز 3 خطوات استراتيجية موصى بها الآن:**
-1. ${outOfStockCount > 0 ? `طلب البضائع المنتهية (${outOfStockCount} صنف) لمنع انقطاع المبيعات.` : 'المحافظة على مستويات المخزون الحالية.'}
-2. ${totalDebts > 500 ? `متابعة كبار المدينين وتحصيل ${formatPrice(totalDebts)} لتعزيز السيولة.` : 'تحصيل الديون منتظم.'}
-3. ${totalSuppDebt > 0 ? `جدولة سداد الموردين القادمة بقيمة ${formatPrice(totalSuppDebt)}.` : 'لا يوجد مستحقات معلقة للموردين.'}`;
   };
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -1182,11 +778,51 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
     // Hybrid Execution Engine (Online Gemini 2.5 Flash Cloud RAG + 100% Offline Local Engine Fallback)
     setTimeout(async () => {
       try {
-        const responseText = await resolveSmartQuery(query);
+        const responseObj = await resolveSmartQuery(query);
+        const text = typeof responseObj === 'string' ? responseObj : responseObj.answer;
+        const defaultStages = [
+          {
+            stageNumber: 1,
+            title: 'فهم القصد وتفكيك الاستعلام (NLU)',
+            description: 'تحليل الاستعلام واستخراج القصد الرئيسي محلياً',
+            status: 'completed',
+            badge: 'NLU محلي',
+            details: `• النص المدخل: "${query}"`
+          },
+          {
+            stageNumber: 2,
+            title: 'استرجاع البيانات الحقيقية والسياق (DB)',
+            description: 'سحب السجلات والبيانات المسجلة من IndexedDB',
+            status: 'completed',
+            badge: 'IndexedDB',
+            details: '• تم استرداد كافة القوائم المالية والمبيعات.'
+          },
+          {
+            stageNumber: 3,
+            title: 'التحليل الذكي وتطابق الأرقام (Audit)',
+            description: 'حساب المؤشرات ورصد الأسباب والفوارق التشخيصية',
+            status: 'completed',
+            badge: 'تدقيق ذكي',
+            details: '• تم إجراء عملية المطابقة الحسابية بنجاح.'
+          },
+          {
+            stageNumber: 4,
+            title: 'صياغة الإجابة المباشرة الموثوقة (Synthesis)',
+            description: 'إخراج التقرير الفوري وتوصيات الحلول',
+            status: 'completed',
+            badge: 'جاهز',
+            details: 'تم إخراج الإجابة النهائية.'
+          }
+        ];
+        const stages = typeof responseObj === 'object' && responseObj.stages && responseObj.stages.length > 0
+          ? responseObj.stages
+          : defaultStages;
+
         setChatMessages(prev => [...prev, {
           id: 'assistant-' + Date.now(),
           role: 'assistant' as const,
-          text: responseText,
+          text,
+          stages,
           timestamp: new Date()
         }]);
       } catch (error: any) {
@@ -1202,72 +838,91 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
     }, 250);
   };
 
+  const formatInlineStyles = (rawText: string) => {
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    const boldRegex = /\*\*(.*?)\*\*/g;
+    let match;
+
+    while ((match = boldRegex.exec(rawText)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(rawText.substring(lastIndex, match.index));
+      }
+      parts.push(
+        <strong key={match.index} className="font-black text-amber-300 mx-0.5">
+          {match[1]}
+        </strong>
+      );
+      lastIndex = boldRegex.lastIndex;
+    }
+    if (lastIndex < rawText.length) {
+      parts.push(rawText.substring(lastIndex));
+    }
+    return parts.length > 0 ? parts : rawText;
+  };
+
   const formatAssistantMessage = (text: string) => {
     return text.split('\n').map((line, idx) => {
       let content = line.trim();
       if (!content) return <div key={idx} className="h-2" />;
 
-      // Match markdown headers like ### or ## or lines starting with emojis like 📊, 📦, 👥, 💵, 🧠, 🔮, 🛡️
+      // Match markdown headers like ### or ## or #
       if (content.startsWith('###') || content.startsWith('##') || content.startsWith('#')) {
         const titleText = content.replace(/^#+\s*/, '');
         return (
-          <h4 key={idx} className="font-black text-amber-300 mt-4 mb-2 text-sm sm:text-base border-b border-indigo-500/30 pb-1.5 flex items-center gap-2" dir="rtl">
-            <Sparkles className="w-4 h-4 text-amber-300 shrink-0" />
-            <span>{titleText}</span>
-          </h4>
+          <div key={idx} className="mt-3.5 mb-2 first:mt-0" dir="rtl">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-amber-500/20 via-indigo-500/15 to-transparent border-r-4 border-amber-400 rounded-xl text-amber-300 font-black text-xs sm:text-sm shadow-2xs">
+              <Sparkles className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
+              <span>{titleText}</span>
+            </div>
+          </div>
         );
       }
 
-      // Check if it is a list item
+      // Check for prominent header lines with emojis
+      if (/^(🔒|📊|🏬|📋|✨|💡|🩺|⚠️|✅|📦|👥|💵|🧠|🔮|🛡️|🚨|📌|🎯|🏆|🏷️|🔄)\s+/.test(content)) {
+        return (
+          <div key={idx} className="mt-3 mb-1.5 first:mt-0 font-black text-xs sm:text-sm text-amber-300 flex items-center gap-2 border-b border-indigo-500/20 pb-1" dir="rtl">
+            <span>{formatInlineStyles(content)}</span>
+          </div>
+        );
+      }
+
+      // Check if it is a numbered list item like "1.", "2."
+      const numberedMatch = content.match(/^(\d+)[\.\-\)]\s+(.*)/);
+      if (numberedMatch) {
+        const num = numberedMatch[1];
+        const rest = numberedMatch[2];
+        return (
+          <div key={idx} className="flex items-start gap-2.5 my-1.5 p-2.5 bg-slate-950/60 hover:bg-slate-950/80 border border-white/5 rounded-2xl transition-colors text-xs leading-relaxed" dir="rtl">
+            <span className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white font-black text-[10px] flex items-center justify-center shrink-0 shadow-2xs mt-0.5 border border-indigo-400/30">
+              {num}
+            </span>
+            <div className="flex-1 text-slate-100 font-medium">
+              {formatInlineStyles(rest)}
+            </div>
+          </div>
+        );
+      }
+
+      // Check if it is a bullet list item (- , * , •)
       const isListItem = content.startsWith('-') || content.startsWith('*') || content.startsWith('•');
       if (isListItem) {
         let cleanText = content.replace(/^[-*•]\s*/, '');
-        // format bold tags within list item
-        const parts = [];
-        let lastIndex = 0;
-        let match;
-        const realBoldRegex = /\*\*(.*?)\*\*/g;
-        while ((match = realBoldRegex.exec(cleanText)) !== null) {
-          if (match.index > lastIndex) {
-            parts.push(cleanText.substring(lastIndex, match.index));
-          }
-          parts.push(<strong key={match.index} className="font-extrabold text-teal-300 text-sm">{match[1]}</strong>);
-          lastIndex = realBoldRegex.lastIndex;
-        }
-        if (lastIndex < cleanText.length) {
-          parts.push(cleanText.substring(lastIndex));
-        }
-        const finalContent = parts.length > 0 ? parts : cleanText;
-
         return (
-          <li key={idx} className="list-none flex items-start gap-2 mr-1 my-2 leading-relaxed text-xs sm:text-sm text-slate-100" dir="rtl">
-            <span className="text-teal-400 select-none font-bold mt-0.5 shrink-0 text-xs">🔹</span>
-            <span className="flex-1">{finalContent}</span>
-          </li>
+          <div key={idx} className="flex items-start gap-2 my-1.5 pr-1.5 text-xs leading-relaxed text-slate-100" dir="rtl">
+            <span className="text-teal-400 select-none font-bold mt-1 shrink-0 text-[10px]">◆</span>
+            <div className="flex-1 font-medium">
+              {formatInlineStyles(cleanText)}
+            </div>
+          </div>
         );
       }
 
-      // Format bold text for regular paragraphs
-      const parts = [];
-      let lastIndex = 0;
-      let match;
-      const realBoldRegex = /\*\*(.*?)\*\*/g;
-      while ((match = realBoldRegex.exec(line)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push(line.substring(lastIndex, match.index));
-        }
-        parts.push(<strong key={match.index} className="font-extrabold text-teal-300 text-sm">{match[1]}</strong>);
-        lastIndex = realBoldRegex.lastIndex;
-      }
-      if (lastIndex < line.length) {
-        parts.push(line.substring(lastIndex));
-      }
-
-      const finalLine = parts.length > 0 ? parts : content;
-
+      // Regular paragraph
       return (
-        <p key={idx} className="my-2 leading-relaxed text-xs sm:text-sm text-slate-100 text-right animate-fade-in" dir="rtl">
-          {finalLine}
+        <p key={idx} className="my-1.5 leading-relaxed text-xs text-slate-100 text-right font-medium" dir="rtl">
+          {formatInlineStyles(content)}
         </p>
       );
     });
@@ -1851,7 +1506,14 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
 
   // --- Automatic AI Insights Generation ---
   const smartAIRecommendations = useMemo(() => {
-    const list: Array<{ id: number, type: 'success' | 'warning' | 'info', title: string, desc: string }> = [];
+    const list: Array<{ 
+      id: number; 
+      type: 'success' | 'warning' | 'info'; 
+      title: string; 
+      desc: string; 
+      actionLabel?: string;
+      anomalyKey?: 'withdrawals' | 'odd_hours_sales' | 'pricing';
+    }> = [];
 
     // 1. Profit Margin alert
     const margin = performanceKPIs.profitMarginPercent;
@@ -1993,8 +1655,108 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
        });
     }
 
+    // 8. Advanced Pricing and Low Profit Margin Stock Check
+    if (!resolvedAnomalies.includes('pricing')) {
+      const lowMarginProducts = products.filter(p => {
+        const margin = p.sale_price - p.cost_price;
+        return p.cost_price > 0 && (margin <= 0 || (margin / p.sale_price) < 0.1);
+      });
+      if (lowMarginProducts.length > 0) {
+        const negativeProfit = lowMarginProducts.filter(p => p.sale_price < p.cost_price);
+        const thinMargin = lowMarginProducts.filter(p => p.sale_price >= p.cost_price);
+        
+        let descText = '';
+        if (negativeProfit.length > 0) {
+          descText += `⚠️ رصد عدد ${negativeProfit.length} منتج مسعر بالخسارة (سعر البيع أقل من التكلفة): (${negativeProfit.slice(0, 3).map(p => p.name).join('، ')}). هذا يعني خسارة مؤكدة عند كل حركة بيع! `;
+        }
+        if (thinMargin.length > 0) {
+          descText += `📉 رصد عدد ${thinMargin.length} منتج بهامش ربح ضئيل جداً أقل من 10%: (${thinMargin.slice(0, 3).map(p => p.name).join('، ')}). هذه الفئة تؤثر سلباً على متوسط ربحية المتجر ولا تغطي الأعباء التشغيلية.`;
+        }
+        list.push({
+          id: 8,
+          type: 'warning',
+          title: '⚠️ كشف ثغرة تسعيرية في المخزون المضاف حديثاً',
+          desc: descText,
+          actionLabel: 'فحص وتعديل التسعير',
+          anomalyKey: 'pricing'
+        });
+      }
+    }
+
+    // 9. Suspicious Cash Withdrawals Detection
+    if (!resolvedAnomalies.includes('withdrawals')) {
+      const suspiciousWithdrawals = cashWithdrawals.filter(w => {
+        const isLarge = w.amount > 500;
+        const reasonLower = (w.reason || '').toLowerCase();
+        const isUnrecordedReason = !w.reason || w.reason.trim() === '' || reasonLower.includes('اخرى') || reasonLower.includes('سحب') || reasonLower.includes('بدون');
+        const isAlreadyApproved = (w.reason || '').includes('تمت المطابقة والاعتماد');
+        if (isAlreadyApproved) return false;
+        return isLarge || isUnrecordedReason;
+      });
+      if (suspiciousWithdrawals.length > 0) {
+        const largeWithdrawals = suspiciousWithdrawals.filter(w => w.amount > 500);
+        const vagueWithdrawals = suspiciousWithdrawals.filter(w => !w.amount || w.amount <= 500);
+        
+        let descText = `رصد النظام عدد ${suspiciousWithdrawals.length} حركة سحب نقدي تستحق المراجعة والتدقيق: `;
+        if (largeWithdrawals.length > 0) {
+          descText += `💸 سحبيات مبالغ كبيرة تزيد عن 500 ريال بقيمة إجمالية ${formatPrice(largeWithdrawals.reduce((s, w) => s + w.amount, 0))}. `;
+        }
+        if (vagueWithdrawals.length > 0) {
+          descText += `❓ سحبيات بدون سبب واضح ومفصل أو مسجلة تحت بنود مبهمة. `;
+        }
+        descText += `يوصى بمطابقتها مع سندات الصرف المعتمدة لضمان عدم تسرب الكاش.`;
+        
+        list.push({
+          id: 9,
+          type: 'warning',
+          title: '🚨 تتبع مالي: مسحوبات نقدية (سحبيات) غير اعتيادية',
+          desc: descText,
+          actionLabel: 'تدقيق واعتماد السحبيات',
+          anomalyKey: 'withdrawals'
+        });
+      }
+    }
+
+    // 10. Unexpected System Changes & Odd-Hour Operations
+    if (!resolvedAnomalies.includes('odd_hours_sales')) {
+      const anomalousSales = sales.filter(s => {
+        const isReviewed = (s.notes || '').includes('تمت مراجعة');
+        if (isReviewed) return false;
+        const d = new Date(s.created_at);
+        const hours = d.getHours();
+        const isOddHour = hours >= 0 && hours < 5; // Midnight to 5 AM
+        const isZeroAmount = s.total_amount <= 0;
+        return isOddHour || isZeroAmount;
+      });
+      if (anomalousSales.length > 0) {
+        const oddHourSales = anomalousSales.filter(s => {
+          const h = new Date(s.created_at).getHours();
+          return h >= 0 && h < 5;
+        });
+        const zeroAmountSales = anomalousSales.filter(s => s.total_amount <= 0);
+        
+        let descText = `تم رصد حركات غير متوقعة في نظام الفواتير: `;
+        if (oddHourSales.length > 0) {
+          descText += `🌙 عدد ${oddHourSales.length} عملية بيع تمت في ساعات متأخرة جداً بين منتصف الليل و5 صباحاً. `;
+        }
+        if (zeroAmountSales.length > 0) {
+          descText += `💸 عدد ${zeroAmountSales.length} فاتورة مسجلة بقيمة صفرية أو سالبة. `;
+        }
+        descText += `يرجى مراجعة كاميرات المراقبة أو مطابقتها مع نوبات عمل الموظفين للتأكد من عدم وجود تلاعب.`;
+        
+        list.push({
+          id: 10,
+          type: 'warning',
+          title: '⚠️ رصد حركات تشغيلية غير متوقعة في النظام',
+          desc: descText,
+          actionLabel: 'مراجعة وتأكيد الفواتير',
+          anomalyKey: 'odd_hours_sales'
+        });
+      }
+    }
+
     return list;
-  }, [performanceKPIs, products, formatPrice, topProductsChart]);
+  }, [performanceKPIs, products, formatPrice, topProductsChart, cashWithdrawals, sales, salesSettlements, resolvedAnomalies]);
 
   // --- Dynamic Professional PDF Report Generation ---
   const handleExportPDF = () => {
@@ -2230,6 +1992,15 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
           </div>
 
           <button
+            onClick={() => setIsSmartAdvisorModalOpen(true)}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black rounded-2xl shadow-lg transition-all duration-200 cursor-pointer border-t border-white/20 active:scale-95"
+            title="الوصول وعرض المساعد الذكي والتحليلات الموجهة"
+          >
+            <Brain className="w-4 h-4 animate-pulse" />
+            <span>المساعد الذكي</span>
+          </button>
+
+          <button
             onClick={handleExportPDF}
             className="flex items-center justify-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-2xl shadow-lg transition-all duration-200 cursor-pointer border-t border-white/20 active:scale-95"
           >
@@ -2283,7 +2054,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
             >
               <option value="all">أجهزة الدفع، الديون، وكل العملاء</option>
               <option value="cash">المقبوض النقدي كاش وشبكة (فوري)</option>
-              <option value="debtors">مبيعات الديون والحساب الآجل</option>
+              <option value="debtors">الذمم المدينة (ديون العملاء)</option>
               {customers.map(c => (
                 <option key={c.id} value={String(c.id)}>{c.name} {c.balance > 0 ? `(آجل: ${formatPrice(c.balance)})` : ''}</option>
               ))}
@@ -2662,7 +2433,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                         onChange={(e) => setLiquidityDonutType(e.target.value as any)}
                         className="bg-white border border-slate-200 py-1 px-1.5 rounded-lg text-[9px] font-black focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
                       >
-                        <option value="revenue_mix">توزيع المبيعات (كاش/آجل)</option>
+                        <option value="revenue_mix">توزيع المبيعات (كاش/ذمم)</option>
                         <option value="liquidity_allocation">توزيع السيولة بالمنظومة</option>
                       </select>
                     </div>
@@ -2680,7 +2451,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                             <Pie
                               data={[
                                 { name: 'بيوع نقدية (كاش)', value: performanceKPIs.cashSalesTotal },
-                                { name: 'مبيعات ديون (آجل)', value: performanceKPIs.debtSalesTotal }
+                                { name: 'ذمم مدينة (آجل)', value: performanceKPIs.debtSalesTotal }
                               ]}
                               cx="50%"
                               cy="50%"
@@ -2749,7 +2520,7 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                         <div className="flex justify-between items-center bg-white p-2 border border-slate-100 rounded-xl leading-none">
                           <span className="flex items-center gap-1.5 font-bold text-slate-600">
                             <span className="w-2.5 h-2.5 rounded-full bg-amber-500 block"></span>
-                            مبيعات بالآجل (الديون):
+                            ذمم مدينة (آجل):
                           </span>
                           <span className="font-extrabold text-amber-800 font-mono">
                             {formatPrice(performanceKPIs.debtSalesTotal)} ({((performanceKPIs.debtSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)
@@ -2808,36 +2579,24 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
           </div>
 
           {/* Core Tab Switches */}
-          <div className="flex bg-slate-100 p-1 rounded-2xl text-xs font-black w-full sm:w-auto">
+          <div className="flex gap-2 text-xs font-black w-full sm:w-auto">
             <button
-              onClick={() => setActiveExplorerTab('daily')}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer ${
-                activeExplorerTab === 'daily' 
-                  ? 'bg-white text-indigo-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              onClick={() => setShowDailyLogModal(true)}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700"
             >
               <Calendar className="w-3.5 h-3.5" />
               <span>📆 السجل اليومي</span>
             </button>
             <button
-              onClick={() => setActiveExplorerTab('customers')}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer ${
-                activeExplorerTab === 'customers' 
-                  ? 'bg-white text-indigo-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              onClick={() => setShowCustomerReceivablesModal(true)}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700"
             >
               <Users className="w-3.5 h-3.5" />
               <span>👤 ذمم العملاء</span>
             </button>
             <button
               onClick={() => setActiveExplorerTab('products')}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer ${
-                activeExplorerTab === 'products' 
-                  ? 'bg-white text-indigo-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-white text-indigo-600 shadow-sm"
             >
               <Layers className="w-3.5 h-3.5" />
               <span>🏆 الرفوف والسلع</span>
@@ -2845,292 +2604,98 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
           </div>
         </div>
 
-        {/* Tab Content Panels */}
+{/* Tab Content Panels */}
         <div className="p-5">
           <AnimatePresence mode="wait">
-            {activeExplorerTab === 'daily' && (
-              <motion.div
-                key="daily_panel"
-                initial={{ opacity: 0, x: 15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                transition={{ duration: 0.15 }}
-                className="space-y-4"
-              >
-                {/* Search / Filters on table */}
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <div className="relative w-full sm:max-w-xs">
-                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
-                      <Search className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="ابحث بالتاريخ كـ (05 / 06 / 2026)..."
-                      value={dailySearchKey}
-                      onChange={(e) => setDailySearchKey(e.target.value)}
-                      className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200/80 rounded-2xl pr-10 pl-4 py-2.5 text-xs font-bold text-slate-700 leading-none focus:outline-hidden focus:ring-2 focus:ring-indigo-500/35 shadow-153 px-3 py-1 scale-95 transition-all"
-                    />
-                  </div>
-                  {searchedDailySales.length > 0 && (
-                    <span className="text-[10px] font-black bg-indigo-50 border border-indigo-150 text-indigo-700 px-3 py-1 rounded-full shrink-0">
-                      إجمالي الأيام تحت التصفية: {searchedDailySales.length} يوماً مسجلاً
-                    </span>
+            <motion.div
+              key="products_panel"
+              initial={{ opacity: 0, x: 15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.15 }}
+              className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+            >
+              {/* Horizontal Top Rated products bar list */}
+              <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
+                <div>
+                  <h3 className="text-xs font-black text-slate-700">ترتيب مساهمة السلع الفردية</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">المنتجات الخمسة الأولى المحققة لأعلى عائد مالي وأرباح</p>
+                </div>
+
+                <div className="h-64 w-full bg-white rounded-2xl p-2 border border-slate-100">
+                  {topProductsChart.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                      لم يتم تسجيل أي بضائع مباعة بالتصفية المحددة.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                      <BarChart data={topProductsChart} layout="vertical" margin={{ top: 10, right: 30, left: -20, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                        <XAxis type="number" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
+                        <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={9} fontWeight="extrabold" width={110} tickLine={false} />
+                        <Tooltip 
+                          contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', fontSize: '11px' }}
+                          formatter={(value: any, name: any) => [formatPrice(value), name === 'revenue' ? 'المبيعات' : 'الأرباح']}
+                        />
+                        <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
+                        <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
+                        <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   )}
                 </div>
+              </div>
 
-                {searchedDailySales.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                    لا توجد أي حركات يومية مسجلة للتواريخ الحالية أو مدخلات البحث.
-                  </div>
-                ) : (
-                  <div className="border border-slate-150/55 rounded-2xl overflow-hidden shadow-2xs bg-white">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-right border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-50/80 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
-                            <th className="p-4">تاريخ الحركة</th>
-                            <th className="p-4 text-center">الفواتير المصدرة</th>
-                            <th className="p-4">كاش وشبكة (فوري)</th>
-                            <th className="p-4">آجل (ديون وذمم)</th>
-                            <th className="p-4">المبيعات الإجمالية</th>
-                            <th className="p-4 text-amber-700">التكلفة (للمورد)</th>
-                            <th className="p-4 text-emerald-800">الأرباح الصافية</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {searchedDailySales.map((day, idx) => (
-                            <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                              <td className="p-4 font-black text-slate-800 font-mono text-[13px] whitespace-nowrap">
-                                {day.dateStr}
-                              </td>
-                              <td className="p-4 text-center font-bold text-slate-600">
-                                {day.count} مبيعات
-                              </td>
-                              <td className="p-4 font-bold text-slate-650 font-mono">
-                                {formatPrice(day.cashAmount)}
-                              </td>
-                              <td className="p-4 font-bold text-amber-600 font-mono">
-                                {formatPrice(day.debtAmount)}
-                              </td>
-                              <td className="p-4 font-black text-indigo-600 font-mono text-[13px] whitespace-nowrap">
-                                {formatPrice(day.totalAmount)}
-                              </td>
-                              <td className="p-4 font-black text-amber-700 font-mono whitespace-nowrap">
-                                <span className="bg-amber-50 px-2 py-1 rounded-lg">
-                                  {formatPrice(day.cost)}
-                                </span>
-                              </td>
-                              <td className="p-4 font-extrabold text-emerald-700 font-mono whitespace-nowrap">
-                                <span className="bg-emerald-50 px-2 py-1 rounded-lg">
-                                  {formatPrice(day.profit)}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </motion.div>
-            )}
-
-            {activeExplorerTab === 'customers' && (
-              <motion.div
-                key="customers_panel"
-                initial={{ opacity: 0, x: 15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                transition={{ duration: 0.15 }}
-                className="space-y-4"
-              >
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <div className="relative w-full sm:max-w-xs">
-                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400">
-                      <Search className="w-4 h-4" />
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="ابحث باسم وسجل العميل..."
-                      value={customerSearchKey}
-                      onChange={(e) => setCustomerSearchKey(e.target.value)}
-                      className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200/80 rounded-2xl pr-10 pl-4 py-2.5 text-xs font-bold text-slate-700 leading-none focus:outline-hidden focus:ring-2 focus:ring-indigo-500/35 shadow-2xs transition-all"
-                    />
-                  </div>
-                  {searchedCustomerSales.length > 0 && (
-                    <span className="text-[10px] font-black bg-emerald-50 border border-emerald-150 text-emerald-700 px-3 py-1 rounded-full shrink-0">
-                      أشخاص مسجلين بالحسابات: {searchedCustomerSales.length} شخص
-                    </span>
-                  )}
+              {/* Ranked category shelving share list */}
+              <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
+                <div>
+                  <h3 className="text-xs font-black text-slate-700">نسبة مساهمة السلع حسب تصنيفات الرفوف</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5">قوة ومبيعات فئات المخزن وتأثيرها على العوائد المالية الكلية</p>
                 </div>
 
-                {searchedCustomerSales.length === 0 ? (
-                  <div className="text-center py-10 text-xs text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                    لا تتوفر مبيعات أو أشخاص مسجلين مطابقة للبحث الحالي.
-                  </div>
-                ) : (
-                  <div className="border border-slate-150/55 rounded-2xl overflow-hidden shadow-2xs bg-white">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-right border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-50/80 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
-                            <th className="p-4">اسم الشخص / العميل بالدفتر</th>
-                            <th className="p-4 text-center">الفواتير المنفذة</th>
-                            <th className="p-4">نقد مسدد (كاش)</th>
-                            <th className="p-4">ذمم آجلة (دين)</th>
-                            <th className="p-4">مجموع مشترياته الكلية</th>
-                            <th className="p-4 text-rose-700">الرصيد الحالي المتبقي بالذمة</th>
-                            <th className="p-4 text-center">حالة الحساب المالي</th>
-                            <th className="p-4">مساهمة المشتريات (%)</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {searchedCustomerSales.map((cust, idx) => {
-                            const pct = performanceKPIs.salesTotal > 0 
-                              ? (cust.totalAmount / performanceKPIs.salesTotal) * 100 
-                              : 0;
-
-                            return (
-                              <tr key={cust.id || idx} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-4 font-black text-slate-800 whitespace-nowrap">
-                                  {cust.name}
-                                </td>
-                                <td className="p-4 text-center font-bold text-slate-600 font-mono">
-                                  {cust.count} فواتير
-                                </td>
-                                <td className="p-4 font-bold text-slate-600 font-mono whitespace-nowrap">
-                                  {formatPrice(cust.cashAmount)}
-                                </td>
-                                <td className="p-4 font-bold text-amber-700 font-mono whitespace-nowrap">
-                                  {formatPrice(cust.debtAmount)}
-                                </td>
-                                <td className="p-4 font-black text-indigo-600 font-mono text-[13px] whitespace-nowrap">
-                                  {formatPrice(cust.totalAmount)}
-                                </td>
-                                <td className={`p-4 font-black font-mono text-[13.5px] whitespace-nowrap ${cust.balance > 0 ? 'text-rose-700 bg-rose-50/40 font-extrabold' : 'text-slate-600'}`}>
-                                  {formatPrice(cust.balance)}
-                                </td>
-                                <td className="p-4 text-center whitespace-nowrap">
-                                  {cust.balance > 0 ? (
-                                    <span className="bg-rose-50 border border-rose-100 text-rose-700 leading-none text-[10px] font-black px-2.5 py-1 rounded-full">
-                                      ⚠️ بالذمة: عجز مالي بقيمة المعلقة
-                                    </span>
-                                  ) : (
-                                    <span className="bg-emerald-50 border border-emerald-100 text-emerald-700 leading-none text-[10px] font-black px-2.5 py-1 rounded-full">
-                                      ✅ خالٍ من العجز والذمم ومسدد
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="p-4 whitespace-nowrap">
-                                  <div className="flex items-center gap-2 min-w-[90px]">
-                                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                      <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, pct)}%` }}></div>
-                                    </div>
-                                    <span className="text-[10px] font-black text-slate-500 font-mono">{pct.toFixed(0)}%</span>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                <div className="space-y-2 max-h-[256px] overflow-y-auto custom-scrollbar pr-1">
+                  {categorySalesChart.length === 0 ? (
+                    <div className="text-center py-10 text-xs text-slate-400">
+                      لا توجد فئات رفوف مباعة ملموسة تحت تاريخ التصفية.
                     </div>
-                  </div>
-                )}
-              </motion.div>
-            )}
-
-            {activeExplorerTab === 'products' && (
-              <motion.div
-                key="products_panel"
-                initial={{ opacity: 0, x: 15 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -15 }}
-                transition={{ duration: 0.15 }}
-                className="grid grid-cols-1 lg:grid-cols-2 gap-6"
-              >
-                {/* Horizontal Top Rated products bar list */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
-                  <div>
-                    <h3 className="text-xs font-black text-slate-700">ترتيب مساهمة السلع الفردية</h3>
-                    <p className="text-[10px] text-slate-400 mt-0.5">المنتجات الخمسة الأولى المحققة لأعلى عائد مالي وأرباح</p>
-                  </div>
-
-                  <div className="h-64 w-full bg-white rounded-2xl p-2 border border-slate-100">
-                    {topProductsChart.length === 0 ? (
-                      <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                        لم يتم تسجيل أي بضائع مباعة بالتصفية المحددة.
-                      </div>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                        <BarChart data={topProductsChart} layout="vertical" margin={{ top: 10, right: 30, left: -20, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                          <XAxis type="number" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
-                          <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={9} fontWeight="extrabold" width={110} tickLine={false} />
-                          <Tooltip 
-                            contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', fontSize: '11px' }}
-                            formatter={(value: any, name: any) => [formatPrice(value), name === 'revenue' ? 'المبيعات' : 'الأرباح']}
-                          />
-                          <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                          <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
-                          <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    )}
-                  </div>
-                </div>
-
-                {/* Ranked category shelving share list */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
-                  <div>
-                    <h3 className="text-xs font-black text-slate-700">نسبة مساهمة السلع حسب تصنيفات الرفوف</h3>
-                    <p className="text-[10px] text-slate-400 mt-0.5">قوة ومبيعات فئات المخزن وتأثيرها على العوائد المالية الكلية</p>
-                  </div>
-
-                  <div className="space-y-2 max-h-[256px] overflow-y-auto custom-scrollbar pr-1">
-                    {categorySalesChart.length === 0 ? (
-                      <div className="text-center py-10 text-xs text-slate-400">
-                        لا توجد فئات رفوف مباعة ملموسة تحت تاريخ التصفية.
-                      </div>
-                    ) : (
-                      categorySalesChart.map((cat, idx) => {
-                        const totalSalesForPercentage = performanceKPIs.salesTotal || 1;
-                        const percentage = ((cat.sales / totalSalesForPercentage) * 100);
-                        
-                        return (
-                          <div key={idx} className="p-3 bg-white rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-right">
-                            <div className="space-y-1 w-full">
-                              <div className="flex justify-between items-center">
-                                <span className="font-extrabold text-xs text-slate-800">{cat.name}</span>
-                                <span className="font-extrabold text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
-                                  الصافي: {formatPrice(cat.profit)}
-                                </span>
-                              </div>
-                              
-                              <div className="flex items-center gap-2">
-                                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                  <div 
-                                    className="h-full bg-indigo-500 rounded-full" 
-                                    style={{ width: `${Math.min(100, percentage)}%` }}
-                                  ></div>
-                                </div>
-                                <span className="text-[9px] font-mono font-black text-slate-500 shrink-0">
-                                  {percentage.toFixed(0)}%
-                                </span>
-                              </div>
-                              
-                              <p className="text-[10px] text-slate-400 font-bold">
-                                مجموع مبيعات الرف: <span className="font-mono text-slate-600 font-black">{formatPrice(cat.sales)}</span>
-                              </p>
+                  ) : (
+                    categorySalesChart.map((cat, idx) => {
+                      const totalSalesForPercentage = performanceKPIs.salesTotal || 1;
+                      const percentage = ((cat.sales / totalSalesForPercentage) * 100);
+                      
+                      return (
+                        <div key={idx} className="p-3 bg-white rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-right">
+                          <div className="space-y-1 w-full">
+                            <div className="flex justify-between items-center">
+                              <span className="font-extrabold text-xs text-slate-800">{cat.name}</span>
+                              <span className="font-extrabold text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
+                                الصافي: {formatPrice(cat.profit)}
+                              </span>
                             </div>
+                            
+                            <div className="flex items-center gap-2">
+                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-indigo-500 rounded-full" 
+                                  style={{ width: `${Math.min(100, percentage)}%` }}
+                                ></div>
+                              </div>
+                              <span className="text-[9px] font-mono font-black text-slate-500 shrink-0">
+                                {percentage.toFixed(0)}%
+                              </span>
+                            </div>
+                            
+                            <p className="text-[10px] text-slate-400 font-bold">
+                              مجموع مبيعات الرف: <span className="font-mono text-slate-600 font-black">{formatPrice(cat.sales)}</span>
+                            </p>
                           </div>
-                        );
-                      })
-                    )}
-                  </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
-              </motion.div>
-            )}
+              </div>
+            </motion.div>
           </AnimatePresence>
         </div>
       </div>
@@ -3146,33 +2711,403 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
         formatPrice={formatPrice}
       />
 
-      {/* Accordion List 6: AI Intelligent Insights & Guidance */}
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
-        <button 
-          onClick={() => setIsInsightsOpen(!isInsightsOpen)}
-          className="w-full flex items-center justify-between p-4 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer text-right"
-        >
-          <div className="flex items-center gap-2 font-black text-sm text-slate-800">
-            <Sparkles className="w-4.5 h-4.5 text-indigo-500" />
-            <span>🤖 الذكاء التحليلي والتوصيات الحسابية الموجهة (Robotic Advisor System)</span>
-          </div>
-          {isInsightsOpen ? <ChevronUp className="w-4.5 h-4.5 text-slate-500" /> : <ChevronDown className="w-4.5 h-4.5 text-slate-500" />}
-        </button>
-
-        <AnimatePresence initial={false}>
-          {isInsightsOpen && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden border-t border-slate-100"
+      {/* Modal: Smart Advisor & Robotic Advisor System Modal */}
+      <AnimatePresence>
+        {isSmartAdvisorModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-950/80 backdrop-blur-md transition-all duration-300" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white/98 backdrop-blur-2xl text-slate-900 rounded-3xl shadow-2xl w-full max-w-7xl 2xl:max-w-[1550px] overflow-hidden flex flex-col max-h-[95vh] h-[92vh] border border-slate-200/90 ring-1 ring-black/10"
             >
-              <div className="p-5">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Left Column: Robotic Advisor Report */}
-                  <div className="lg:col-span-4 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 border border-slate-800 rounded-3xl p-5 shadow-md text-white overflow-hidden relative flex flex-col justify-between h-[540px]">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 p-4 sm:p-5 text-white flex items-center justify-between shrink-0 border-b border-indigo-900/50 shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-indigo-600/30 border border-indigo-400/30 text-amber-300 rounded-2xl shrink-0 shadow-xs">
+                    <Sparkles className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-white">🤖 الذكاء التحليلي والتوصيات الحسابية الموجهة (Robotic Advisor System)</h3>
+                    <p className="text-[11px] text-indigo-200/80 font-medium mt-0.5">
+                      مستشار ذكي محلي آمن 100% يحلل الأداء المالي، التوقعات المستقبلية، ويجيب على كافة استفساراتك المحاسبية فوراً
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsSmartAdvisorModalOpen(false)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-rose-600/80 border border-white/15 hover:border-rose-500/40 text-slate-200 hover:text-white transition-all text-xs font-bold cursor-pointer shadow-xs active:scale-95 shrink-0"
+                  title="إغلاق النافذة"
+                >
+                  <X className="w-4 h-4" />
+                  <span className="hidden sm:inline">إغلاق</span>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-3 sm:p-5 md:p-6 overflow-y-auto custom-scrollbar flex-1 bg-slate-50/80">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 md:gap-6 h-full">
+                  {/* Primary Column 1: AI Smart Assistant Interactive Chatbot Container (الوكيل المحاسبي الذكي) */}
+                  <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-3xl shadow-lg flex flex-col justify-between overflow-hidden min-h-[580px] h-full ring-1 ring-slate-100">
+                    {/* Header Banner */}
+                    <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 p-3.5 text-white shrink-0 relative overflow-hidden" dir="rtl">
+                      <div className="absolute -left-10 -top-10 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl pointer-events-none"></div>
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 relative z-10">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-2 bg-indigo-600/30 border border-indigo-400/30 text-amber-300 rounded-xl shrink-0">
+                            <Brain className="w-5 h-5 animate-pulse" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-xs sm:text-sm font-black text-white">الوكيل المحاسبي الذكي</h3>
+                              <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
+                                <Shield className="w-2.5 h-2.5 text-emerald-400" /> محلي وآمن 100%
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-indigo-200/80 font-medium mt-0.5">
+                              مستشارك المالي المستقل، يعمل بالكامل داخل جهازك لضمان سرية بياناتك
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Header Compact Action Buttons */}
+                        <div className="flex items-center gap-1.5 flex-wrap self-end sm:self-auto">
+                          <button
+                            type="button"
+                            onClick={() => setIsStagesModalOpen(true)}
+                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-indigo-200 hover:text-white bg-indigo-500/25 hover:bg-indigo-500/40 border border-indigo-400/30 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                            title="استعراض مراحل التحليل والتفكير الذكي"
+                          >
+                            <Brain className="w-3 h-3 text-indigo-300" />
+                            <span>مراحل التحليل</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setIsQuestionBankModalOpen(true)}
+                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-amber-200 hover:text-white bg-amber-500/25 hover:bg-amber-500/40 border border-amber-400/30 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
+                            title="استعراض بنك الأسئلة الشامل"
+                          >
+                            <Sparkles className="w-3 h-3 text-amber-300" />
+                            <span>بنك الأسئلة</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleResetChat}
+                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-slate-300 hover:text-white bg-white/10 hover:bg-rose-500/80 border border-white/10 rounded-lg transition-all cursor-pointer shrink-0"
+                            title="إعادة البدء ومسح المحادثة"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>بدء جديد (مسح)</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Chat Messages Log */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 space-y-4 bg-gradient-to-b from-slate-900/60 via-slate-950/70 to-slate-950 text-slate-100" dir="rtl">
+                      {chatMessages.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center my-auto text-center py-6 px-2 sm:px-6 w-full max-w-2xl mx-auto">
+                          {/* Animated Icon Avatar */}
+                          <div className="relative mb-3.5">
+                            <div className="w-16 h-16 bg-gradient-to-tr from-indigo-600 via-indigo-500 to-amber-400 rounded-3xl p-0.5 shadow-xl shadow-indigo-500/25 flex items-center justify-center">
+                              <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
+                                <Brain className="w-8 h-8 text-amber-300 animate-pulse" />
+                              </div>
+                            </div>
+                            <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-slate-900"></span>
+                            </span>
+                          </div>
+                          
+                          {/* Title & Badge Header */}
+                          <div className="flex flex-wrap items-center justify-center gap-2 mb-2 text-center">
+                            <h4 className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight">
+                              مرحباً بك في الوكيل المحاسبي الذكي
+                            </h4>
+                            <span className="text-[11px] bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-400/30 font-bold flex items-center gap-1">
+                              <Shield className="w-3 h-3 text-emerald-400" />
+                              مؤمن ومحلي 100%
+                            </span>
+                          </div>
+
+                          {/* Subtitle Description */}
+                          <p className="text-xs sm:text-sm text-slate-300 max-w-lg leading-relaxed mb-6 font-medium text-center">
+                            مستشارك المالي والتقني الفوري لتحليل الأرباح، ديون العملاء، نواقص المخزون، مستحقات الموردين، ودليل كامل لجميع شاشات وأقسام النظام.
+                          </p>
+                          
+                          {/* Starter Quick Chips Container */}
+                          <div className="w-full bg-slate-900/70 border border-slate-800/90 rounded-3xl p-3.5 sm:p-4.5 shadow-xl backdrop-blur-sm">
+                            <div className="flex items-center justify-between gap-2 mb-3 px-1 border-b border-slate-800/80 pb-2.5">
+                              <span className="text-xs font-black text-indigo-300 flex items-center gap-1.5">
+                                <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                                <span>استفسارات محاسبية وتقنية مقترحة:</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setIsQuestionBankModalOpen(true)}
+                                className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 font-bold bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/20 px-2.5 py-1 rounded-xl transition-colors cursor-pointer"
+                              >
+                                <span>عرض بنك الأسئلة الشامل</span>
+                                <span className="font-mono bg-amber-400/20 px-1.5 py-0.2 rounded-full text-[10px]">({COMPREHENSIVE_QUICK_QUESTIONS.length})</span>
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-right">
+                              {/* 1. Daily Profits */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendMessage('ماهو صافي أرباح اليوم؟')}
+                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-emerald-950/40 border border-slate-800 hover:border-emerald-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
+                                    💰
+                                  </div>
+                                  <div className="flex flex-col min-w-0 text-right">
+                                    <span className="text-xs font-black text-white group-hover:text-emerald-300 truncate transition-colors">
+                                      صافي أرباح اليوم
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 group-hover:text-emerald-400/90 font-medium truncate mt-0.5">
+                                      حساب دقيق لليوم الحالي
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-xs text-slate-600 group-hover:text-emerald-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
+                                  ←
+                                </span>
+                              </button>
+
+                              {/* 2. Smart Import */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendMessage('معلومات عن قسم الاستيراد الذكي')}
+                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-sky-950/40 border border-slate-800 hover:border-sky-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
+                                    📥
+                                  </div>
+                                  <div className="flex flex-col min-w-0 text-right">
+                                    <span className="text-xs font-black text-white group-hover:text-sky-300 truncate transition-colors">
+                                      قسم الاستيراد الذكي
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 group-hover:text-sky-400/90 font-medium truncate mt-0.5">
+                                      استيراد الفواتير وإكسل والكاميرا
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-xs text-slate-600 group-hover:text-sky-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
+                                  ←
+                                </span>
+                              </button>
+
+                              {/* 3. Major Debtors */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendMessage('من هم أكثر العملاء ديناً (كبار المدينين)؟')}
+                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
+                                    🚨
+                                  </div>
+                                  <div className="flex flex-col min-w-0 text-right">
+                                    <span className="text-xs font-black text-white group-hover:text-rose-300 truncate transition-colors">
+                                      كبار المدينين بالدفتر
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 group-hover:text-rose-400/90 font-medium truncate mt-0.5">
+                                      أعلى الذمم المعلقة
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-xs text-slate-600 group-hover:text-rose-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
+                                  ←
+                                </span>
+                              </button>
+
+                              {/* 4. Critical Stock Shortages */}
+                              <button
+                                type="button"
+                                onClick={() => handleSendMessage('ما هي البضاعة الناقصة التي قاربت على النفاد؟')}
+                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-amber-950/40 border border-slate-800 hover:border-amber-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
+                                    📦
+                                  </div>
+                                  <div className="flex flex-col min-w-0 text-right">
+                                    <span className="text-xs font-black text-white group-hover:text-amber-300 truncate transition-colors">
+                                      نواقص المخزون الحرجة
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 group-hover:text-amber-400/90 font-medium truncate mt-0.5">
+                                      الأصناف تحت حد الطلب
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="text-xs text-slate-600 group-hover:text-amber-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
+                                  ←
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        chatMessages.map((msg, idx) => {
+                          const prevMsg = idx > 0 ? chatMessages[idx - 1] : null;
+                          const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
+                          return (
+                            <div
+                              key={msg.id}
+                              className={`flex flex-col max-w-[92%] sm:max-w-[88%] rounded-3xl p-3.5 sm:p-5 text-xs sm:text-sm shadow-xl transition-all ${
+                                msg.role === 'user'
+                                  ? 'bg-gradient-to-r from-indigo-600 via-indigo-600 to-indigo-700 text-white self-start rounded-tr-none border border-indigo-400/20 shadow-indigo-600/10'
+                                  : msg.id.startsWith('error')
+                                    ? 'bg-rose-950/95 border border-rose-800 text-rose-100 self-end rounded-tl-none shadow-rose-950/40'
+                                    : 'bg-slate-900/95 border border-indigo-500/20 text-slate-100 self-end rounded-tl-none shadow-slate-950/50 ring-1 ring-white/10'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between text-[10px] opacity-80 mb-2 font-black border-b border-inherit pb-1.5">
+                                <span className="flex items-center gap-2 text-xs">
+                                  {msg.role === 'user' ? (
+                                    <span className="flex items-center gap-1.5 text-indigo-100 font-black">
+                                      👤 سؤالك
+                                    </span>
+                                  ) : (
+                                    <span className="flex items-center gap-1.5 text-amber-300 font-black">
+                                      <Brain className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                                      المستشار الذكي
+                                    </span>
+                                  )}
+                                </span>
+                                <div className="flex items-center gap-2.5">
+                                  <span className="font-mono text-[9.5px] opacity-70">
+                                    {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteMessage(msg.id)}
+                                    className="p-1 hover:bg-white/20 rounded-lg text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
+                                    title="حذف هذه الرسالة"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="whitespace-pre-wrap leading-relaxed">
+                                {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
+                              </div>
+                              {msg.role === 'assistant' && (
+                                <div className="flex justify-between items-center gap-2 mt-3 pt-2 border-t border-slate-800 text-right flex-wrap">
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() => handleCopyText(msg.id, msg.text)}
+                                      className="px-2.5 py-1 hover:bg-slate-800 rounded-lg text-[10.5px] flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-all bg-white/5 border border-white/5"
+                                      title="نسخ التقرير بالكامل"
+                                    >
+                                      {copiedMessageId === msg.id ? (
+                                        <>
+                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                          <span className="text-emerald-400 font-black">تم النسخ</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Copy className="w-3.5 h-3.5 text-slate-400" />
+                                          <span className="font-bold">نسخ الإجابة</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                  {msg.id !== 'welcome' && (
+                                    ratedMessages[msg.id] ? (
+                                      <span className="text-[10px] text-emerald-400 font-black px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
+                                        {ratedMessages[msg.id] === 'up' ? 'تم التقييم بمفيد 👍' : 'تم تدوين الملاحظة 👎'}
+                                      </span>
+                                    ) : (
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9.5px] text-slate-400 ml-1">هل الإجابة دقيقة؟</span>
+                                        <button
+                                          onClick={() => {
+                                            handleFeedback(msg.id, true, queryText, msg.text);
+                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
+                                          }}
+                                          className="p-1.5 hover:bg-emerald-500/20 text-slate-400 hover:text-emerald-400 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-emerald-500/30"
+                                          title="مفيد ودقيق"
+                                        >
+                                          <ThumbsUp className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            handleFeedback(msg.id, false, queryText, msg.text);
+                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
+                                          }}
+                                          className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-500/30"
+                                          title="غير دقيق"
+                                        >
+                                          <ThumbsDown className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                      {isTyping && (
+                        <div className="bg-slate-900 border border-indigo-500/30 text-slate-200 max-w-[45%] rounded-3xl p-3 text-xs self-end rounded-tl-none flex items-center gap-2.5 shadow-md">
+                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-ping"></span>
+                          <span className="text-[11px] font-black text-indigo-300">جاري التدقيق والتحليل المحاسبي...</span>
+                        </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+
+                    {/* Permanent Chat Input Form */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSendMessage();
+                      }}
+                      className="p-2.5 sm:p-3 bg-white border-t border-slate-200 flex items-center gap-1.5 sm:gap-2 shrink-0"
+                      dir="rtl"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setIsQuestionBankModalOpen(true)}
+                        className="px-2 sm:px-2.5 py-2 sm:py-2.5 rounded-xl border flex items-center gap-1 text-xs font-bold transition-all cursor-pointer shrink-0 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-900 border-indigo-200/80 shadow-2xs"
+                        title="استعراض بنك الأسئلة الشامل"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                        <span className="hidden sm:inline text-[11px]">بنك الأسئلة</span>
+                      </button>
+
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="اكتب استفسارك هنا (مثال: كم المبيعات؟ من هم المدينون؟)..."
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-right shadow-inner"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!chatInput.trim() || isTyping}
+                        className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-center transition-colors shadow-md cursor-pointer shrink-0 font-bold text-xs sm:text-sm gap-1 sm:gap-1.5"
+                      >
+                        <span>إرسال</span>
+                        <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4 transform rotate-180" />
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Secondary Column 2: Robotic Advisor Report (توصيات المساعد الموجهة) */}
+                  <div className="lg:col-span-4 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg text-white overflow-hidden relative flex flex-col justify-between min-h-[580px] h-full">
                     <div className="flex flex-col h-full">
-                      {/* Bubble light design decor */}
                       <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
                       <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
@@ -3196,628 +3131,403 @@ ${totalDebts > totalSalesSum * 0.35 ? '⚠️ **تحذير محاسبي:** إج�
                                   : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-100'
                             }`}
                           >
-                            <div className="flex items-center gap-2 mb-1">
-                              {insight.type === 'success' && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                              {insight.type === 'warning' && <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                              {insight.type === 'info' && <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
-                              <span className="font-extrabold text-xs">{insight.title}</span>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {insight.type === 'success' && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
+                                {insight.type === 'warning' && <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                                {insight.type === 'info' && <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                                <span className="font-extrabold text-xs truncate">{insight.title}</span>
+                              </div>
                             </div>
                             <p className="text-[11px] leading-relaxed opacity-90 pr-5">
                               {insight.desc}
                             </p>
+                            {insight.anomalyKey && (
+                              <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setAnomalyModalType(insight.anomalyKey || null)}
+                                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-white/20 hover:scale-[1.02] active:scale-[0.98]"
+                                >
+                                  <span>{insight.actionLabel || 'فحص وتدقيق المشكلة'}</span>
+                                  <ArrowLeft className="w-3 h-3 rotate-180" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleResolveAnomaly(insight.anomalyKey!)}
+                                  className="text-[9px] text-amber-200/80 hover:text-amber-100 hover:underline font-bold cursor-pointer"
+                                >
+                                  تم التحقق (إخفاء)
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
                     </div>
                   </div>
-
-                  {/* Right Column: AI Smart Assistant Interactive Chatbot Container */}
-                  <div className="lg:col-span-8 bg-white border border-slate-200/80 rounded-3xl shadow-lg flex flex-col justify-between overflow-hidden h-[540px]">
-                    {/* Header Banner */}
-                    <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-3.5 text-white shrink-0 relative overflow-hidden" dir="rtl">
-                      <div className="absolute -left-10 -top-10 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl pointer-events-none"></div>
-                      <div className="flex justify-between items-center relative z-10">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 bg-indigo-600/30 border border-indigo-400/30 text-amber-300 rounded-xl shrink-0">
-                            <Brain className="w-5 h-5 animate-pulse" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-xs sm:text-sm font-black text-white">المستشار الحسابي والمالي الذكي</h3>
-                              {(() => {
-                                const aiEngineMode = typeof localStorage !== 'undefined'
-                                  ? (localStorage.getItem('grocery_ai_embedding_mode') || 'local')
-                                  : 'local';
-                                const hasCustomKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key'));
-                                const isCloudActive = aiEngineMode !== 'local' && isOnline && (hasCustomKey || aiEngineMode === 'server');
-
-                                if (isCloudActive) {
-                                  return (
-                                    <span className="bg-sky-500/20 text-sky-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-sky-400/30">
-                                      <Globe className="w-2.5 h-2.5 animate-pulse text-sky-400" /> {hasCustomKey ? 'سحابي (مفتاحك الخاص)' : 'سحابي (Gemini)'}
-                                    </span>
-                                  );
-                                }
-                                return (
-                                  <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
-                                    <Shield className="w-2.5 h-2.5 text-emerald-400" /> محلي 100% (خصوصية وأمان)
-                                  </span>
-                                );
-                              })()}
-                            </div>
-                            <p className="text-[10px] text-indigo-200/80 font-medium mt-0.5">
-                              {(() => {
-                                const aiEngineMode = typeof localStorage !== 'undefined'
-                                  ? (localStorage.getItem('grocery_ai_embedding_mode') || 'local')
-                                  : 'local';
-                                const hasCustomKey = typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('user_gemini_api_key') || localStorage.getItem('gemini_api_key'));
-                                const isCloudActive = aiEngineMode !== 'local' && isOnline && (hasCustomKey || aiEngineMode === 'server');
-
-                                return isCloudActive
-                                  ? (hasCustomKey ? 'وضع الذكاء السحابي نشط باستخدام مفتاح Gemini API المخصص من الإعدادات' : 'وضع الذكاء السحابي نشط عبر خادم Gemini')
-                                  : 'محرك محاسبي محلي آمن 100% يضمن سرية وخصوصية بياناتك بدون إرسالها للخارج';
-                              })()}
-                            </p>
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={handleResetChat}
-                          className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-slate-300 hover:text-white bg-white/10 hover:bg-rose-500/80 border border-white/10 rounded-lg transition-all cursor-pointer shrink-0"
-                          title="إعادة البدء ومسح المحادثة"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>بدء جديد (مسح)</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Chat Messages Log */}
-                    <div className="flex-1 overflow-y-auto custom-scrollbar p-3.5 space-y-3 bg-slate-50/70" dir="rtl">
-                      {chatMessages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center my-auto text-center p-6 h-full">
-                          <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mb-3 shadow-2xs">
-                            <Brain className="w-6 h-6 animate-pulse" />
-                          </div>
-                          <h4 className="text-sm font-black text-slate-800 mb-1">المستشار الحسابي والمالي الذكي</h4>
-                          <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
-                            اكتب استفسارك المحاسبي في مربع الكتابة بالأسفل، أو اختر من الأسئلة الفورية المقترحة.
-                          </p>
-                        </div>
-                      ) : (
-                        chatMessages.map((msg, idx) => {
-                          const prevMsg = idx > 0 ? chatMessages[idx - 1] : null;
-                          const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
-                          return (
-                            <div
-                              key={msg.id}
-                              className={`flex flex-col max-w-[92%] sm:max-w-[88%] rounded-2xl p-3 sm:p-4 text-xs shadow-md ${
-                                msg.role === 'user'
-                                  ? 'bg-indigo-600 text-white self-start rounded-tr-none'
-                                  : msg.id.startsWith('error')
-                                    ? 'bg-rose-950 border border-rose-800 text-rose-100 self-end rounded-tl-none'
-                                    : 'bg-slate-900 border border-slate-800 text-slate-100 self-end rounded-tl-none'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between text-[10px] opacity-75 mb-1.5 font-black border-b border-inherit pb-1">
-                                <span className="flex items-center gap-1.5">
-                                  {msg.role === 'user' ? '👤 سؤالك' : '🤖 المستشار الذكي'}
-                                </span>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono text-[9px] opacity-60">
-                                    {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteMessage(msg.id)}
-                                    className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                                    title="حذف هذه الرسالة"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="whitespace-pre-wrap leading-relaxed">
-                                {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
-                              </div>
-                              {msg.role === 'assistant' && (
-                                <div className="flex justify-between items-center gap-1.5 mt-2 pt-1.5 border-t border-slate-800 text-right flex-wrap">
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      onClick={() => handleCopyText(msg.id, msg.text)}
-                                      className="px-2 py-0.5 hover:bg-slate-800 rounded text-[10px] flex items-center gap-1 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors"
-                                      title="نسخ التقرير"
-                                    >
-                                      {copiedMessageId === msg.id ? (
-                                        <>
-                                          <Check className="w-3 h-3 text-emerald-400" />
-                                          <span className="text-emerald-400 font-bold">تم النسخ</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Copy className="w-3 h-3" />
-                                          <span>نسخ</span>
-                                        </>
-                                      )}
-                                    </button>
-                                  </div>
-                                  {msg.id !== 'welcome' && (
-                                    ratedMessages[msg.id] ? (
-                                      <span className="text-[9px] text-emerald-400 font-bold">
-                                        {ratedMessages[msg.id] === 'up' ? 'تم التقييم 👍' : 'تم تدوين الملاحظة 👎'}
-                                      </span>
-                                    ) : (
-                                      <div className="flex gap-1">
-                                        <button
-                                          onClick={() => {
-                                            handleFeedback(msg.id, true, queryText, msg.text);
-                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
-                                          }}
-                                          className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                                          title="مفيد"
-                                        >
-                                          <ThumbsUp className="w-3 h-3" />
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            handleFeedback(msg.id, false, queryText, msg.text);
-                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
-                                          }}
-                                          className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                                          title="غير دقيق"
-                                        >
-                                          <ThumbsDown className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    )
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )}
-                      {isTyping && (
-                        <div className="bg-slate-900 border border-slate-800 text-slate-300 max-w-[40%] rounded-2xl p-2.5 text-xs self-end rounded-tl-none flex items-center gap-2 shadow-xs">
-                          <span className="text-[10px] font-bold text-indigo-400">جاري التحليل المحاسبي...</span>
-                          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce"></span>
-                          <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                        </div>
-                      )}
-                      <div ref={chatEndRef} />
-                    </div>
-
-                    {/* Quick Suggestion Chips Toggle Bar */}
-                    <div className="px-3 py-1.5 border-t border-slate-100 bg-white shrink-0" dir="rtl">
-                      <div className="flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => setIsQuickQuestionsOpen(prev => !prev)}
-                          className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50/90 hover:bg-indigo-100 px-2.5 py-1 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 shadow-2xs"
-                        >
-                          <Sparkles className="w-3 h-3 text-amber-500 animate-pulse" />
-                          <span>{isQuickQuestionsOpen ? 'إخفاء الأسئلة المقترحة ⬆️' : 'أسئلة فورية مقترحة ✨ (انقر للاستعراض)'}</span>
-                        </button>
-                      </div>
-
-                      <AnimatePresence>
-                        {isQuickQuestionsOpen && (
-                          <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            className="flex flex-wrap gap-1.5 mt-1.5 pt-1.5 border-t border-slate-100 overflow-hidden"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('صافي الربح')}
-                              className="text-[10px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              📈 صافي الأرباح
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('سبب انخفاض الأرباح')}
-                              className="text-[10px] font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              🧐 سبب الأرباح والمبيعات
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('كيف أزيد المبيعات والأرباح')}
-                              className="text-[10px] font-bold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              🚀 كيف أزيد المبيعات؟
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('ديون الموردين')}
-                              className="text-[10px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              🏬 ديون الموردين
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('المصاريف والمسحوبات')}
-                              className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              💸 المصاريف والمسحوبات
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('مبيعات هذا الشهر')}
-                              className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              📅 مبيعات هذا الشهر
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('ديون العملاء')}
-                              className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              👥 ديون العملاء
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('البضاعة الناقصة')}
-                              className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              📦 البضاعة الناقصة
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('مطابقة الصندوق')}
-                              className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              💵 مطابقة الصندوق
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleSendMessage('توقعات المبيعات للشهر القادم')}
-                              className="text-[10px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                            >
-                              🔮 توقعات الشهر القادم
-                            </button>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-
-                    {/* Permanent Chat Input Form - FIXED AT BOTTOM WITH shrink-0 */}
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }}
-                      className="p-3 bg-white border-t border-slate-200 flex items-center gap-2 shrink-0"
-                      dir="rtl"
-                    >
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="اكتب استفسارك هنا (مثال: كم المبيعات؟ من هم المدينون؟)..."
-                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-right shadow-inner"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!chatInput.trim() || isTyping}
-                        className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl px-4 py-2.5 flex items-center justify-center transition-colors shadow-md cursor-pointer shrink-0 font-bold text-xs sm:text-sm gap-1.5"
-                      >
-                        <span>إرسال</span>
-                        <Send className="w-4 h-4 transform rotate-180" />
-                      </button>
-                    </form>
-                  </div>
                 </div>
               </div>
             </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Floating Chat Widget */}
-      <AnimatePresence>
-        {isChatWidgetOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 50, scale: 0.95 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed bottom-24 right-4 sm:right-8 w-[92vw] sm:w-[420px] h-[550px] max-h-[75vh] bg-white border border-slate-200/80 rounded-3xl shadow-2xl flex flex-col z-50 overflow-hidden"
-          >
-            {/* Premium Header Banner */}
-            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-4 text-white relative shrink-0" dir="rtl">
-              <div className="absolute -left-10 -top-10 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl pointer-events-none"></div>
-              <div className="flex justify-between items-start relative z-10">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-indigo-600/30 border border-indigo-400/30 text-amber-300 rounded-xl shrink-0 shadow-xs">
-                    <Brain className="w-5 h-5 animate-pulse" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-black text-white leading-tight">المستشار الحسابي الذكي</h3>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      {isOnline ? (
-                        <span className="bg-indigo-500/25 text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-indigo-400/30 animate-pulse">
-                          <Globe className="w-2.5 h-2.5" /> هجين (أونلاين)
-                        </span>
-                      ) : (
-                        <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
-                          <WifiOff className="w-2.5 h-2.5" /> أوفلاين 100%
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={handleResetChat}
-                    className="p-1.5 text-slate-300 hover:text-white bg-white/10 hover:bg-rose-500/80 rounded-lg transition-colors cursor-pointer"
-                    title="إعادة البدء ومسح المحادثة"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setIsChatWidgetOpen(false)}
-                    className="p-1.5 text-slate-300 hover:text-white bg-white/10 hover:bg-rose-500/80 rounded-lg transition-colors cursor-pointer"
-                    title="إغلاق المستشار"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Chat Messages Log */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 sm:p-4 bg-slate-50 flex flex-col space-y-4" dir="rtl">
-              {chatMessages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center my-auto text-center p-4">
-                  <div className="w-12 h-12 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mb-3 shadow-2xs">
-                    <Brain className="w-6 h-6 animate-pulse" />
-                  </div>
-                  <h4 className="text-sm font-black text-slate-800 mb-1">كيف يمكنني مساعدتك اليوم؟</h4>
-                  <p className="text-[11px] sm:text-xs text-slate-500 max-w-[250px] leading-relaxed">
-                    اكتب استفسارك المحاسبي مباشرة أو استخدم الأزرار المقترحة السريعة والمؤمنة محلياً 100%.
-                  </p>
-                </div>
-              ) : (
-                chatMessages.map((msg, idx) => {
-                  const prevMsg = idx > 0 ? chatMessages[idx - 1] : null;
-                  const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`flex flex-col max-w-[92%] rounded-2xl p-3 sm:p-4 text-xs shadow-md ${
-                        msg.role === 'user'
-                          ? 'bg-indigo-600 text-white self-start rounded-tr-none shadow-indigo-100'
-                          : msg.id.startsWith('error')
-                            ? 'bg-rose-950 border border-rose-800 text-rose-100 self-end rounded-tl-none'
-                            : 'bg-slate-900 border border-slate-800 text-slate-100 self-end rounded-tl-none'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between text-[10px] opacity-75 mb-2 font-black border-b border-inherit pb-1.5">
-                        <span className="flex items-center gap-1.5">
-                          {msg.role === 'user' ? '👤 أنت' : '🤖 المستشار الذكي'}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[9px] opacity-60">
-                            {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteMessage(msg.id)}
-                            className="p-0.5 hover:bg-white/20 rounded text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                            title="حذف هذه الرسالة"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="whitespace-pre-wrap leading-relaxed">
-                        {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
-                      </div>
-                      {msg.role === 'assistant' && (
-                        <div className="flex justify-between items-center gap-1.5 mt-2.5 pt-2 border-t border-slate-800 text-right flex-wrap">
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleCopyText(msg.id, msg.text)}
-                              className="p-1.5 hover:bg-slate-800 rounded-md text-[10px] flex items-center gap-1 cursor-pointer text-slate-400 hover:text-slate-200 transition-colors"
-                              title="نسخ التقرير"
-                            >
-                              {copiedMessageId === msg.id ? (
-                                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
-                          {msg.id !== 'welcome' && (
-                            ratedMessages[msg.id] ? (
-                              <span className="text-[9px] text-emerald-400 font-bold">
-                                تم التقييم 👍
-                              </span>
-                            ) : (
-                              <div className="flex gap-1">
-                                <button
-                                  onClick={() => {
-                                    handleFeedback(msg.id, true, queryText, msg.text);
-                                    setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
-                                  }}
-                                  className="p-1 hover:bg-slate-800 rounded-md text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer"
-                                >
-                                  <ThumbsUp className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    handleFeedback(msg.id, false, queryText, msg.text);
-                                    setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
-                                  }}
-                                  className="p-1 hover:bg-slate-800 rounded-md text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                                >
-                                  <ThumbsDown className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            )
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-              {isTyping && (
-                <div className="bg-slate-900 border border-slate-800 text-slate-300 max-w-[35%] rounded-2xl p-2.5 text-xs self-end rounded-tl-none flex items-center gap-1.5 shadow-sm">
-                  <span className="text-[9px] font-bold text-indigo-400">جاري التحليل...</span>
-                  <div className="flex gap-0.5">
-                    <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce"></span>
-                    <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                    <span className="w-1 h-1 bg-indigo-400 rounded-full animate-bounce [animation-delay:0.4s]"></span>
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-
-            {/* Quick Action Suggestion Chips Toggle Bar */}
-            <div className="px-3 pt-2 pb-1 border-t border-slate-100 bg-white" dir="rtl">
-              <div className="flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={() => setIsQuickQuestionsOpen(prev => !prev)}
-                  className="text-[10px] sm:text-xs font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50/90 hover:bg-indigo-100 px-2.5 py-1.5 rounded-lg cursor-pointer transition-all flex items-center gap-1.5 w-full justify-between"
-                >
-                  <div className="flex items-center gap-1">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                    <span>الأسئلة الفورية المقترحة</span>
-                  </div>
-                  {isQuickQuestionsOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-
-              <AnimatePresence>
-                {isQuickQuestionsOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="flex flex-wrap gap-1.5 mt-2 overflow-hidden pb-1"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('صافي الربح'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      📈 صافي الأرباح
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('سبب انخفاض الأرباح'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      🧐 سبب الأرباح والمبيعات
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('كيف أزيد المبيعات والأرباح'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      🚀 كيف أزيد المبيعات؟
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('ديون الموردين'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      🏬 ديون الموردين
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('المصاريف والمسحوبات'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      💸 المصاريف والمسحوبات
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('مبيعات هذا الشهر'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      📅 مبيعات هذا الشهر
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('البضاعة الناقصة'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      📦 البضاعة الناقصة
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('ديون العملاء'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      👥 ديون العملاء
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('مطابقة الصندوق'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-slate-700 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      💵 مطابقة الصندوق
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { handleSendMessage('توقعات المبيعات للشهر القادم'); setIsQuickQuestionsOpen(false); }}
-                      className="text-[10px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2 py-1 rounded-md cursor-pointer transition-all"
-                    >
-                      🔮 توقعات الشهر القادم
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            {/* Chat Input Area */}
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSendMessage();
-              }}
-              className="flex gap-2 p-3 bg-white"
-              dir="rtl"
-            >
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="اسأل المستشار الذكي..."
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-right shadow-inner"
-              />
-              <button
-                type="submit"
-                disabled={!chatInput.trim() || isTyping}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl px-3 py-2.5 flex items-center justify-center transition-colors shadow-sm cursor-pointer shrink-0"
-              >
-                <Send className="w-4 h-4 transform rotate-180" />
-              </button>
-            </form>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* Floating Action Button */}
-      <button
-        type="button"
-        onClick={() => setIsChatWidgetOpen(prev => !prev)}
-        className={`fixed bottom-6 right-4 sm:right-8 w-14 h-14 rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all duration-300 z-50 border-4 border-white ${
-          isChatWidgetOpen 
-            ? 'bg-rose-500 hover:bg-rose-600 text-white rotate-90 scale-90' 
-            : 'bg-indigo-600 hover:bg-indigo-700 text-white hover:scale-110 hover:shadow-indigo-500/40'
-        }`}
-      >
-        {isChatWidgetOpen ? <X className="w-6 h-6" /> : <MessageSquare className="w-6 h-6" />}
-      </button>
+      {/* Floating Action Button - Opens Full Smart Advisor Directly (hidden when modal is open) */}
+      {!isSmartAdvisorModalOpen && (
+        <button
+          type="button"
+          onClick={() => setIsSmartAdvisorModalOpen(true)}
+          className="fixed bottom-6 right-4 sm:right-8 w-15 h-15 rounded-full shadow-2xl flex items-center justify-center cursor-pointer transition-all duration-300 z-50 border-4 border-slate-900 group bg-gradient-to-tr from-indigo-600 via-indigo-600 to-amber-500 text-white hover:scale-110 shadow-indigo-600/50 hover:shadow-indigo-500/70"
+          title="فتح المساعد الذكي"
+        >
+          <div className="relative flex items-center justify-center">
+            <Brain className="w-7 h-7 text-white drop-shadow-md animate-pulse" />
+            <span className="absolute -top-1.5 -right-1.5 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-300"></span>
+            </span>
+          </div>
+        </button>
+      )}
+
+      {/* Modal 1: Stages Analysis Modal */}
+      <AnimatePresence>
+        {isStagesModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-900 border border-slate-800 text-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-indigo-500/20 border border-indigo-400/30 text-amber-300 rounded-2xl shrink-0">
+                    <Brain className="w-6 h-6 animate-pulse" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-black text-white flex items-center gap-2">
+                      <span>🔍 مراحل التحليل والتفكير الذكي</span>
+                      <span className="bg-indigo-500/30 text-indigo-300 text-[10px] px-2 py-0.5 rounded-full border border-indigo-400/30 font-bold">
+                        4 مراحل
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400 font-medium mt-0.5">
+                      محرك التفكير الاستشاري المسلسل الذي يمر به المستشار للوصول لإجابة محاسبية دقيقة 100%
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsStagesModalOpen(false)}
+                  className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-4 custom-scrollbar text-xs">
+                {/* Visual Pipeline Bar */}
+                <div className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 bg-slate-950 rounded-2xl border border-slate-800/80 text-center">
+                  <div className="p-2 rounded-xl bg-indigo-950/60 border border-indigo-500/30 text-indigo-200 flex flex-col items-center">
+                    <span className="text-[10px] font-black text-indigo-400 mb-0.5">مرحلة 1</span>
+                    <span className="text-[11px] font-bold">فهم النية</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-amber-950/60 border border-amber-500/30 text-amber-200 flex flex-col items-center">
+                    <span className="text-[10px] font-black text-amber-400 mb-0.5">مرحلة 2</span>
+                    <span className="text-[11px] font-bold">جلب البيانات</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-rose-950/60 border border-rose-500/30 text-rose-200 flex flex-col items-center">
+                    <span className="text-[10px] font-black text-rose-400 mb-0.5">مرحلة 3</span>
+                    <span className="text-[11px] font-bold">التدقيق المالي</span>
+                  </div>
+                  <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-emerald-200 flex flex-col items-center">
+                    <span className="text-[10px] font-black text-emerald-400 mb-0.5">مرحلة 4</span>
+                    <span className="text-[11px] font-bold">الصياغة والتوجيه</span>
+                  </div>
+                </div>
+
+                {/* Detailed Stage Steps */}
+                <div className="space-y-3">
+                  <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-indigo-900/50 flex gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center shrink-0 font-bold text-xs">
+                      1
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <h4 className="font-bold text-indigo-300 text-xs">مرحلة الفهم والنية (NLU Intent Engine)</h4>
+                        <span className="text-[9px] bg-indigo-900/60 text-indigo-200 px-2 py-0.5 rounded-md border border-indigo-700/50">اكتمال</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        تحليل النص العربي المدخل، استخراج المفاهيم المحاسبية (مثل: المبيعات، المصروفات، أرصدة العملاء، المخزون، أو صافي الأرباح)، وتحديد المعلمات الزمانية المحددة.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-amber-900/50 flex gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-amber-600/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0 font-bold text-xs">
+                      2
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <h4 className="font-bold text-amber-300 text-xs">مرحلة جلب وتكشيف قاعدة البيانات المحليه (DB Indexing)</h4>
+                        <span className="text-[9px] bg-amber-900/60 text-amber-200 px-2 py-0.5 rounded-md border border-amber-700/50">مستمر</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        الاستعلام المباشر والسريع من جداول السجل اليومي، المستودعات، والمدينين المسجلة محلية بدون إرسال أي أرقام حساسة لجهات خارجية.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-rose-900/50 flex gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-rose-600/20 text-rose-400 border border-rose-500/30 flex items-center justify-center shrink-0 font-bold text-xs">
+                      3
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <h4 className="font-bold text-rose-300 text-xs">مرحلة التدقيق ومطابقة المعادلات (Audit & Balance Guard)</h4>
+                        <span className="text-[9px] bg-rose-900/60 text-rose-200 px-2 py-0.5 rounded-md border border-rose-700/50">صرامة دقيقة</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        التحقق من توازن المعادلة المحاسبية الأساسية (الأصول = الالتزامات + حقوق الملكية) ومنع حدوث أي تخمينات عشوائية عبر الحسابات.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-emerald-900/50 flex gap-3">
+                    <div className="w-7 h-7 rounded-xl bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0 font-bold text-xs">
+                      4
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <h4 className="font-bold text-emerald-300 text-xs">مرحلة الصياغة والتوصيات المحاسبية (Executive Synthesis)</h4>
+                        <span className="text-[9px] bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded-md border border-emerald-700/50">جاهز للتنفيذ</span>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        تحويل النتائج المالية المعقدة إلى تقرير استشاري واضح ومدعم بأرقام ونسب دقيقة وتوصيات تشغيلية مباشرة لإدارة محلك.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center">
+                <span className="text-[10.5px] text-slate-400">نظام تحليل تحاوري محلي آمن 100%</span>
+                <button
+                  type="button"
+                  onClick={() => setIsStagesModalOpen(false)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs cursor-pointer transition-colors"
+                >
+                  فهمت ذلك
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal 2: Question Bank Modal */}
+      <AnimatePresence>
+        {isQuestionBankModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white text-slate-900 rounded-3xl shadow-2xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[88vh]"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-4 sm:p-5 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-500/20 border border-amber-400/30 text-amber-300 rounded-2xl shrink-0">
+                    <Sparkles className="w-5 h-5 animate-pulse" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm sm:text-base font-black text-white">✨ بنك الأسئلة والاستفسارات الذكية</h3>
+                      <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-400/30">
+                        {COMPREHENSIVE_QUICK_QUESTIONS.length} سؤال متوفر
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-indigo-200/80 font-medium mt-0.5">
+                      اختر أي سؤال بضغطة واحدة للحصول على تقرير محاسبي فوري وتحليل متعمق
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsQuestionBankModalOpen(false)}
+                  className="p-2 hover:bg-white/10 text-slate-300 hover:text-white rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Category Tabs & Search Bar Header */}
+              <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 space-y-2.5 shrink-0">
+                {/* Search Box */}
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={quickQuestionFilter}
+                    onChange={(e) => setQuickQuestionFilter(e.target.value)}
+                    placeholder="ابحث في الأسئلة (مثال: الأرباح، الديون، الأكثر مبيعاً، الخسائر)..."
+                    className="w-full bg-white border border-slate-200 rounded-xl pr-9 pl-8 py-2 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-inner"
+                  />
+                  {quickQuestionFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setQuickQuestionFilter('')}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Category Buttons Filter */}
+                <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1">
+                  {QUICK_QUESTION_CATEGORIES.map(cat => {
+                    const isSelected = selectedQuickCategory === cat.id;
+                    const count = cat.id === 'all' 
+                      ? COMPREHENSIVE_QUICK_QUESTIONS.length 
+                      : COMPREHENSIVE_QUICK_QUESTIONS.filter(q => q.category === cat.id).length;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedQuickCategory(cat.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 border shrink-0 ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                            : 'bg-white text-slate-700 hover:bg-slate-100 border-slate-200'
+                        }`}
+                      >
+                        <span>{cat.name}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                          isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Questions Cards Grid */}
+              <div className="p-3 sm:p-5 overflow-y-auto custom-scrollbar flex-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {COMPREHENSIVE_QUICK_QUESTIONS
+                    .filter(q => {
+                      const matchCat = selectedQuickCategory === 'all' || q.category === selectedQuickCategory;
+                      const matchSearch = !quickQuestionFilter.trim() || 
+                        q.question.includes(quickQuestionFilter.trim()) || 
+                        q.shortTitle.includes(quickQuestionFilter.trim()) || 
+                        q.description.includes(quickQuestionFilter.trim());
+                      return matchCat && matchSearch;
+                    })
+                    .map(q => {
+                      const colorMap = {
+                        emerald: 'bg-emerald-50/80 hover:bg-emerald-100/90 text-emerald-950 border-emerald-200/90 hover:border-emerald-300',
+                        rose: 'bg-rose-50/80 hover:bg-rose-100/90 text-rose-950 border-rose-200/90 hover:border-rose-300',
+                        amber: 'bg-amber-50/80 hover:bg-amber-100/90 text-amber-950 border-amber-200/90 hover:border-amber-300',
+                        sky: 'bg-sky-50/80 hover:bg-sky-100/90 text-sky-950 border-sky-200/90 hover:border-sky-300',
+                        indigo: 'bg-indigo-50/80 hover:bg-indigo-100/90 text-indigo-950 border-indigo-200/90 hover:border-indigo-300',
+                        purple: 'bg-purple-50/80 hover:bg-purple-100/90 text-purple-950 border-purple-200/90 hover:border-purple-300',
+                      };
+                      const badgeColorMap = {
+                        emerald: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                        rose: 'bg-rose-100 text-rose-800 border-rose-200',
+                        amber: 'bg-amber-100 text-amber-800 border-amber-200',
+                        sky: 'bg-sky-100 text-sky-800 border-sky-200',
+                        indigo: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                        purple: 'bg-purple-100 text-purple-800 border-purple-200',
+                      };
+
+                      return (
+                        <button
+                          key={q.id}
+                          type="button"
+                          onClick={() => {
+                            handleSendMessage(q.question);
+                            setIsQuestionBankModalOpen(false);
+                          }}
+                          className={`flex flex-col justify-between p-3 rounded-2xl border text-right cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md ${colorMap[q.themeColor]}`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1.5 mb-2">
+                              <span className="text-xl">{q.icon}</span>
+                              <span className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-md border ${badgeColorMap[q.themeColor]}`}>
+                                {q.badge}
+                              </span>
+                            </div>
+                            <h4 className="text-xs font-black text-slate-900 mb-1 leading-snug">{q.shortTitle}</h4>
+                            <p className="text-[10.5px] text-slate-600 leading-relaxed line-clamp-2">
+                              {q.description}
+                            </p>
+                          </div>
+
+                          <div className="mt-3 pt-2 border-t border-slate-900/10 flex items-center justify-between text-[10px] font-bold text-indigo-700">
+                            <span>طرح السؤال الآن</span>
+                            <span>←</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
+                <span className="text-xs text-slate-500 font-medium">
+                  انقر على أي سؤال لإطلاقه فوراً في الشات الذكي
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsQuestionBankModalOpen(false)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold text-xs cursor-pointer transition-colors"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <DailyLogModal
+        showDailyLogModal={showDailyLogModal}
+        setShowDailyLogModal={setShowDailyLogModal}
+        dailySalesBreakdown={dailySalesBreakdown}
+        formatPrice={formatPrice}
+      />
+      <CustomerReceivablesModal
+        showCustomerReceivablesModal={showCustomerReceivablesModal}
+        setShowCustomerReceivablesModal={setShowCustomerReceivablesModal}
+        customerSalesBreakdown={customerSalesBreakdown}
+        formatPrice={formatPrice}
+        totalSales={performanceKPIs.salesTotal}
+      />
+
+      <AnomalyReviewModal
+        isOpen={anomalyModalType !== null}
+        onClose={() => setAnomalyModalType(null)}
+        anomalyType={anomalyModalType}
+        cashWithdrawals={cashWithdrawals}
+        sales={sales}
+        products={products}
+        formatPrice={formatPrice}
+        currency={currency}
+        onResolveAnomaly={handleResolveAnomaly}
+      />
 
     </motion.div>
   );

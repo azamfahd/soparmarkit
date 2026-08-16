@@ -1,10 +1,17 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#059669" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <link rel="apple-touch-icon" href="/icon.png" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="النظام المحاسبي الذكي" />
+    <meta name="application-name" content="النظام المحاسبي الذكي" />
     <title>النظام المحاسبي الذكي</title>
     <script>
       window.addEventListener('error', function(e) {
@@ -23,17 +30,26 @@
         console.error('Unhandled Rejection:', e.reason);
       });
       
-      // Register Service Worker for offline PWA support
+      // Handle Service Worker
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function() {
-          navigator.serviceWorker.register('/sw.js')
-            .then(function(reg) {
-              console.log('Offline SW registered successfully:', reg.scope);
-            })
-            .catch(function(err) {
-              console.warn('SW registration failed:', err);
-            });
-        });
+        if (location.hostname === 'localhost' || location.hostname.includes('ais-dev')) {
+          // Dev mode: unregister any leftover service workers to prevent caching bugs
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var registration of registrations) {
+              registration.unregister();
+            }
+          });
+        } else {
+          window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/sw.js')
+              .then(function(reg) {
+                console.log('Offline SW registered successfully:', reg.scope);
+              })
+              .catch(function(err) {
+                console.warn('SW registration failed:', err);
+              });
+          });
+        }
       }
     </script>
   </head>

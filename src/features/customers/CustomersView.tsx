@@ -4,7 +4,8 @@ import {
   Home, 
   Search, 
   UserPlus, 
-  Trash2 
+  Trash2,
+  Edit2
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -17,16 +18,18 @@ interface CustomersViewProps {
   formatPrice: (price: number) => string;
   setShowPaymentModal: (customer: any) => void;
   handleDeleteCustomer: (id: number) => void;
+  setEditingCustomer?: (customer: any) => void;
 }
 
 export const CustomersView: React.FC<CustomersViewProps> = ({
   setActiveTab,
   setShowAddCustomer,
-      customers,
+  customers,
   fetchCustomerHistory,
   formatPrice,
   setShowPaymentModal,
   handleDeleteCustomer,
+  setEditingCustomer,
 }) => {
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
 
@@ -66,7 +69,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
             >
               <div className="text-right">
                 <p className="font-bold text-slate-800">{c.name}</p>
-                <p className="text-sm text-slate-500">{c.phone}</p>
+                <p className="text-sm text-slate-500">{c.phone || 'بدون رقم هاتف'}</p>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-left">
@@ -77,7 +80,7 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                     {c.balance < 0 ? formatPrice(Math.abs(c.balance)) : formatPrice(c.balance)}
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-1.5">
                   <button 
                     onClick={(e) => { e.stopPropagation(); setShowPaymentModal(c); }}
                     className={`font-semibold text-xs px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${
@@ -88,9 +91,19 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
                   >
                     {c.balance > 0 ? 'سداد متبقي' : 'إيداع مقدم'}
                   </button>
+                  {setEditingCustomer && (
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); }}
+                      className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg cursor-pointer transition-colors"
+                      title="تعديل بيانات العميل"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                  )}
                   <button 
                     onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id!); }}
-                    className="text-red-400 hover:text-red-600 p-2 cursor-pointer transition-colors"
+                    className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg cursor-pointer transition-colors"
+                    title="حذف العميل"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

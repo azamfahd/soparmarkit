@@ -485,7 +485,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
             )}
           </div>
           <div className="bg-white/10 rounded-2xl p-3 border border-white/5 col-span-2 sm:col-span-1">
-            <p className="text-white/70 text-[10px] font-bold">مبيعات لم تسدد بعد</p>
+            <p className="text-white/70 text-[10px] font-bold">كم باعت المنشأة بالآجل في هذه الدورة</p>
             <p className="font-bold text-sm sm:text-base font-mono text-amber-200">{formatPrice(currentCycleDebtTotal)}</p>
           </div>
         </div>

@@ -200,7 +200,10 @@ export default function BarcodeScanner({
       }
 
       try {
-        const devices = await Html5Qrcode.getCameras();
+        const devices = await Html5Qrcode.getCameras().catch((e) => {
+          console.warn("Html5Qrcode.getCameras failed or denied:", e);
+          return [];
+        });
         if (!isMounted) return;
         
         if (devices && devices.length > 0) {
@@ -220,18 +223,15 @@ export default function BarcodeScanner({
         }
       } catch (err: any) {
         if (!isMounted) return;
-        // Improve logging to capture more detail about why camera failed
-        console.error("Camera initialization failure:", {
-          name: err.name,
-          message: err.message,
-          stack: err.stack
-        });
+        const errName = err?.name || 'CameraError';
+        const errStr = err?.message || String(err);
+        console.error("Camera initialization failure:", errName, errStr, err);
         
-        let userMessage = "يجب السماح بالوصول إلى الكاميرا ليتمكن الماسح الضوئي من العمل.";
-        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          userMessage = "تم رفض الوصول للكاميرا. يرجى التحقق من إعدادات المتصفح والسماح للتطبيق بالوصول.";
-        } else if (err.name === 'NotFoundError') {
-          userMessage = "لم يتم العثور على كاميرا خلفية.";
+        let userMessage = "يمكنك منح صلاحية الكاميرا أو كتابة الباركود يدوياً أو رفع صورة الباركود.";
+        if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errStr.toLowerCase().includes('permission denied')) {
+          userMessage = "تم رفض إذن الكاميرا من المتصفح. يمكنك السماح بالوصول للكاميرا من إعدادات الموقع، أو استخدام الإدخال اليدوي/رفع الصورة.";
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          userMessage = "لم يتم العثور على كاميرا في جهازك. يمكنك استخدام الباركود اليدوي أو رفع صورة الباركود.";
         }
         
         setErrorMsg(userMessage);
@@ -250,12 +250,18 @@ export default function BarcodeScanner({
   const requestPermissionDirectly = async () => {
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        let stream: MediaStream | null = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        } catch (e) {
+          // Fallback to basic video constraint if environment facingMode fails
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        }
         if (stream) {
           stream.getTracks().forEach(track => track.stop());
           setErrorMsg(""); // Clear error
           
-          const devices = await Html5Qrcode.getCameras();
+          const devices = await Html5Qrcode.getCameras().catch(() => []);
           if (devices && devices.length > 0) {
             setCameras(devices);
             const backCam = devices.find(d => 
@@ -269,11 +275,13 @@ export default function BarcodeScanner({
           }
         }
       } else {
-         setErrorMsg("المتصفح لا يدعم الوصول المباشر للكاميرا بدون اتصال آمن HTTPS.");
+        setErrorMsg("المتصفح لا يدعم الوصول المباشر للكاميرا بدون اتصال آمن HTTPS.");
       }
     } catch (err: any) {
-      console.error("Direct permission request failed", err);
-      setErrorMsg("الوصول مرفوض. يرجى تفعيل إذن الكاميرا يدوياً للتطبيق في إعدادات جهازك.");
+      const errName = err?.name || 'PermissionDenied';
+      const errStr = err?.message || String(err);
+      console.error("Direct permission request failed:", errName, errStr, err);
+      setErrorMsg("الوصول للكاميرا مرفوض حالياً من المتصفح. يمكنك استخدام الإدخال اليدوي أو رفع صورة الباركود.");
     }
   };
 
@@ -404,11 +412,10 @@ export default function BarcodeScanner({
       }, 2500);
 
     } catch (err: any) {
-      console.error("Failed to start scanner:", {
-        name: err.name,
-        message: err.message,
-        stack: err.stack
-      });
+      const errName = err?.name || (typeof err === 'string' ? err : 'CameraError');
+      const errStr = err?.message || (typeof err === 'string' ? err : String(err));
+      console.error("Failed to start scanner:", errName, errStr, err);
+      
       if (typeof cameraIdOrConfig === 'string') {
         try {
           await startScanning({ facingMode: "environment" });
@@ -418,12 +425,49 @@ export default function BarcodeScanner({
         }
       }
       
-      let userMessage = "تعذر بدء تشغيل الكاميرا. يرجى إغلاق أي تطبيق كاميرا آخر والتأكد من إعطاء الصلاحيات.";
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        userMessage = "تم رفض الوصول للكاميرا. يرجى التحقق من إعدادات المتصفح والسماح للتطبيق بالوصول.";
+      let userMessage = "تعذر بدء تشغيل الكاميرا. يمكنك كتابة الباركود يدوياً أو رفع صورة تحتوي على الباركود.";
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errStr.toLowerCase().includes('permission denied')) {
+        userMessage = "تم رفض إذن الكاميرا من قبل المتصفح. يمكنك السماح بالإذن في إعدادات المتصفح، أو استخدام رفع الصورة/الإدخال اليدوي.";
       }
       
       setErrorMsg(userMessage);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      let scanner = html5QrcodeRef.current;
+      let tempScannerCreated = false;
+      if (!scanner) {
+        scanner = new Html5Qrcode(scanContainerId);
+        tempScannerCreated = true;
+      }
+      const decodedText = await scanner.scanFile(file, true);
+      if (decodedText) {
+        if (scannerMode !== 'pos') {
+          playBeep();
+        }
+        setFlashActive(true);
+        setTimeout(() => setFlashActive(false), 300);
+
+        onScanRef.current(decodedText, playBeep);
+        if (autoClose) {
+          stopScanning();
+          onClose();
+        }
+      }
+      if (tempScannerCreated) {
+        try {
+          await scanner.clear();
+        } catch (e) {}
+      }
+    } catch (err: any) {
+      console.error("Failed to read barcode from image:", err);
+      alert("تعذر قراءة الباركود من الصورة المرفقة. يرجى التأكد من وضوح الباركود في الصورة والمحاولة مجدداً.");
+    } finally {
+      e.target.value = ''; // Reset input
     }
   };
 
@@ -651,27 +695,39 @@ export default function BarcodeScanner({
                 )}
 
                 {errorMsg && (
-                  <div className="absolute inset-0 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center gap-3">
-                    <div className="p-3 rounded-full bg-red-500/10 text-red-500">
+                  <div className="absolute inset-0 bg-slate-950/95 p-6 flex flex-col items-center justify-center text-center gap-3 overflow-y-auto z-10">
+                    <div className="p-3 rounded-full bg-amber-500/10 text-amber-400">
                       <Camera className="w-7 h-7" />
                     </div>
-                    <p className="text-xs font-extrabold text-red-400 max-w-[280px] leading-relaxed">
+                    <p className="text-xs font-extrabold text-amber-200 max-w-[320px] leading-relaxed">
                       {errorMsg}
                     </p>
-                    <div className="flex flex-col gap-2 mt-2 w-full max-w-[220px]">
+                    <div className="flex flex-col gap-2 mt-2 w-full max-w-[260px]">
                       <button 
                         type="button"
                         onClick={requestPermissionDirectly}
-                        className="text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 py-2.5 px-4 rounded-xl transition-all cursor-pointer"
+                        className="text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 py-2.5 px-4 rounded-xl transition-all cursor-pointer shadow-md"
                       >
-                        السماح باستخدام الكاميرا
+                        طلب إذن الكاميرا مجدداً
                       </button>
+                      
+                      <label className="text-xs font-black text-slate-200 bg-slate-800 hover:bg-slate-700 py-2.5 px-4 rounded-xl border border-slate-700 transition-all cursor-pointer flex items-center justify-center gap-2">
+                        <span>📷 رفع / التقاط صورة باركود</span>
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          capture="environment" 
+                          onChange={handleFileUpload} 
+                          className="hidden" 
+                        />
+                      </label>
+
                       <button 
                         type="button"
                         onClick={() => cameras.length > 0 ? startScanning(selectedCameraId) : startScanning({ facingMode: "environment" })}
-                        className="text-xs font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 py-2 px-4 rounded-xl border border-emerald-500/20 transition-all cursor-pointer"
+                        className="text-xs font-bold text-slate-400 hover:text-white bg-transparent py-1.5 px-4 rounded-xl transition-all cursor-pointer"
                       >
-                        إعادة محاولة الاتصال
+                        إعادة محاولة تشغيل الكاميرا
                       </button>
                     </div>
                   </div>
@@ -834,23 +890,37 @@ export default function BarcodeScanner({
             )}
           </div>
 
-          {/* Manual Barcode Input Form Backup */}
-          <form onSubmit={handleManualSubmit} className="flex gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800/80">
-            <input 
-              type="text" 
-              placeholder="اكتب رقم باركود السلعة يدوياً واضغط إدخال..." 
-              className="flex-1 py-2 px-3 bg-transparent text-white text-xs font-bold placeholder-slate-500 outline-none pr-2 text-left font-mono"
-              value={manualBarcode}
-              onChange={e => setManualBarcode(e.target.value)}
-            />
-            <button 
-              type="submit"
-              disabled={!manualBarcode.trim()}
-              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:bg-slate-800 text-white rounded-lg text-[11px] font-black transition-all cursor-pointer"
-            >
-              إضافة ➕
-            </button>
-          </form>
+          {/* Manual Barcode Input Form Backup & File Upload */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <form onSubmit={handleManualSubmit} className="flex-1 flex gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800/80">
+              <input 
+                type="text" 
+                placeholder="اكتب رقم باركود السلعة يدوياً أو استخدم قارئ USB..." 
+                className="flex-1 py-2 px-3 bg-transparent text-white text-xs font-bold placeholder-slate-500 outline-none pr-2 text-left font-mono"
+                value={manualBarcode}
+                onChange={e => setManualBarcode(e.target.value)}
+              />
+              <button 
+                type="submit"
+                disabled={!manualBarcode.trim()}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:bg-slate-800 text-white rounded-lg text-[11px] font-black transition-all cursor-pointer whitespace-nowrap"
+              >
+                إضافة ➕
+              </button>
+            </form>
+
+            <label className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0" title="رفع صورة تحتوي على باركود لمسحها">
+              <Camera className="w-3.5 h-3.5 text-emerald-400" />
+              <span>صورة باركود 📷</span>
+              <input 
+                type="file" 
+                accept="image/*" 
+                capture="environment" 
+                onChange={handleFileUpload} 
+                className="hidden" 
+              />
+            </label>
+          </div>
 
           {/* Explanatory Technology Card Banner at the bottom (Only in POS mode) */}
           {scannerMode === 'pos' && (

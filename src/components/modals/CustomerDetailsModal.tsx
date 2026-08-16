@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Users, TrendingUp, ChevronLeft, FileText, Printer, Download, Upload, Plus, Calendar, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { Users, TrendingUp, ChevronLeft, FileText, Printer, Download, Upload, Plus, Calendar, Image as ImageIcon, Sparkles, Edit2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { CustomerStatementCardModal } from './CustomerStatementCardModal';
 
@@ -17,6 +17,7 @@ export interface CustomerDetailsModalProps {
   formatDateTimeWithDay: (dateStr: string) => string;
   setShowPaymentModal: (val: any) => void;
   setShowCustomerAdjustmentModal: (val: any) => void;
+  onEditCustomer?: (customer: any) => void;
   storeName?: string;
   storePhone?: string;
   currency?: string;
@@ -35,6 +36,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
   formatDateTimeWithDay,
   setShowPaymentModal,
   setShowCustomerAdjustmentModal,
+  onEditCustomer,
   storeName = 'متجرنا',
   storePhone = '',
   currency = 'ر.س',
@@ -114,7 +116,19 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                   <Users className="text-emerald-600 w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black text-slate-800 leading-tight">{showCustomerDetails.name}</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-2xl font-black text-slate-800 leading-tight">{showCustomerDetails.name}</h3>
+                    {onEditCustomer && (
+                      <button
+                        type="button"
+                        onClick={() => onEditCustomer(showCustomerDetails)}
+                        className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                        title="تعديل اسم أو هاتف العميل"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                   <p className="text-slate-500 flex items-center gap-1 text-sm font-medium">
                     <TrendingUp className="w-3.5 h-3.5 text-emerald-600" /> {showCustomerDetails.phone || 'بدون رقم هاتف'}
                   </p>

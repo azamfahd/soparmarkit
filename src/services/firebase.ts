@@ -30,12 +30,20 @@ export interface ActivationRequest {
   durationDays?: number;
   approvedAt?: string;
   rejectReason?: string;
+  requestType?: 'initial' | 'renewal';
+  requestedDuration?: number;
 }
 
 /**
  * Creates or updates an activation request in Firestore
  */
-export async function submitActivationRequest(deviceId: string, storeName: string, phone: string): Promise<void> {
+export async function submitActivationRequest(
+  deviceId: string, 
+  storeName: string, 
+  phone: string,
+  requestType: 'initial' | 'renewal' = 'initial',
+  requestedDuration: number = 365
+): Promise<void> {
   const docRef = doc(cloudDb, 'activation_requests', deviceId);
   const requestData: ActivationRequest = {
     id: deviceId,
@@ -43,7 +51,9 @@ export async function submitActivationRequest(deviceId: string, storeName: strin
     storeName: storeName || 'محل تجاري جديد',
     phone: phone || '',
     requestedAt: new Date().toISOString(),
-    status: 'pending'
+    status: 'pending',
+    requestType,
+    requestedDuration
   };
 
   await setDoc(docRef, requestData, { merge: true });

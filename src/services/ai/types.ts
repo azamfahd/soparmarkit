@@ -2,8 +2,9 @@
 
 export interface UserQuery {
   rawText: string;
-  normalizedText: string;
-  timestamp: number;
+  normalizedText?: string;
+  timestamp?: number;
+  id?: string;
   context?: {
     activeCustomer?: string;
     activeSupplier?: string;
@@ -31,6 +32,7 @@ export interface NLUResult {
   entities: Entity[];
   isClarificationNeeded: boolean;
   clarificationMessage?: string;
+  suggestedClarifications?: string[];
 }
 
 export type DataSource = 'INDEXED_DB' | 'RAG' | 'ML' | 'GENERAL_KNOWLEDGE' | 'UNKNOWN';
@@ -41,11 +43,22 @@ export interface Evidence {
   metadata?: Record<string, any>;
 }
 
+export interface ProcessingStage {
+  stageNumber: number;
+  title: string;
+  description: string;
+  status: 'completed' | 'in_progress' | 'skipped';
+  details?: string;
+  badge?: string;
+}
+
 export interface AgentResponse {
   answer: string;
   evidence: Evidence[];
   suggestedActions?: string[];
   confidence: number;
+  processingStages?: ProcessingStage[];
+  reasoningSummary?: string;
   metadata?: {
     routeType: 'ACCOUNTING_DB' | 'KNOWLEDGE_RAG' | 'STATISTICAL_ML' | 'HYBRID' | 'CLARIFICATION' | 'FALLBACK';
     executionTimeMs: number;
@@ -63,6 +76,8 @@ export interface AIMessage {
   timestamp: number;
   intent?: string;
   evidence?: Evidence[];
+  processingStages?: ProcessingStage[];
+  reasoningSummary?: string;
 }
 
 export interface AIConversation {

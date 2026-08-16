@@ -28,6 +28,7 @@ import { SupplierPaymentDetailsModal } from './components/modals/SupplierPayment
 import { AddNoteModal } from './components/modals/AddNoteModal';
 import { NoteDetailsModal } from './components/modals/NoteDetailsModal';
 import { AddCustomerModal } from './components/modals/AddCustomerModal';
+import { EditCustomerModal } from './components/modals/EditCustomerModal';
 import { CustomerPaymentModal } from './components/modals/CustomerPaymentModal';
 import { CustomerAdjustmentModal } from './components/modals/CustomerAdjustmentModal';
 import { SettleModal } from './components/modals/SettleModal';
@@ -109,7 +110,7 @@ import {
 } from 'recharts';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
 import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from './utils/licensing';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useLiveQuery } from './hooks/useLiveQuery';
 import { 
   submitActivationRequest, 
   getActivationRequest, 
@@ -674,7 +675,9 @@ export default function App() {
   const [paymentType, setPaymentType] = useState<'cash' | 'debt'>('cash');
   const [saleNotes, setSaleNotes] = useState('');
   const [showAddProduct, setShowAddProduct] = useState(false);
+  const [pendingBarcode, setPendingBarcode] = useState<string>('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerMode, setScannerMode] = useState<'pos' | 'add-product' | 'edit-product' | 'manual'>('pos');
@@ -764,8 +767,14 @@ export default function App() {
   const [pinChangeError, setPinChangeError] = useState<string>('');
   
   // Cloud Licensing States
-  const [clientStoreName, setClientStoreName] = useState<string>('');
-  const [clientPhone, setClientPhone] = useState<string>('');
+  const [clientStoreName, setClientStoreName] = useState<string>(() => {
+    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientStoreName') || '') : '';
+  });
+  const [clientPhone, setClientPhone] = useState<string>(() => {
+    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientPhone') || '') : '';
+  });
+  const [requestedRenewalDuration, setRequestedRenewalDuration] = useState<number>(365);
+  const [showModalEditDetails, setShowModalEditDetails] = useState<boolean>(false);
   const [cloudRequest, setCloudRequest] = useState<ActivationRequest | null>(null);
   const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
   const [allCloudRequests, setAllCloudRequests] = useState<ActivationRequest[]>([]);
@@ -1414,16 +1423,47 @@ export default function App() {
     showNotification('تم تفعيل البرنامج بنجاح! شكراً لاشتراككم.', 'success');
   };
 
-  const handleRequestCloudActivation = async () => {
+  useEffect(() => {
+    if (cloudRequest) {
+      if (!clientStoreName && cloudRequest.storeName) {
+        setClientStoreName(cloudRequest.storeName);
+        if (typeof localStorage !== 'undefined') localStorage.setItem('cache_clientStoreName', cloudRequest.storeName);
+      }
+      if (!clientPhone && cloudRequest.phone) {
+        setClientPhone(cloudRequest.phone);
+        if (typeof localStorage !== 'undefined') localStorage.setItem('cache_clientPhone', cloudRequest.phone);
+      }
+    }
+  }, [cloudRequest]);
+
+  const handleRequestCloudActivation = async (customDuration?: number, forcedRenewal?: boolean) => {
     if (!clientStoreName.trim()) {
       showNotification('يرجى إدخال اسم المتجر أولاً!', 'error');
       return;
     }
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('cache_clientStoreName', clientStoreName);
+        localStorage.setItem('cache_clientPhone', clientPhone);
+      }
+    } catch (e) {
+      console.warn("Failed to persist store details locally:", e);
+    }
+
+    const durationToUse = customDuration || requestedRenewalDuration || 365;
+    const isRenewalReq = forcedRenewal || isActivated || Boolean(cloudRequest);
+    const reqType = isRenewalReq ? 'renewal' : 'initial';
     
     setIsSubmittingRequest(true);
     try {
-      await submitActivationRequest(deviceID, clientStoreName, clientPhone);
-      showNotification('تم إرسال طلب التفعيل الرقمي بنجاح وهو قيد المراجعة الآن!', 'success');
+      await submitActivationRequest(deviceID, clientStoreName, clientPhone, reqType, durationToUse);
+      showNotification(
+        reqType === 'renewal'
+          ? 'تم إرسال طلب تجديد وتمديد الاشتراك إلى المدير بنجاح!'
+          : 'تم إرسال طلب التفعيل الرقمي بنجاح وهو قيد المراجعة الآن!',
+        'success'
+      );
     } catch (e) {
       console.error(e);
       showNotification('حدث خطأ أثناء إرسال الطلب، يرجى التحقق من اتصالك بالإنترنت والتحميل مجدداً', 'error');
@@ -1666,7 +1706,7 @@ export default function App() {
 
   const applyCurrencyRounding = (price: number): number => {
     if (roundingFactor && roundingFactor > 0) {
-      return Math.ceil(price / roundingFactor) * roundingFactor;
+      return Math.round(price / roundingFactor) * roundingFactor;
     }
     return Number(price.toFixed(2));
   };
@@ -2244,6 +2284,7 @@ export default function App() {
     }
 
     try {
+      let createdProduct: any = null;
       await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
         const productId = await db.products.add({
           name: product.name.trim(),
@@ -2266,11 +2307,31 @@ export default function App() {
           notes: 'إدخال صنف جديد لأول مرة في النظام',
           created_at: new Date().toISOString()
         });
+
+        createdProduct = {
+          id: productId as number,
+          name: product.name.trim(),
+          category: product.category?.trim() || 'عام',
+          barcode: product.barcode?.trim() || undefined,
+          cost_price,
+          sale_price,
+          stock_quantity,
+          unit: product.unit?.trim() || 'حبة',
+          supplier_id: product.supplier_id || undefined,
+          production_date: product.production_date || undefined,
+          expiration_date: product.expiration_date || undefined
+        };
       });
 
       showNotification('تم إضافة المنتج بنجاح', 'success');
       setShowAddProduct(false);
       resetForm();
+
+      if (createdProduct && createdProduct.stock_quantity > 0 && (scannerMode === 'pos' || pendingBarcode)) {
+        addToCart(createdProduct);
+        showNotification(`تم إضافة المنتج الجديد "${createdProduct.name}" تلقائياً لسلة الشراء!`, 'success');
+      }
+      setPendingBarcode('');
     } catch (err) {
       console.error("Failed to add product:", err);
       showNotification('خطأ في إضافة المنتج', 'error');
@@ -3253,16 +3314,26 @@ export default function App() {
   };
 
   const handleAddCustomer = async (newCustomer: any, resetForm: () => void) => {
-    if (!newCustomer.name.trim()) {
+    const trimmedName = newCustomer.name?.trim();
+    if (!trimmedName) {
       showNotification('يرجى إدخال اسم الزبون', 'error');
+      return;
+    }
+
+    // Check if customer with same name already exists in the system
+    const existing = customers.find(
+      c => c.name && c.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (existing) {
+      showNotification(`تنبيه: العميل "${existing.name}" مسجل مسبقاً في النظام! يرجى تغيير الاسم أو تمييزه.`, 'error');
       return;
     }
     
     const initialDebtVal = parseFloat(newCustomer.initialDebt) || 0;
     
     const customerData = {
-      name: newCustomer.name,
-      phone: newCustomer.phone,
+      name: trimmedName,
+      phone: newCustomer.phone?.trim() || '',
       balance: initialDebtVal
     };
     
@@ -3290,6 +3361,36 @@ export default function App() {
     } catch (err) {
       console.error("Failed to add customer:", err);
       showNotification('خطأ في إضافة الزبون', 'error');
+    }
+  };
+
+  const handleUpdateCustomer = async (id: number, updatedData: { name: string; phone: string }) => {
+    const trimmedName = updatedData.name.trim();
+    if (!trimmedName) {
+      showNotification('يرجى إدخال اسم الزبون', 'error');
+      return false;
+    }
+    const duplicate = customers.find(
+      c => c.id !== id && c.name && c.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      showNotification(`تنبيه: يوجد عميل آخر مسجل بالاسم "${duplicate.name}" مسبقاً!`, 'error');
+      return false;
+    }
+    try {
+      await db.customers.update(id, {
+        name: trimmedName,
+        phone: updatedData.phone.trim()
+      });
+      if (showCustomerDetails && showCustomerDetails.id === id) {
+        setShowCustomerDetails(prev => prev ? { ...prev, name: trimmedName, phone: updatedData.phone.trim() } : null);
+      }
+      showNotification('تم تحديث بيانات العميل بنجاح', 'success');
+      return true;
+    } catch (err) {
+      console.error("Failed to update customer:", err);
+      showNotification('خطأ في تحديث بيانات العميل', 'error');
+      return false;
     }
   };
 
@@ -3382,6 +3483,7 @@ export default function App() {
       } else {
         playBeep?.();
         setIsScannerOpen(false); // Close the scanner to stop background feed and focus product creation
+        setPendingBarcode(code);
         
         showNotification(`الرمز ${code} غير مرتبط بأي منتج`, 'error');
         setConfirmAction({
@@ -3390,10 +3492,11 @@ export default function App() {
           onConfirm: () => {
             setConfirmAction(null);
             setScannerMode('add-product');
-                        setShowAddProduct(true);
-            setActiveTab('inventory');
+            setShowAddProduct(true);
+            setActiveTab('products');
           },
           onCancel: () => {
+            setPendingBarcode('');
             if (scannerMode === 'pos') {
               setIsScannerOpen(true);
             }
@@ -3427,7 +3530,7 @@ export default function App() {
           showNotification('لا يمكن إضافة كمية أكبر من المتوفر في المخزون', 'error');
           return prevCart;
         }
-        return [...prevCart, { product_id: product.id, name: product.name, price: product.sale_price, quantity: quantity, base_quantity: quantity, max_stock: product.stock_quantity, unit: product.unit }];
+        return [...prevCart, { product_id: product.id, name: product.name, price: applyCurrencyRounding(product.sale_price), quantity: quantity, base_quantity: quantity, max_stock: product.stock_quantity, unit: product.unit }];
       }
     });
   };
@@ -3536,7 +3639,8 @@ export default function App() {
   };
 
   const handleCheckout = async () => {
-    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const rawTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const total = applyCurrencyRounding(rawTotal);
     const saleData = {
       customer_id: selectedCustomer,
       items: cart.map(item => ({ product_id: item.product_id, quantity: item.quantity, price: item.price })),
@@ -3749,48 +3853,126 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Cloud request form is shown directly, completely hiding the manual entry option for security */}
-              <div className="space-y-3 text-right">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">اسم المتجر / النشاط التجاري:</label>
-                  <input 
-                    type="text"
-                    value={clientStoreName}
-                    onChange={(e) => setClientStoreName(e.target.value)}
-                    placeholder="مثال: سوبرماركت الوفاء"
-                    className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm transition-all"
-                  />
-                </div>
+              {(clientStoreName || isActivated || cloudRequest) ? (
+                /* Streamlined Renewal Form using saved Store Name & Phone */
+                <div className="space-y-3.5 text-right bg-slate-900/90 p-4 border border-slate-800 rounded-2xl">
+                  <div className="flex justify-between items-center border-b border-slate-800/80 pb-2.5">
+                    <button 
+                      type="button"
+                      onClick={() => setShowModalEditDetails(!showModalEditDetails)}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer"
+                    >
+                      {showModalEditDetails ? 'إلغاء التعديل' : 'تعديل البيانات ✏️'}
+                    </button>
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-bold text-slate-300 block">
+                        اسم المتجر: <span className="text-white font-extrabold">{clientStoreName || 'غير محدد'}</span>
+                      </span>
+                      {clientPhone && <span className="text-xs font-mono text-emerald-400 font-bold block">{clientPhone}</span>}
+                    </div>
+                  </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-300">رقم الهاتف (للتواصل):</label>
-                  <input 
-                    type="text"
-                    value={clientPhone}
-                    onChange={(e) => setClientPhone(e.target.value)}
-                    placeholder="مثال: 777xxxxxx"
-                    className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm font-mono transition-all text-left"
-                  />
-                </div>
-
-                <button 
-                  disabled={isSubmittingRequest}
-                  onClick={handleRequestCloudActivation}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
-                >
-                  {isSubmittingRequest ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>جاري إرسال طلب التفعيل...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Activity className="w-4 h-4" />
-                      <span>إرسال طلب التفعيل السحابي 📡</span>
-                    </>
+                  {showModalEditDetails && (
+                    <div className="space-y-2.5 pt-1 border-b border-slate-800/80 pb-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-400">تعديل اسم المتجر:</label>
+                        <input 
+                          type="text"
+                          value={clientStoreName}
+                          onChange={(e) => setClientStoreName(e.target.value)}
+                          className="w-full p-2.5 bg-slate-950 text-white rounded-xl border border-slate-800 text-xs font-bold"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-bold text-slate-400">تعديل رقم الهاتف:</label>
+                        <input 
+                          type="text"
+                          value={clientPhone}
+                          onChange={(e) => setClientPhone(e.target.value)}
+                          className="w-full p-2.5 bg-slate-950 text-white rounded-xl border border-slate-800 text-xs font-mono text-left"
+                        />
+                      </div>
+                    </div>
                   )}
-                </button>
-              </div>
+
+                  {/* Renewal Duration Selector */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="text-xs font-bold text-slate-300 block">مدة التجديد والتمديد المطلوبة:</label>
+                    <select 
+                      value={requestedRenewalDuration}
+                      onChange={(e) => setRequestedRenewalDuration(Number(e.target.value))}
+                      className="w-full p-2.5 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-xs font-bold"
+                    >
+                      <option value={30}>شهر (30 يوم)</option>
+                      <option value={90}>3 أشهر (90 يوم)</option>
+                      <option value={180}>6 أشهر (180 يوم)</option>
+                      <option value={365}>سنة كاملة (365 يوم - الموصى به)</option>
+                      <option value={9999}>مدى الحياة ♾️</option>
+                    </select>
+                  </div>
+
+                  <button 
+                    disabled={isSubmittingRequest}
+                    onClick={() => handleRequestCloudActivation(requestedRenewalDuration, true)}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
+                  >
+                    {isSubmittingRequest ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>جاري إرسال طلب التجديد...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Activity className="w-4 h-4" />
+                        <span>إرسال طلب تجديد وتمديد الاشتراك للمدير 📡</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                /* Initial Request Form */
+                <div className="space-y-3 text-right">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">اسم المتجر / النشاط التجاري:</label>
+                    <input 
+                      type="text"
+                      value={clientStoreName}
+                      onChange={(e) => setClientStoreName(e.target.value)}
+                      placeholder="مثال: سوبرماركت الوفاء"
+                      className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300">رقم الهاتف (للتواصل):</label>
+                    <input 
+                      type="text"
+                      value={clientPhone}
+                      onChange={(e) => setClientPhone(e.target.value)}
+                      placeholder="مثال: 777xxxxxx"
+                      className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm font-mono transition-all text-left"
+                    />
+                  </div>
+
+                  <button 
+                    disabled={isSubmittingRequest}
+                    onClick={() => handleRequestCloudActivation(365, false)}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-55 active:scale-[0.98] text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2 mt-2"
+                  >
+                    {isSubmittingRequest ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>جاري إرسال طلب التفعيل...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Activity className="w-4 h-4" />
+                        <span>إرسال طلب التفعيل السحابي 📡</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -4392,6 +4574,7 @@ export default function App() {
               formatPrice={formatPrice}
               setShowPaymentModal={setShowPaymentModal}
               handleDeleteCustomer={handleDeleteCustomer}
+              setEditingCustomer={setEditingCustomer}
             />
           </motion.div>
 
@@ -4727,13 +4910,18 @@ export default function App() {
             <AddProductModal
               key="modal-add-product"
               showAddProduct={showAddProduct}
-              setShowAddProduct={setShowAddProduct}
+              setShowAddProduct={(show) => {
+                setShowAddProduct(show);
+                if (!show) setPendingBarcode('');
+              }}
               scannerMode={scannerMode}
               setScannerMode={setScannerMode}
               setIsScannerOpen={setIsScannerOpen}
               suppliers={suppliers}
               handleAddProduct={handleAddProduct}
               setActiveTab={setActiveTab}
+              initialBarcode={pendingBarcode}
+              roundingFactor={roundingFactor}
             />
           )}
 
@@ -5039,6 +5227,7 @@ export default function App() {
               setIsScannerOpen={setIsScannerOpen}
               suppliers={suppliers}
               handleEditProduct={handleEditProduct}
+              roundingFactor={roundingFactor}
             />
           )}
 
@@ -5182,6 +5371,23 @@ export default function App() {
               showAddCustomer={showAddCustomer}
               setShowAddCustomer={setShowAddCustomer}
               handleAddCustomer={handleAddCustomer}
+              customers={customers}
+              formatPrice={formatPrice}
+              onSelectExistingCustomer={(c) => {
+                setSelectedCustomer(c.id);
+                setIsCartExpanded(true);
+              }}
+              fetchCustomerHistory={fetchCustomerHistory}
+            />
+          )}
+
+          {editingCustomer && (
+            <EditCustomerModal
+              key="modal-edit-customer"
+              customer={editingCustomer}
+              onClose={() => setEditingCustomer(null)}
+              onUpdateCustomer={handleUpdateCustomer}
+              customers={customers}
             />
           )}
 
@@ -5240,6 +5446,7 @@ export default function App() {
               formatDateTimeWithDay={formatDateTimeWithDay}
               setShowPaymentModal={setShowPaymentModal}
               setShowCustomerAdjustmentModal={setShowCustomerAdjustmentModal}
+              onEditCustomer={(c) => setEditingCustomer(c)}
               storeName={storeName}
               storePhone={storePhone}
               currency={currency}

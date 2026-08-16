@@ -19,6 +19,8 @@ export async function saveAIMessage(
     content: string;
     intent?: string;
     evidence?: any;
+    processingStages?: any;
+    reasoningSummary?: string;
   }
 ): Promise<AIMessageRecord> {
   const timestamp = Date.now();
@@ -32,6 +34,8 @@ export async function saveAIMessage(
     timestamp,
     intent: message.intent,
     evidence: message.evidence,
+    processingStages: message.processingStages,
+    reasoningSummary: message.reasoningSummary,
   };
 
   try {
@@ -153,6 +157,22 @@ export function updateMemoryState(
 
   activeStateCache.set(conversationId, updatedState);
   return { updatedState, isFollowUp };
+}
+
+/**
+ * Updates active session entity state with execution evidence and final answer outcome.
+ */
+export function saveTurnExecutionOutcome(
+  conversationId: string,
+  patch: Partial<ActiveEntityState>
+): void {
+  const current = activeStateCache.get(conversationId) || { updatedAt: Date.now() };
+  const updated: ActiveEntityState = {
+    ...current,
+    ...patch,
+    updatedAt: Date.now(),
+  };
+  activeStateCache.set(conversationId, updated);
 }
 
 /**

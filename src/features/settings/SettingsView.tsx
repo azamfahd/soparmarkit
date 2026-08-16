@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useLiveQuery } from '../../hooks/useLiveQuery';
 import { db } from '../../db';
 import { 
   Home, Edit, ShieldCheck, Database, Download, Upload, 
@@ -54,7 +54,7 @@ export interface SettingsViewProps {
   clientPhone: string;
   setClientPhone: (phone: string) => void;
   isSubmittingRequest: boolean;
-  handleRequestCloudActivation: () => void;
+  handleRequestCloudActivation: (customDuration?: number, isRenewal?: boolean) => void;
   handleDeactivateApp: () => void;
   showHiddenAdminInput: boolean;
   isDeveloperMode: boolean;
@@ -168,6 +168,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [embeddingMode, setEmbeddingMode] = React.useState<'auto' | 'server' | 'local'>(() => embeddingManager.getMode());
   const [isReindexing, setIsReindexing] = React.useState(false);
+  const [showEditInfo, setShowEditInfo] = React.useState(false);
+  const [userRequestedDuration, setUserRequestedDuration] = React.useState(365);
 
   // Local fallback states for Custom Developer PIN
   const [localShowPinChangeModal, setLocalShowPinChangeModal] = React.useState(false);
@@ -577,105 +579,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Card 6: Neural RAG & Gemini API Key */}
         <Card className="p-4 sm:p-5 border border-emerald-100/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-emerald-100 pb-2.5">
-              <div className="flex items-center gap-2 text-slate-800">
-                <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
-                  <Brain className="w-4 h-4 text-emerald-600 animate-pulse" />
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-emerald-100/60 pb-3">
+              <div className="flex items-center gap-2.5 text-slate-800">
+                <div className="p-2 bg-gradient-to-br from-emerald-100 to-teal-50 text-emerald-700 rounded-xl border border-emerald-200/50 shadow-inner">
+                  <Brain className="w-4 h-4 animate-pulse" />
                 </div>
-                <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">إعدادات الذكاء ومحرك RAG</h3>
+                <div>
+                  <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">نظام الذكاء المستقل (الوكيل المحلي)</h3>
+                  <p className="text-[9px] font-bold text-emerald-600 mt-0.5">RAG & Machine Learning</p>
+                </div>
               </div>
-              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <Shield className="w-2.5 h-2.5 text-emerald-600" /> محلي 100%
+              <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/60 border border-emerald-200 shadow-sm px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                <Shield className="w-3 h-3 text-emerald-600" /> خصوصية تامة
               </span>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-600 block text-right">طريقة المتجهات العصبية:</label>
-              <div className="grid grid-cols-3 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('auto')}
-                  className={`p-2 rounded-xl border text-[11px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
-                    embeddingMode === 'auto'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-extrabold'
-                      : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <span>تلقائي</span>
-                  <span className="text-[8px] font-normal opacity-80">سحابي+محلي</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('server')}
-                  className={`p-2 rounded-xl border text-[11px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
-                    embeddingMode === 'server'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-extrabold'
-                      : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <span>سحابي</span>
-                  <span className="text-[8px] font-normal opacity-80">Gemini 768d</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleModeChange('local')}
-                  className={`p-2 rounded-xl border text-[11px] font-bold transition-all flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
-                    embeddingMode === 'local'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-extrabold'
-                      : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <span>محلي 100%</span>
-                  <span className="text-[8px] font-normal opacity-80">Hash 256d</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-100 pt-2 space-y-1.5">
-              <label className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 justify-between">
-                <span className="flex items-center gap-1">
-                  <Key className="w-3 h-3 text-emerald-600" />
-                  مفتاح Gemini API الخاص (اختياري)
-                </span>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-600 hover:text-sky-700 bg-sky-50 px-2 py-0.5 rounded-lg border border-sky-100"
-                >
-                  <ExternalLink className="w-2.5 h-2.5" />
-                  جلب مفتاح
-                </a>
-              </label>
-              <div className="flex gap-1.5">
-                <input
-                  type="password"
-                  value={customApiKeyInput}
-                  onChange={(e) => setCustomApiKeyInput(e.target.value.replace(/\s/g, ''))}
-                  onPaste={(e) => {
-                    e.preventDefault();
-                    const pastedText = e.clipboardData.getData('text');
-                    setCustomApiKeyInput(pastedText.replace(/\s/g, ''));
-                  }}
-                  placeholder="AIzaSy... (اتركه فارغاً للوضع المحلي)"
-                  className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white dir-ltr text-left font-mono"
-                />
-                <Button
-                  onClick={handleSaveCustomApiKey}
-                  disabled={isVerifyingKey}
-                  className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-3 py-1.5 rounded-xl shrink-0 transition-all flex items-center gap-1 disabled:opacity-50"
-                >
-                  {isVerifyingKey ? (
-                    <RefreshCw className="w-3 h-3 animate-spin" />
-                  ) : savedKeyNotice ? (
-                    <Check className="w-3 h-3 text-emerald-400" />
-                  ) : (
-                    <Key className="w-3 h-3" />
-                  )}
-                  <span>{isVerifyingKey ? 'تحقق...' : 'حفظ'}</span>
-                </Button>
-              </div>
+            <div className="pt-1">
+              <span className="text-[11px] font-bold text-slate-800 block text-right flex items-center gap-1.5 mb-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> الوكيل المحاسبي الذكي وتنقيب البيانات
+              </span>
+              <p className="text-[10.5px] text-slate-500 leading-relaxed font-medium">
+                يعمل الوكيل الذكي وخوارزميات استرجاع المعرفة (RAG) والتعلم الآلي (ML) بآلية لامركزية بالكامل داخل جهازك. لا يتم إرسال أي بيانات إلى خوادم خارجية، مما يضمن حماية وسرية مطلقة لبياناتك المالية، وبدون الحاجة للاتصال بالإنترنت.
+              </p>
             </div>
           </div>
 
@@ -1047,43 +973,120 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <div className="space-y-2">
                     <p className="text-[10px] text-slate-500 leading-relaxed">
                       {isActivated 
-                        ? 'النظام مفعل حالياً ✅. يمكنك إرسال طلب جديد لمالك النظام لتجديد أو تمديد صلاحية الترخيص فور قرب انتهائها.'
-                        : 'أرسل طلب تفعيل مباشر لمالك البرنامج سحابياً دون الحاجة لنقل الرموز يدوياً.'}
+                        ? 'النظام مفعل حالياً ✅. يمكنك طلب تجديد وتمديد الترخيص بضغطة زر واحدة دون الحاجة لإعادة كتابة بياناتك.'
+                        : (clientStoreName || cloudRequest)
+                          ? 'يمكنك إرسال طلب تجديد أو تفعيل سحابي للمدير مباشرة بالبيانات المسجلة.'
+                          : 'أرسل طلب تفعيل مباشر لمالك البرنامج سحابياً دون الحاجة لنقل الرموز يدوياً.'}
                     </p>
                     
-                    <div className="space-y-1.5 bg-white p-2 rounded-xl border border-slate-200/70">
-                      <input 
-                        type="text"
-                        value={clientStoreName}
-                        onChange={(e) => setClientStoreName(e.target.value)}
-                        placeholder="اسم المتجر (مثال: سوبرماركت الوفاء)"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs text-right"
-                      />
-                      <input 
-                        type="text"
-                        value={clientPhone}
-                        onChange={(e) => setClientPhone(e.target.value)}
-                        placeholder="رقم الهاتف (777xxxxxx)"
-                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs text-left font-mono"
-                      />
-                      <button
-                        disabled={isSubmittingRequest}
-                        onClick={handleRequestCloudActivation}
-                        className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-55 text-white font-bold rounded-lg transition-all cursor-pointer text-xs flex items-center justify-center gap-1 mt-1"
-                      >
-                        {isSubmittingRequest ? (
-                          <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>جاري إرسال الطلب...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Cloud className="w-3.5 h-3.5" />
-                            <span>{isActivated ? 'إرسال طلب تجديد/تمديد الاشتراك 📡' : 'إرسال الطلب السحابي 📡'}</span>
-                          </>
+                    {(clientStoreName || cloudRequest || isActivated) ? (
+                      /* Streamlined Renewal Form using saved Store Name & Phone */
+                      <div className="space-y-2.5 bg-indigo-50/80 p-3 rounded-xl border border-indigo-150 text-right">
+                        <div className="flex justify-between items-center border-b border-indigo-100 pb-2">
+                          <button 
+                            type="button"
+                            onClick={() => setShowEditInfo(!showEditInfo)}
+                            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold underline cursor-pointer"
+                          >
+                            {showEditInfo ? 'إلغاء التعديل' : 'تعديل البيانات ✏️'}
+                          </button>
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-bold text-slate-800 block">
+                              المتجر المسجل: <span className="text-indigo-700 font-black">{clientStoreName || 'غير مسجل'}</span>
+                            </span>
+                            {clientPhone && <span className="text-[11px] font-mono text-slate-500 font-bold block">{clientPhone}</span>}
+                          </div>
+                        </div>
+
+                        {showEditInfo && (
+                          <div className="space-y-1.5 pt-1 border-b border-indigo-100 pb-2">
+                            <input 
+                              type="text"
+                              value={clientStoreName}
+                              onChange={(e) => setClientStoreName(e.target.value)}
+                              placeholder="اسم المتجر (مثال: سوبرماركت الوفاء)"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs text-right"
+                            />
+                            <input 
+                              type="text"
+                              value={clientPhone}
+                              onChange={(e) => setClientPhone(e.target.value)}
+                              placeholder="رقم الهاتف (777xxxxxx)"
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs text-left font-mono"
+                            />
+                          </div>
                         )}
-                      </button>
-                    </div>
+
+                        {/* Renewal Duration Selector */}
+                        <div className="flex items-center justify-between gap-2 pt-0.5">
+                          <select 
+                            value={userRequestedDuration}
+                            onChange={(e) => setUserRequestedDuration(Number(e.target.value))}
+                            className="px-2 py-1 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-700 outline-none"
+                          >
+                            <option value={30}>شهر (30 يوم)</option>
+                            <option value={90}>3 أشهر (90 يوم)</option>
+                            <option value={180}>6 أشهر (180 يوم)</option>
+                            <option value={365}>سنة (365 يوم - افتراضي)</option>
+                            <option value={9999}>مدى الحياة ♾️</option>
+                          </select>
+                          <label className="text-xs font-bold text-slate-600">مدة التجديد المطلوبة (اختياري):</label>
+                        </div>
+
+                        <button
+                          disabled={isSubmittingRequest}
+                          onClick={() => handleRequestCloudActivation(userRequestedDuration, true)}
+                          className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-55 text-white font-bold rounded-lg transition-all cursor-pointer text-xs flex items-center justify-center gap-1.5 shadow-sm"
+                        >
+                          {isSubmittingRequest ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>جاري إرسال طلب التجديد...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Cloud className="w-3.5 h-3.5" />
+                              <span>طلب تجديد وتمديد الاشتراك من المدير 📡</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    ) : (
+                      /* Initial Request Form for First-Time Users */
+                      <div className="space-y-1.5 bg-white p-2 rounded-xl border border-slate-200/70">
+                        <input 
+                          type="text"
+                          value={clientStoreName}
+                          onChange={(e) => setClientStoreName(e.target.value)}
+                          placeholder="اسم المتجر (مثال: سوبرماركت الوفاء)"
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs text-right"
+                        />
+                        <input 
+                          type="text"
+                          value={clientPhone}
+                          onChange={(e) => setClientPhone(e.target.value)}
+                          placeholder="رقم الهاتف (777xxxxxx)"
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs text-left font-mono"
+                        />
+                        <button
+                          disabled={isSubmittingRequest}
+                          onClick={() => handleRequestCloudActivation(365, false)}
+                          className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-55 text-white font-bold rounded-lg transition-all cursor-pointer text-xs flex items-center justify-center gap-1 mt-1"
+                        >
+                          {isSubmittingRequest ? (
+                            <>
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                              <span>جاري إرسال الطلب...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Cloud className="w-3.5 h-3.5" />
+                              <span>إرسال الطلب السحابي للمدير 📡</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1190,6 +1193,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {activeDevTab === 'requests' ? (
                 /* Cloud Requests Dashboard */
                 <div className="space-y-3">
+                  {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-900 text-xs font-bold flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                        </span>
+                        تنبيه للمدير: يوجد {allCloudRequests.filter(r => r.status === 'pending').length} طلب تفعيل/تجديد بانتظار الموافقة!
+                      </span>
+                    </div>
+                  )}
+
                   {allCloudRequests.length === 0 ? (
                     <div className="text-center py-8 text-slate-400 text-xs font-bold">
                       لا توجد أي طلبات تفعيل سحابية في السحابة حالياً.
@@ -1197,7 +1212,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   ) : (
                     <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                       {allCloudRequests.map((req) => {
-                        const selectedDuration = requestDurations[req.deviceId] || 365;
+                        const isRenewal = req.requestType === 'renewal';
+                        const selectedDuration = requestDurations[req.deviceId] || req.requestedDuration || 365;
                         return (
                           <div key={req.deviceId} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-right">
                             {/* Request Header */}
@@ -1212,7 +1228,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                 </button>
                               </div>
                               <div className="space-y-0.5">
-                                <div className="flex items-center gap-2 justify-end">
+                                <div className="flex items-center gap-2 justify-end flex-wrap">
+                                  {isRenewal ? (
+                                    <span className="px-2 py-0.5 text-[10px] font-black bg-indigo-100 text-indigo-700 rounded-full flex items-center gap-1">
+                                      🔄 طلب تجديد
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 text-[10px] font-black bg-emerald-100 text-emerald-700 rounded-full flex items-center gap-1">
+                                      🆕 طلب جديد
+                                    </span>
+                                  )}
                                   {req.status === 'pending' && <span className="px-2 py-0.5 text-[10px] font-black bg-amber-100 text-amber-700 rounded-full">معلق ⏳</span>}
                                   {req.status === 'approved' && <span className="px-2 py-0.5 text-[10px] font-black bg-emerald-100 text-emerald-700 rounded-full">موافق ومفعّل ✅</span>}
                                   {req.status === 'rejected' && <span className="px-2 py-0.5 text-[10px] font-black bg-rose-100 text-rose-700 rounded-full">مرفوض ❌</span>}
@@ -1247,6 +1272,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                               </div>
                             </div>
 
+                            {/* Show Requested Duration Badge if present */}
+                            {req.requestedDuration && req.status === 'pending' && (
+                              <div className="text-[11px] text-indigo-700 font-extrabold bg-indigo-50/90 px-3 py-1.5 rounded-xl border border-indigo-150 flex items-center justify-between">
+                                <span className="font-black">{req.requestedDuration === 9999 ? 'مدى الحياة ♾️' : `${req.requestedDuration} يوم (${Math.round(req.requestedDuration / 30)} أشهر)`}</span>
+                                <span className="text-slate-500 font-bold">المدة المطلوبة من العميل:</span>
+                              </div>
+                            )}
+
                             {/* Action Fields based on status */}
                             {req.status === 'pending' ? (
                               <div className="space-y-3 pt-1 border-t border-slate-100">
@@ -1265,7 +1298,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                     <option value={365}>سنة (365 يوم)</option>
                                     <option value={9999}>مدى الحياة ♾️</option>
                                   </select>
-                                  <label className="text-xs font-bold text-slate-500">مدة الترخيص للعميل:</label>
+                                  <label className="text-xs font-bold text-slate-500">مدة الترخيص المعتمدة:</label>
                                 </div>
 
                                 <div className="flex gap-2">
@@ -1279,7 +1312,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                     onClick={() => handleApproveCloudRequest(req, selectedDuration)}
                                     className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/10 cursor-pointer"
                                   >
-                                    موافقة وتفعيل تلقائي ✅
+                                    {isRenewal ? 'تأكيد وتفعيل التجديد ✅' : 'موافقة وتفعيل تلقائي ✅'}
                                   </button>
                                 </div>
                               </div>

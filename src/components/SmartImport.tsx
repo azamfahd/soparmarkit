@@ -33,7 +33,7 @@ type DataType = 'products' | 'customers' | 'suppliers' | 'mixed';
 
 export default function SmartImport({ onImported, storeName, onGoBack }: SmartImportProps) {
   const [dataType, setDataType] = useState<DataType>('mixed'); // default to 'mixed' for an all-in-one awesome experience!
-  const [parseMethod, setParseMethod] = useState<'ai' | 'classic'>('ai');
+  const [parseMethod, setParseMethod] = useState<'classic' | 'classic'>('classic');
   const [pastedText, setPastedText] = useState<string>('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [base64File, setBase64File] = useState<{ data: string; mimeType: string } | null>(null);
@@ -1009,49 +1009,18 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
             </div>
 
             <div className="space-y-4">
-              {/* Parse Method Selector */}
-              <div className="bg-slate-50 p-1.5 rounded-2xl border border-slate-200/80 space-y-1">
-                <p className="text-[10px] font-bold text-slate-400 mr-2">تحديد تقنية معالجة البيانات المرفوعة:</p>
-                <div className="flex bg-slate-100 p-1 rounded-xl">
-                  <button 
-                    type="button"
-                    onClick={() => { setParseMethod('ai'); }}
-                    className={`flex-1 py-1.5 text-[11px] font-black rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${parseMethod === 'ai' ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                    <span>الذكاء الاصطناعي (اختياري بالإنترنت)</span>
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => { setParseMethod('classic'); }}
-                    className={`flex-1 py-1.5 text-[11px] font-black rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${parseMethod === 'classic' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-                  >
-                    <Database className="w-3.5 h-3.5 text-slate-600" />
-                    <span>المعالج الكلاسيكي الذكي (بدون إنترنت ⚡)</span>
-                  </button>
-                </div>
+              <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-100/80 text-right animate-fadeIn">
+                <p className="text-[10px] text-emerald-800 font-bold leading-relaxed">
+                  💚 **المعالج الكلاسيكي الذكي**: يعمل محلياً بالكامل وفوراً **بدون اتصال بالإنترنت**. سيقوم بفك وحساب الأرقام، وتحديد أرقام الجوالات والباركود وتفصيل الأقسام بذكاء أوتوماتيكي متطور.
+                </p>
               </div>
-
-              {parseMethod === 'classic' ? (
-                <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-100/80 text-right animate-fadeIn">
-                  <p className="text-[10px] text-emerald-800 font-bold leading-relaxed">
-                    💚 **المعالج الكلاسيكي الذكي**: يعمل محلياً بالكامل وفوراً **بدون اتصال بالإنترنت**. سيقوم بفك وحساب الأرقام، وتحديد أرقام الجوالات والباركود وتفصيل الأقسام بذكاء أوتوماتيكي متطور.
-                  </p>
-                </div>
-              ) : (
-                <div className="bg-violet-50/70 p-3 rounded-2xl border border-violet-100/80 text-right animate-fadeIn">
-                  <p className="text-[10px] text-violet-800 font-bold leading-relaxed">
-                     **تقنية Gemini السحابية (إضافي واختياري)**: تتطلب اتصالاً بالإنترنت لتحليل صور الفواتير الورقية بخط اليد وتحويلها بالكامل لبيانات رقمية.
-                  </p>
-                </div>
-              )}
 
               <motion.button 
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.99 }}
                 disabled={isLoading || (!uploadedFile && !pastedText)}
-                onClick={parseMethod === 'ai' ? triggerAIAnalysis : triggerClassicAnalysis}
-                className={`w-full py-4 rounded-3xl font-black text-sm flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer ${isLoading || (!uploadedFile && !pastedText) ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white shadow-violet-200'}`}
+                onClick={triggerClassicAnalysis}
+                className={`w-full py-4 rounded-3xl font-black text-sm flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer ${isLoading || (!uploadedFile && !pastedText) ? 'bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200' : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-emerald-200'}`}
               >
                 {isLoading ? (
                   <>
@@ -1060,17 +1029,8 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
                   </>
                 ) : (
                   <>
-                    {parseMethod === 'ai' ? (
-                      <>
-                        <Sparkles className="w-4 h-4 text-yellow-300 animate-pulse" />
-                        <span>تحليل بالذكاء الاصطناعي 🚀</span>
-                      </>
-                    ) : (
-                      <>
-                        <Database className="w-4 h-4 text-emerald-300" />
-                        <span>معالجة وتفصيل النص كلاسيكياً (بدون إنترنت) ⚡</span>
-                      </>
-                    )}
+                    <Database className="w-4 h-4 text-emerald-100" />
+                    <span>معالجة وتفصيل النص كلاسيكياً (بدون إنترنت) ⚡</span>
                   </>
                 )}
               </motion.button>

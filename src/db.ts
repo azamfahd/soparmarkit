@@ -131,6 +131,8 @@ export interface AIMessageRecord {
   timestamp: number;
   intent?: string;
   evidence?: any;
+  processingStages?: any;
+  reasoningSummary?: string;
 }
 
 export interface KnowledgeDocumentRecord {
@@ -171,6 +173,15 @@ export interface AIFeedbackRecord {
   timestamp: number;
 }
 
+export interface AITrainingRecord {
+  id?: number;
+  query: string;
+  expectedIntent: string;
+  expectedEntities?: string; // JSON string array of Entity
+  notes?: string;
+  createdAt: number;
+}
+
 export class GroceryDatabase extends Dexie {
   products!: Table<Product>;
   customers!: Table<Customer>;
@@ -190,6 +201,7 @@ export class GroceryDatabase extends Dexie {
   knowledgeDocuments!: Table<KnowledgeDocumentRecord>;
   documentChunks!: Table<DocumentChunkRecord>;
   aiFeedback!: Table<AIFeedbackRecord>;
+  aiTrainingData!: Table<AITrainingRecord>;
 
   constructor() {
     super('GroceryDB');
@@ -333,7 +345,7 @@ export class GroceryDatabase extends Dexie {
       knowledgeDocuments: '++id, title, category, *tags, createdAt',
       aiFeedback: '++id, messageId, rating, timestamp'
     });
-    this.version(14).stores({
+    this.version(15).stores({
       products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
       customers: '++id, name, phone',
       sales: '++id, customer_id, created_at',
@@ -351,7 +363,8 @@ export class GroceryDatabase extends Dexie {
       aiMessages: 'id, conversationId, timestamp, role',
       knowledgeDocuments: '++id, title, category, *tags, createdAt',
       documentChunks: '++id, documentId, chunkIndex, *tags, createdAt',
-      aiFeedback: '++id, messageId, rating, timestamp'
+      aiFeedback: '++id, messageId, rating, timestamp',
+      aiTrainingData: '++id, query, expectedIntent, expectedEntities'
     });
   }
 }

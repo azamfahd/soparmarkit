@@ -95,8 +95,13 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
   const [diagnosticAttempts, setDiagnosticAttempts] = useState<number>(0);
   const [isDiagnosticLocked, setIsDiagnosticLocked] = useState<boolean>(false);
 
-  const [clientStoreName, setClientStoreName] = useState<string>('');
-  const [clientPhone, setClientPhone] = useState<string>('');
+  const [clientStoreName, setClientStoreName] = useState<string>(() => {
+    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientStoreName') || '') : '';
+  });
+  const [clientPhone, setClientPhone] = useState<string>(() => {
+    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientPhone') || '') : '';
+  });
+  const [requestedRenewalDuration, setRequestedRenewalDuration] = useState<number>(365);
   const [cloudRequest, setCloudRequest] = useState<ActivationRequest | null>(null);
   const [isSubmittingRequest, setIsSubmittingRequest] = useState<boolean>(false);
   const [allCloudRequests, setAllCloudRequests] = useState<ActivationRequest[]>([]);
@@ -296,16 +301,34 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
     });
   };
 
-  const handleRequestCloudActivation = async (showNotification: any) => {
+  const handleRequestCloudActivation = async (showNotification: any, customDuration?: number, forcedRenewal?: boolean) => {
     if (!clientStoreName.trim()) {
       showNotification('يرجى إدخال اسم المتجر أولاً!', 'error');
       return;
     }
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('cache_clientStoreName', clientStoreName);
+        localStorage.setItem('cache_clientPhone', clientPhone);
+      }
+    } catch (e) {
+      console.warn("Failed to persist store details locally:", e);
+    }
+
+    const durationToUse = customDuration || requestedRenewalDuration || 365;
+    const isRenewalReq = forcedRenewal || isActivated || Boolean(cloudRequest);
+    const reqType = isRenewalReq ? 'renewal' : 'initial';
     
     setIsSubmittingRequest(true);
     try {
-      await submitActivationRequest(deviceID, clientStoreName, clientPhone);
-      showNotification('تم إرسال طلب التفعيل الرقمي بنجاح وهو قيد المراجعة الآن!', 'success');
+      await submitActivationRequest(deviceID, clientStoreName, clientPhone, reqType, durationToUse);
+      showNotification(
+        reqType === 'renewal'
+          ? 'تم إرسال طلب تجديد وتمديد الاشتراك إلى المدير بنجاح!'
+          : 'تم إرسال طلب التفعيل الرقمي بنجاح وهو قيد المراجعة الآن!',
+        'success'
+      );
     } catch (e) {
       console.error(e);
       showNotification('حدث خطأ أثناء إرسال الطلب، يرجى التحقق من اتصالك بالإنترنت والتحميل مجدداً', 'error');

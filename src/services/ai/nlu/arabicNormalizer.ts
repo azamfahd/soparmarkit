@@ -15,8 +15,13 @@ export function normalizeArabic(text: string): string {
   // Normalize Alif Maqsura to Yaa
   normalized = normalized.replace(/ى/g, 'ي');
 
-  // Normalize Hamza forms
-  normalized = normalized.replace(/[ؤئء]/g, '');
+  // Normalize Hamza forms:
+  // Hamza on Nabrah (ئ) is phonetically/orthographically Yaa (e.g., رائد -> رايد, فائز -> فايز)
+  normalized = normalized.replace(/ئ/g, 'ي');
+  // Hamza on Waw (ؤ) is phonetically/orthographically Waw (e.g., مؤيد -> مويد, لؤي -> لوي)
+  normalized = normalized.replace(/ؤ/g, 'و');
+  // Standalone Hamza (ء)
+  normalized = normalized.replace(/ء/g, '');
   
   // Normalize Eastern Arabic & Persian numbers to Western digits
   const arabicNumbers = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
@@ -32,13 +37,56 @@ export function normalizeArabic(text: string): string {
   // Strip punctuation but keep alphanumeric and spaces
   normalized = normalized.replace(/[^\w\s\u0600-\u06FF]/g, ' ');
   
-  // Strip dialectal question filler words (e.g., "أيش", "كام", "قديش", "وش", "تكفة")
-  normalized = normalized.replace(/\b(ايش|وش|شو|كام|قديش|قد ايه|شلون|ازاي|وين|فين|تكفه|برجاء|لو سمحت|عايز|عاوز|يبي|يبغي|محتاج)\b/gi, ' ');
+  // Strip leading conjunctions when they start short follow-up questions (e.g. "والأمس" -> "الامس", "وهذا الشهر" -> "هذا الشهر", "ومن أكثر" -> "من اكثر", "وكم ربحنا" -> "كم ربحنا")
+  normalized = normalized.replace(/^و\s*(الامس|امس|البارحه|اليوم|هذا الشهر|الشهر الماضي|هذا الاسبوع|الاسبوع الماضي|من اكثر|كم ربحنا|كم دخل|كم باقي|ايش اكثر)\b/gi, '$1');
 
+  // Normalize common Yemeni & Arabian dialectal question/filler/colloquial words
+  // Extensive mapping for dialect tolerance
+  normalized = normalized.replace(/\b(ماهو|ماهي|ماهوش|ايشهو|ايشبه|ايش فيه|وش|شو|شنو|كم به|كمشي|كمو|كم عاد|شكم|قد به|قدو|مابه|ما به|شتي|تشتي|اشتيك|اشتي|يشتي|نشتي|اديني|ادلي|جيب لي|هات لي|طلع لي|احسب لي|وريني|خبرني|علمني|قل لي|فهمني|ابغاك|ابغى|ودي|قديش|قد ايه|شلون|ازاي|وين|فين|تكفه|برجاء|لو سمحت|عايز|عاوز|يبي|يبغي|محتاج|بالله|اسمع|يا ذكي|يا محاسب|يا وكيل|ياخي|يارجال|بكمشي|على كم|شاقول|الصدق|امانه|امانتك|ممكن|تقدر|لو تكرمت|معاك|سعكم|سع|مقضي|مسابرة|اديلو|ادي|مابش|مامن|ماحد|لديكم|عندكم)\b/gi, ' ');
+
+  // Standardize core interrogatives and phrases
+  normalized = normalized.replace(/\b(ايش بعنا|ايش انباع|ايش الذي بعناه|ايش اللي بعناه)\b/g, 'كم مبيعات');
+  normalized = normalized.replace(/\b(كم جاب المحل|كم دخل لنا|كم دخل للمحل|كم كانت مبيعاتنا|كم مبيعاتنا|كم دخل اليوميه|كم طلعنا|كم حق اليوم)\b/g, 'كم مبيعات');
+  normalized = normalized.replace(/\b(مين اكثر واحد عليه فلوس|من اكثر واحد يدين|من عليه اكثر ديون|من اكثر زبون متسلف|من اكثر العملاء دينا)\b/g, 'اكثر العملاء ديونا');
+  normalized = normalized.replace(/\b(ايش اكثر صنف جاب لنا فلوس|ايش اكثر منتج دخل فلوس|ايش اكثر صنف ربحنا منه|ايش اعلى صنف بيعا)\b/g, 'اكثر المنتجات ربحا ومبيعا');
+  normalized = normalized.replace(/\b(ايش الاشياء اللي قربت تخلص|ايش الاصناف اللي بتخلص|ايش اللي ناقص|ايش النواقص|ايش عاد به ناقص)\b/g, 'المنتجات الناقصة');
+  normalized = normalized.replace(/\b(هل الشغل هذا الشهر افضل|هل مبيعاتنا احسن|هل وضعنا افضل من قبل|قارن هذا الشهر بالماضي)\b/g, 'مقارنة اداء الشهر الحالي بالماضي');
+  normalized = normalized.replace(/\b(كيف وضع المحل|كيف صحة المحل|كيف الشغل عموما|اعطني تشخيص المحل|تقرير شامل عن المحل)\b/g, 'تقرير صحة المحل الشامل');
+
+  // Normalize phonetic and dialectal spelling variations & shortcuts (Yemeni/Local)
+  normalized = normalized.replace(/\b(زلط|بيس|مصاري|قروش|دراهم|نقود)\b/g, 'فلوس');
+  normalized = normalized.replace(/\b(دكاكين|محلات|بقالات|بوفيات)\b/g, 'محل');
+  normalized = normalized.replace(/\b(كشفه|حسابه|حساباتهم|دفتره|دفاتر|حساباته|كشوفاته|كشف حساب)\b/g, 'حساب');
+  normalized = normalized.replace(/\b(الزباين|للزبائن|المشتريين|مشترين|زباينه|للزباين|لزبون)\b/g, 'عميل');
+  normalized = normalized.replace(/\b(الموردين|للموردين|موردينه|مزودين|تجار الجمله|مندوبين|المندوبين|للمندوبين)\b/g, 'مورد');
+  normalized = normalized.replace(/\b(اصناف|ايتم|الايتمات|سلع|اغراض|غرض|حبات|حبه|قطعه|قطع|بضايع|مواد)\b/g, 'منتج');
+  normalized = normalized.replace(/\b(تسليفه|سلف|سلفه|دين|الديون|مديونيه|مديونية|دينه|ديوننا|لهم|لنا|يبونا|نبيهم|نشتي منهم|يشتو مننا)\b/g, 'ديون');
+  normalized = normalized.replace(/\b(امس|البارح|البارحه|امسيه|الامسيه)\b/g, 'الامس');
+  normalized = normalized.replace(/\b(ذلحين|الان|الآن|هسع|الوقت هذا|حاليا|دحين)\b/g, 'اليوم');
+  normalized = normalized.replace(/\b(مشتريات|اشترينا|شرينا|قضينا|تقضينا|مقاضي|صرفنا بضاعه|شراء)\b/g, 'مشتريات');
+  
   // Remove extra spaces
   normalized = normalized.replace(/\s+/g, ' ').trim();
   
   return normalized;
+}
+
+/**
+ * Extracts N-grams (unigrams, bigrams, trigrams, and 4-grams) from normalized text.
+ */
+export function extractNGrams(text: string, maxN = 4): string[] {
+  if (!text) return [];
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const nGrams: string[] = [];
+
+  for (let n = 1; n <= maxN; n++) {
+    for (let i = 0; i <= words.length - n; i++) {
+      const gram = words.slice(i, i + n).join(' ');
+      nGrams.push(gram);
+    }
+  }
+
+  return nGrams;
 }
 
 /**
