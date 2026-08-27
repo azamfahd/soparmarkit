@@ -5,7 +5,7 @@ import { db } from '../../db';
 import { 
   Home, Edit, ShieldCheck, Database, Download, Upload, 
   Sparkles, RefreshCw, Package, Camera, Key, Copy, Activity, 
-  Check, Cloud, Lock, Trash2, Brain, Cpu, ThumbsUp, ThumbsDown, AlertTriangle, Shield, ExternalLink
+  Check, Cloud, Lock, Trash2, Brain, Cpu, ThumbsUp, ThumbsDown, AlertTriangle, Shield, ExternalLink, Bell, Clock
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -26,6 +26,10 @@ export interface SettingsViewProps {
   verifyAdminPermission: (action: string, callback: () => void, title?: string) => void;
   setShowPermissionsConfigModal: (show: boolean) => void;
   exportData: () => void;
+  isBackupOverdue?: boolean;
+  lastBackupDate?: string | null;
+  backupAlertInterval?: string;
+  updateBackupAlertInterval?: (interval: string) => void;
   handleImportPython: () => void;
   importData: (e: React.ChangeEvent<HTMLInputElement>) => void;
   isBackupSyncing: boolean;
@@ -49,10 +53,8 @@ export interface SettingsViewProps {
   handleActivateApp: (key?: string) => void;
   cloudRequest: any;
   handleDeleteCloudRequest: (id: string) => void;
-  clientStoreName: string;
-  setClientStoreName: (name: string) => void;
-  clientPhone: string;
-  setClientPhone: (phone: string) => void;
+  storePhone: string;
+  setStorePhone: (phone: string) => void;
   isSubmittingRequest: boolean;
   handleRequestCloudActivation: (customDuration?: number, isRenewal?: boolean) => void;
   handleDeactivateApp: () => void;
@@ -104,6 +106,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   verifyAdminPermission,
   setShowPermissionsConfigModal,
   exportData,
+  isBackupOverdue,
+  lastBackupDate,
+  backupAlertInterval = '7',
+  updateBackupAlertInterval,
   handleImportPython,
   importData,
   isBackupSyncing,
@@ -127,10 +133,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   handleActivateApp,
   cloudRequest,
   handleDeleteCloudRequest,
-  clientStoreName,
-  setClientStoreName,
-  clientPhone,
-  setClientPhone,
+  storePhone,
+  setStorePhone,
   isSubmittingRequest,
   handleRequestCloudActivation,
   handleDeactivateApp,
@@ -469,23 +473,104 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </Card>
 
         {/* Card 3: Data Export & Import */}
-        <Card className="p-4 sm:p-5 border border-slate-200/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
+        <Card className={`p-4 sm:p-5 border rounded-2xl bg-white transition-all space-y-3 flex flex-col justify-between ${
+          isBackupOverdue 
+            ? 'border-red-300 shadow-[0_0_20px_rgba(239,68,68,0.15)] bg-gradient-to-br from-red-50/30 via-white to-white' 
+            : 'border-slate-200/80 shadow-2xs hover:shadow-xs'
+        }`}>
           <div className="space-y-3">
-            <div className="flex items-center gap-2 text-slate-800 border-b border-slate-100 pb-2.5">
-              <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
-                <Database className="w-4 h-4 text-emerald-600" />
+            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+              <div className="flex items-center gap-2 text-slate-800">
+                <div className={`p-1.5 rounded-xl border ${
+                  isBackupOverdue ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                }`}>
+                  <Database className={`w-4 h-4 ${isBackupOverdue ? 'text-red-600' : 'text-emerald-600'}`} />
+                </div>
+                <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">تصدير واستيراد البيانات (JSON)</h3>
               </div>
-              <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">تصدير واستيراد البيانات (JSON)</h3>
+              {isBackupOverdue && (
+                <span className="text-[10px] font-black text-red-600 bg-red-100/90 px-2 py-0.5 rounded-full border border-red-300 animate-pulse">
+                  نسخة احتياطية مطلوبة ⚠️
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
               تصدير نسخة احتياطية لكافة المبيعات والمنتجات والديون للحفظ أو نقل البيانات لجهاز آخر.
             </p>
+            {lastBackupDate && (
+              <p className="text-[10px] font-bold text-slate-400">
+                آخر نسخة احتياطية: <span className="text-slate-600 font-mono">{new Date(lastBackupDate).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              </p>
+            )}
+
+            {/* Backup Alert Frequency Selector */}
+            <div className="pt-2.5 border-t border-slate-100 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="font-bold text-slate-700 flex items-center gap-1.5 text-[11px]">
+                  <Bell className="w-3.5 h-3.5 text-amber-500" />
+                  <span>تكرار تنبيه النسخ الاحتياطي:</span>
+                </span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
+                  backupAlertInterval === 'off' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                }`}>
+                  {backupAlertInterval === '7' ? 'أسبوعياً (7 أيام)' :
+                   backupAlertInterval === '30' ? 'شهرياً (30 يوماً)' :
+                   backupAlertInterval === '60' ? 'كل شهرين (60 يوماً)' : 'التنبيه معطل'}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100/80 rounded-xl text-[10px]">
+                <button
+                  type="button"
+                  onClick={() => updateBackupAlertInterval?.('7')}
+                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
+                    backupAlertInterval === '7' ? 'bg-white text-emerald-700 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  أسبوع
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateBackupAlertInterval?.('30')}
+                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
+                    backupAlertInterval === '30' ? 'bg-white text-emerald-700 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  شهر
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateBackupAlertInterval?.('60')}
+                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
+                    backupAlertInterval === '60' ? 'bg-white text-emerald-700 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  شهرين
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateBackupAlertInterval?.('off')}
+                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
+                    backupAlertInterval === 'off' ? 'bg-white text-rose-600 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  عدم تفعيل
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="outline" className="flex items-center justify-center gap-1.5 text-xs py-2.5" onClick={exportData}>
-              <Download className="w-3.5 h-3.5 text-emerald-600" />
-              <span>تصدير (JSON)</span>
+            <Button 
+              variant={isBackupOverdue ? "danger" : "outline"} 
+              className={`flex items-center justify-center gap-1.5 text-xs py-2.5 cursor-pointer ${
+                isBackupOverdue 
+                  ? 'bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-extrabold shadow-[0_0_16px_rgba(239,68,68,0.65)] border-red-400 animate-pulse' 
+                  : ''
+              }`} 
+              onClick={exportData}
+            >
+              <Download className={`w-3.5 h-3.5 ${isBackupOverdue ? 'text-white animate-bounce' : 'text-emerald-600'}`} />
+              <span>{isBackupOverdue ? 'تصدير نسخة احتياطية ⚠️' : 'تصدير (JSON)'}</span>
             </Button>
             {window.pywebview && window.pywebview.api ? (
               <Button variant="secondary" className="w-full flex items-center justify-center gap-1.5 text-xs py-2.5" onClick={handleImportPython}>
@@ -974,12 +1059,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <p className="text-[10px] text-slate-500 leading-relaxed">
                       {isActivated 
                         ? 'النظام مفعل حالياً ✅. يمكنك طلب تجديد وتمديد الترخيص بضغطة زر واحدة دون الحاجة لإعادة كتابة بياناتك.'
-                        : (clientStoreName || cloudRequest)
+                        : (storeName || cloudRequest)
                           ? 'يمكنك إرسال طلب تجديد أو تفعيل سحابي للمدير مباشرة بالبيانات المسجلة.'
                           : 'أرسل طلب تفعيل مباشر لمالك البرنامج سحابياً دون الحاجة لنقل الرموز يدوياً.'}
                     </p>
                     
-                    {(clientStoreName || cloudRequest || isActivated) ? (
+                    {(storeName || cloudRequest || isActivated) ? (
                       /* Streamlined Renewal Form using saved Store Name & Phone */
                       <div className="space-y-2.5 bg-indigo-50/80 p-3 rounded-xl border border-indigo-150 text-right">
                         <div className="flex justify-between items-center border-b border-indigo-100 pb-2">
@@ -992,9 +1077,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           </button>
                           <div className="space-y-0.5">
                             <span className="text-xs font-bold text-slate-800 block">
-                              المتجر المسجل: <span className="text-indigo-700 font-black">{clientStoreName || 'غير مسجل'}</span>
+                              المتجر المسجل: <span className="text-indigo-700 font-black">{storeName || 'غير مسجل'}</span>
                             </span>
-                            {clientPhone && <span className="text-[11px] font-mono text-slate-500 font-bold block">{clientPhone}</span>}
+                            {storePhone && <span className="text-[11px] font-mono text-slate-500 font-bold block">{storePhone}</span>}
                           </div>
                         </div>
 
@@ -1002,15 +1087,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           <div className="space-y-1.5 pt-1 border-b border-indigo-100 pb-2">
                             <input 
                               type="text"
-                              value={clientStoreName}
-                              onChange={(e) => setClientStoreName(e.target.value)}
+                              value={storeName}
+                              onChange={(e) => setStoreName(e.target.value)}
                               placeholder="اسم المتجر (مثال: سوبرماركت الوفاء)"
                               className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs text-right"
                             />
                             <input 
                               type="text"
-                              value={clientPhone}
-                              onChange={(e) => setClientPhone(e.target.value)}
+                              value={storePhone}
+                              onChange={(e) => setStorePhone(e.target.value)}
                               placeholder="رقم الهاتف (777xxxxxx)"
                               className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg outline-none text-xs text-left font-mono"
                             />
@@ -1056,15 +1141,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <div className="space-y-1.5 bg-white p-2 rounded-xl border border-slate-200/70">
                         <input 
                           type="text"
-                          value={clientStoreName}
-                          onChange={(e) => setClientStoreName(e.target.value)}
+                          value={storeName}
+                          onChange={(e) => setStoreName(e.target.value)}
                           placeholder="اسم المتجر (مثال: سوبرماركت الوفاء)"
                           className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs text-right"
                         />
                         <input 
                           type="text"
-                          value={clientPhone}
-                          onChange={(e) => setClientPhone(e.target.value)}
+                          value={storePhone}
+                          onChange={(e) => setStorePhone(e.target.value)}
                           placeholder="رقم الهاتف (777xxxxxx)"
                           className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg outline-none text-xs text-left font-mono"
                         />

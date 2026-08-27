@@ -1,5 +1,5 @@
 import { db } from '../../../db';
-import { Evidence } from '../types';
+import { Evidence, NLUResult } from '../types';
 import { detectAnomalies, forecastSales, getMarketBasketRules } from '../ml';
 
 export function filterSalesByDateRange(records: any[], dateRange?: string, dateField = 'created_at') {
@@ -356,7 +356,7 @@ export async function getSalesSummaryTool(dateRange?: string, targetCustomer?: s
   return {
     source: 'INDEXED_DB',
     data: {
-      dateRange: dateRange || 'TODAY',
+      dateRange: dateRange || 'ALL',
       isVerification: !!isVerification,
       searchedCustomer: effectiveCust,
       customerMatched: !!matchedCustomerObj,
@@ -376,17 +376,39 @@ export async function getSalesSummaryTool(dateRange?: string, targetCustomer?: s
 }
 
 /**
+ * 1.1 Credit Sales Summary Tool (المبيعات بالآجل والبيع بالدين)
+ */
+export async function getCreditSalesSummaryTool(
+  dateRange?: string,
+  isVerification?: boolean
+): Promise<Evidence> {
+  const salesEvidence = await getSalesSummaryTool(dateRange, undefined, isVerification);
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      ...salesEvidence.data,
+      creditSalesTotal: salesEvidence.data.debtSales,
+      totalSalesAll: salesEvidence.data.totalAmount,
+      cashSalesTotal: salesEvidence.data.cashSales,
+      dateRange: dateRange || 'ALL',
+    },
+    metadata: { toolName: 'getCreditSalesSummary' },
+  };
+}
+
+/**
  * 2. Profit Summary Tool
  */
-export async function getProfitSummaryTool(dateRange?: string): Promise<Evidence> {
+export async function getProfitSummaryTool(dateRange?: string, rawQuery?: string): Promise<Evidence> {
   const allSales = await db.sales.toArray();
-  const filteredSales = filterSalesByDateRange(allSales, dateRange);
-  const saleIds = new Set(filteredSales.map(s => s.id));
-
   const allSaleItems = await db.saleItems.toArray();
-  const filteredSaleItems = allSaleItems.filter(si => saleIds.has(si.sale_id));
   const products = await db.products.toArray();
   const productMap = new Map(products.map(p => [p.id, p]));
+
+  // 1. Period Metrics
+  const filteredSales = filterSalesByDateRange(allSales, dateRange);
+  const periodSaleIds = new Set(filteredSales.map(s => s.id));
+  const filteredSaleItems = allSaleItems.filter(si => periodSaleIds.has(si.sale_id));
 
   let totalRevenue = 0;
   let totalCost = 0;
@@ -404,14 +426,40 @@ export async function getProfitSummaryTool(dateRange?: string): Promise<Evidence
   const netProfit = totalRevenue - totalCost;
   const marginPercent = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
 
+  // 2. All-Time Cumulative Metrics
+  let allTimeTotalRevenue = 0;
+  let allTimeTotalCost = 0;
+
+  allSaleItems.forEach(item => {
+    const revenue = (item.quantity || 0) * (item.price_at_sale || 0);
+    const p = productMap.get(item.product_id);
+    const costPrice = p ? p.cost_price || 0 : 0;
+    const cost = (item.quantity || 0) * costPrice;
+
+    allTimeTotalRevenue += revenue;
+    allTimeTotalCost += cost;
+  });
+
+  const allTimeNetProfit = allTimeTotalRevenue - allTimeTotalCost;
+  const allTimeMarginPercent = allTimeTotalRevenue > 0 ? Math.round((allTimeNetProfit / allTimeTotalRevenue) * 100) : 0;
+
+  const isCumulativeQuery = rawQuery ? /المحققة|التراكمية|المحل|الكلية|إجمالي|كلي|في النظام/i.test(rawQuery) : false;
+
   return {
     source: 'INDEXED_DB',
     data: {
-      dateRange: dateRange || 'TODAY',
+      dateRange: dateRange || 'ALL',
       totalRevenue,
       totalCost,
       netProfit,
       marginPercent,
+      salesCount: filteredSales.length,
+      allTimeTotalRevenue,
+      allTimeTotalCost,
+      allTimeNetProfit,
+      allTimeMarginPercent,
+      allTimeSalesCount: allSales.length,
+      isCumulativeQuery,
     },
     metadata: { toolName: 'getProfitSummary' },
   };
@@ -640,6 +688,13 @@ export async function getSupplierDebtsTool(targetName?: string, dateRange?: stri
     .filter(s => (s.balance || 0) > 0)
     .sort((a, b) => b.balance - a.balance);
 
+  const supplierPayments = await db.supplierPayments.toArray();
+  const totalCapitalPaidToSuppliers = supplierPayments.reduce((acc, p) => acc + (p.amount || 0), 0);
+
+  const products = await db.products.toArray();
+  const totalInventoryCostValuation = products.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.cost_price || 0)), 0);
+  const totalInventoryRetailValuation = products.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.sale_price || 0)), 0);
+
   return {
     source: 'INDEXED_DB',
     data: {
@@ -649,6 +704,9 @@ export async function getSupplierDebtsTool(targetName?: string, dateRange?: stri
       indebtedSuppliersCount: indebtedSuppliers.length,
       topSuppliersDue: indebtedSuppliers.slice(0, 5),
       allSuppliersCount: suppliers.length,
+      totalCapitalPaidToSuppliers,
+      totalInventoryCostValuation,
+      totalInventoryRetailValuation,
     },
     metadata: { toolName: 'getSupplierDebts' },
   };
@@ -1074,19 +1132,57 @@ export async function getInventoryStatusTool(targetName?: string): Promise<Evide
     );
 
     if (matched.length > 0) {
+      const allSaleItems = await db.saleItems.toArray();
+      const allSales = await db.sales.toArray();
+      const saleMap = new Map(allSales.map(s => [s.id, s]));
+      const customers = await db.customers.toArray();
+      const customerMap = new Map(customers.map(c => [c.id, c]));
+
+      const matchedDetails = matched.map(p => {
+        const pItems = allSaleItems.filter(si => si.product_id === p.id);
+        const totalQtySold = pItems.reduce((acc, si) => acc + si.quantity, 0);
+        const totalRevenue = pItems.reduce((acc, si) => acc + si.quantity * si.price_at_sale, 0);
+        const totalCost = pItems.reduce((acc, si) => acc + si.quantity * (p.cost_price || 0), 0);
+        const totalProfit = totalRevenue - totalCost;
+        const salesCount = pItems.length;
+
+        const recentTransactions = pItems.slice(-5).reverse().map(si => {
+          const s = saleMap.get(si.sale_id);
+          const c = s && s.customer_id ? customerMap.get(s.customer_id) : null;
+          return {
+            saleId: si.sale_id,
+            date: s ? s.created_at : '',
+            customerName: c ? c.name : 'زبون نقدي',
+            quantity: si.quantity,
+            priceAtSale: si.price_at_sale,
+            total: si.quantity * si.price_at_sale,
+          };
+        });
+
+        return {
+          id: p.id,
+          name: p.name,
+          barcode: p.barcode || 'غير محدد',
+          unit: p.unit || 'حبة',
+          stock_quantity: p.stock_quantity,
+          sale_price: p.sale_price,
+          cost_price: p.cost_price,
+          category: p.category || 'عام',
+          production_date: p.production_date,
+          expiration_date: p.expiration_date,
+          totalQtySold,
+          totalRevenue,
+          totalProfit,
+          salesCount,
+          recentTransactions,
+        };
+      });
+
       return {
         source: 'INDEXED_DB',
         data: {
           searchedName: effectiveTarget,
-          matchedProducts: matched.map(p => ({
-            id: p.id,
-            name: p.name,
-            stock_quantity: p.stock_quantity,
-            sale_price: p.sale_price,
-            cost_price: p.cost_price,
-            category: p.category,
-            expiration_date: p.expiration_date,
-          })),
+          matchedProducts: matchedDetails,
         },
         metadata: { toolName: 'getInventoryStatus' },
       };
@@ -2588,5 +2684,275 @@ export async function getProductProfitAndSalesTool(productNameOrId: string | num
     metadata: { toolName: 'getProductProfitAndSales' },
   };
 }
+
+/**
+ * 35. Full System Audit & Inventory Tool (جرد تفصيلي ومبتكر وشامل لكل شيء في النظام حسب الفترة الزمنية)
+ */
+export async function getFullSystemAuditTool(dateRange = 'ALL'): Promise<Evidence> {
+  const [products, sales, saleItems, customers, suppliers, withdrawals] = await Promise.all([
+    db.products.toArray(),
+    db.sales.toArray(),
+    db.saleItems.toArray(),
+    db.customers.toArray(),
+    db.suppliers.toArray(),
+    db.cashWithdrawals?.toArray() || Promise.resolve([]),
+  ]);
+
+  // Product Map for fast cost lookup
+  const costMap = new Map<number, number>();
+  products.forEach(p => {
+    if (p.id) costMap.set(p.id, p.cost_price || 0);
+  });
+
+  // Filter Sales & Withdrawals based on requested dateRange
+  const filteredSales = filterSalesByDateRange(sales, dateRange, 'created_at');
+  const filteredSaleIds = new Set(filteredSales.map(s => s.id));
+  const filteredSaleItems = saleItems.filter(item => filteredSaleIds.has(item.sale_id));
+  const filteredWithdrawals = filterSalesByDateRange(withdrawals, dateRange, 'date');
+
+  // 1. Inventory & Products Audit
+  const totalProductsCount = products.length;
+  let totalStockQuantity = 0;
+  let totalCostValue = 0;
+  let totalRetailValue = 0;
+  let outOfStockCount = 0;
+
+  const lowStockList: any[] = [];
+  products.forEach(p => {
+    const q = p.stock_quantity || 0;
+    const cost = p.cost_price || 0;
+    const sale = p.sale_price || 0;
+    const minStock = (p as any).min_stock_level || 5;
+
+    totalStockQuantity += q;
+    totalCostValue += q * cost;
+    totalRetailValue += q * sale;
+
+    if (q <= 0) {
+      outOfStockCount++;
+    } else if (q <= minStock) {
+      lowStockList.push({ name: p.name, q, minStock });
+    }
+  });
+  const potentialProfit = totalRetailValue - totalCostValue;
+  const periodSoldItemsCount = filteredSaleItems.reduce((acc, item) => acc + (item.quantity || 0), 0);
+
+  // 2. Receivables & Debts Audit
+  const indebtedCustomers = customers.filter(c => (c.balance || 0) > 0);
+  const totalCustomerDebt = indebtedCustomers.reduce((acc, c) => acc + (c.balance || 0), 0);
+  const topDebtors = indebtedCustomers
+    .sort((a, b) => (b.balance || 0) - (a.balance || 0))
+    .slice(0, 5)
+    .map(c => ({ name: c.name, balance: c.balance }));
+
+  const creditorSuppliers = suppliers.filter(s => (s.balance || 0) > 0);
+  const totalSupplierDebt = creditorSuppliers.reduce((acc, s) => acc + (s.balance || 0), 0);
+  const topCreditors = creditorSuppliers
+    .sort((a, b) => (b.balance || 0) - (a.balance || 0))
+    .slice(0, 5)
+    .map(s => ({ name: s.name, balance: s.balance }));
+
+  // 3. Sales & Financial Revenue Audit
+  const totalInvoicesCount = filteredSales.length;
+  const totalSalesRevenue = filteredSales.reduce((acc, s) => acc + (s.total_amount || 0), 0);
+
+  let totalCostOfSales = 0;
+  filteredSaleItems.forEach(item => {
+    const cost = costMap.get(item.product_id) || 0;
+    totalCostOfSales += item.quantity * cost;
+  });
+  const grossProfit = totalSalesRevenue - totalCostOfSales;
+
+  const totalWithdrawalsAmount = filteredWithdrawals.reduce((acc: number, w: any) => acc + (w.amount || 0), 0);
+  const netProfit = grossProfit - totalWithdrawalsAmount;
+
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      period: dateRange,
+      inventory: {
+        totalProductsCount,
+        totalStockQuantity,
+        totalCostValue,
+        totalRetailValue,
+        potentialProfit,
+        outOfStockCount,
+        lowStockCount: lowStockList.length,
+        lowStockList,
+        periodSoldItemsCount,
+      },
+      customers: {
+        totalCount: customers.length,
+        indebtedCount: indebtedCustomers.length,
+        totalDebt: totalCustomerDebt,
+        topDebtors,
+      },
+      suppliers: {
+        totalCount: suppliers.length,
+        creditorCount: creditorSuppliers.length,
+        totalDebt: totalSupplierDebt,
+        topCreditors,
+      },
+      finance: {
+        totalInvoicesCount,
+        totalSalesRevenue,
+        totalCostOfSales,
+        grossProfit,
+        totalWithdrawalsAmount,
+        netProfit,
+        allTimeInvoicesCount: sales.length,
+        allTimeSalesRevenue: sales.reduce((acc, s) => acc + (s.total_amount || 0), 0),
+      },
+      netBusinessPosition: totalCustomerDebt - totalSupplierDebt,
+    },
+    metadata: { toolName: 'getFullSystemAudit' },
+  };
+}
+
+/**
+ * Supplier Payments Filtered By Date and/or Supplier Name Tool
+ */
+export async function getSupplierPaymentsByDateTool(nluResult: NLUResult, memoryContext: any): Promise<Evidence> {
+  const dateEntity = nluResult.entities.find(e => e.type === 'DATE_RANGE');
+  const supplierEntity = nluResult.entities.find(e => e.type === 'SUPPLIER_NAME' || e.type === 'NAME');
+  
+  const supplierName = supplierEntity?.value || memoryContext?.activeEntities?.targetName;
+  const dateRange = (dateEntity?.value as string) || memoryContext?.activeEntities?.dateRange || 'TODAY';
+
+  const payments = await db.supplierPayments.toArray();
+  const suppliers = await db.suppliers.toArray();
+
+  let filtered = filterSalesByDateRange(payments, dateRange, 'payment_date');
+
+  if (supplierName) {
+    const targetSup = suppliers.find(s => matchesNameFuzzy(s.name, supplierName));
+    if (targetSup) {
+      filtered = filtered.filter(t => t.supplier_id === targetSup.id);
+    } else {
+      filtered = filtered.filter(t => t.notes && t.notes.toLowerCase().includes(supplierName.toLowerCase()));
+    }
+  }
+
+  const totalPaid = filtered.reduce((acc, t) => acc + (t.amount || 0), 0);
+
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      supplierName: supplierName || 'كافة الموردين',
+      dateFilter: dateRange,
+      totalPaid,
+      count: filtered.length,
+      payments: filtered.slice(0, 10).map(t => ({
+        id: t.id,
+        amount: t.amount,
+        date: t.payment_date,
+        notes: t.notes || 'سداد مورد'
+      }))
+    },
+    metadata: { toolName: 'getSupplierPaymentsByDate' },
+  };
+}
+
+/**
+ * Credit Sales (Sales on Debt / Credit) Tool
+ */
+export async function getCreditSalesTool(nluResult: NLUResult, memoryContext: any): Promise<Evidence> {
+  const dateEntity = nluResult.entities.find(e => e.type === 'DATE_RANGE');
+  const dateRange = (dateEntity?.value as string) || memoryContext?.activeEntities?.dateRange || 'THIS_MONTH';
+
+  const sales = await db.sales.toArray();
+  const periodSales = filterSalesByDateRange(sales, dateRange, 'created_at');
+
+  const creditSales = periodSales.filter(s => s.payment_type === 'debt' || s.payment_type === 'CREDIT');
+  const totalCreditAmount = creditSales.reduce((acc, s) => acc + (s.total_amount || 0), 0);
+  const totalSalesRevenue = periodSales.reduce((acc, s) => acc + (s.total_amount || 0), 0);
+  const creditRatio = totalSalesRevenue > 0 ? (totalCreditAmount / totalSalesRevenue) * 100 : 0;
+
+  const customers = await db.customers.toArray();
+  const customerMap = new Map(customers.map(c => [c.id, c.name]));
+
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      period: dateRange,
+      creditInvoicesCount: creditSales.length,
+      totalCreditAmount,
+      totalSalesRevenue,
+      creditRatio: Math.round(creditRatio * 10) / 10,
+      recentCreditInvoices: creditSales.slice(0, 5).map(s => ({
+        id: s.id,
+        customerName: s.customer_id ? customerMap.get(s.customer_id) || 'عميل آجل' : 'عميل آجل',
+        amount: s.total_amount,
+        date: s.created_at
+      }))
+    },
+    metadata: { toolName: 'getCreditSales' },
+  };
+}
+
+/**
+ * Cash Withdrawals & Adjustments Tool
+ */
+export async function getWithdrawalsAndAdjustmentsTool(nluResult: NLUResult, memoryContext: any): Promise<Evidence> {
+  const dateEntity = nluResult.entities.find(e => e.type === 'DATE_RANGE');
+  const dateRange = (dateEntity?.value as string) || memoryContext?.activeEntities?.dateRange || 'TODAY';
+
+  const withdrawals = await db.cashWithdrawals.toArray();
+  const periodWithdrawals = filterSalesByDateRange(withdrawals, dateRange, 'created_at');
+
+  const totalAmount = periodWithdrawals.reduce((acc, w) => acc + (w.amount || 0), 0);
+
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      period: dateRange,
+      count: periodWithdrawals.length,
+      totalAmount,
+      items: periodWithdrawals.slice(0, 10).map(w => ({
+        id: w.id,
+        amount: w.amount,
+        reason: w.reason || 'مسحوبات نقدي / تسوية',
+        date: w.created_at
+      }))
+    },
+    metadata: { toolName: 'getWithdrawalsAndAdjustments' },
+  };
+}
+
+/**
+ * System Dictionary Explanation Tool
+ */
+export async function getSystemDictionaryExplanationTool(nluResult: NLUResult, _memoryContext: any): Promise<Evidence> {
+  const { lookupSystemDictionary } = await import('../knowledge/systemDictionary');
+  const rawQuery = (nluResult as any).rawQuery || '';
+  const dictionaryMatches = lookupSystemDictionary(rawQuery);
+
+  const sales = await db.sales.toArray();
+  const suppliers = await db.suppliers.toArray();
+  const customers = await db.customers.toArray();
+  const products = await db.products.toArray();
+
+  const totalSalesRevenue = sales.reduce((acc, s) => acc + (s.total_amount || 0), 0);
+  const totalCustomerDebt = customers.reduce((acc, c) => acc + (c.balance || 0), 0);
+  const totalSupplierDebt = suppliers.reduce((acc, s) => acc + (s.balance || 0), 0);
+  const totalCostValue = products.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.cost_price || 0)), 0);
+
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      queryText: rawQuery,
+      matches: dictionaryMatches,
+      liveMetricsSummary: {
+        totalSalesRevenue,
+        totalCustomerDebt,
+        totalSupplierDebt,
+        totalCostValue,
+      }
+    },
+    metadata: { toolName: 'getSystemDictionaryExplanation' },
+  };
+}
+
+
 
 

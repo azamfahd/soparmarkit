@@ -351,7 +351,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                   <div 
                     key={`supp-payment-${pay.id ?? idx}`} 
                     onClick={() => setSelectedSupplierPayment({ ...pay, supplier_name: showSupplierDetails.name })}
-                    className="bg-white p-4 rounded-2xl border-r-4 border-r-emerald-500 shadow-xs flex flex-col gap-2 cursor-pointer hover:bg-slate-50 active:scale-[0.99] transition-all"
+                    className={`bg-white p-4 rounded-2xl border-r-4 ${pay.amount < 0 ? 'border-r-amber-500' : 'border-r-emerald-500'} shadow-xs flex flex-col gap-2 cursor-pointer hover:bg-slate-50 active:scale-[0.99] transition-all`}
                   >
                     <div className="flex justify-between items-center gap-2">
                       <div className="flex flex-wrap items-center gap-2">
@@ -359,14 +359,14 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                           {pay.payment_date ? formatDateWithDay(pay.payment_date) : ''}
                         </span>
                         {pay.notes && (
-                          <span className="inline-flex items-center gap-1.5 text-[10px] bg-emerald-50 text-emerald-800 border border-emerald-100 px-2 py-0.5 rounded-full font-bold max-w-[130px] sm:max-w-[220px] truncate" title={pay.notes}>
-                            <FileText className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                          <span className={`inline-flex items-center gap-1.5 text-[10px] ${pay.amount < 0 ? 'bg-amber-50 text-amber-800 border-amber-100' : 'bg-emerald-50 text-emerald-700 border-emerald-100'} px-2 py-0.5 rounded-full font-bold max-w-[130px] sm:max-w-[220px] truncate`} title={pay.notes}>
+                            <FileText className={`w-2.5 h-2.5 ${pay.amount < 0 ? 'text-amber-600' : 'text-emerald-600'} shrink-0`} />
                             <span className="truncate">{pay.notes}</span>
                           </span>
                         )}
                       </div>
                       
-                      <span className="font-extrabold text-emerald-700 font-mono text-base whitespace-nowrap">
+                      <span className={`font-extrabold ${pay.amount < 0 ? 'text-amber-700' : 'text-emerald-700'} font-mono text-base whitespace-nowrap`}>
                         {formatPrice(pay.amount)}
                       </span>
                     </div>

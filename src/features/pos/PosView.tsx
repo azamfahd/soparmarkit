@@ -47,6 +47,9 @@ interface PosViewProps {
   setPaymentType: (type: 'cash' | 'debt') => void;
   saleNotes: string;
   setSaleNotes: (notes: string) => void;
+  paidAmountInput: string;
+  setPaidAmountInput: (val: string) => void;
+  currency: string;
   removeFromCart: (productId: number) => void;
   handleCheckout: () => void;
   db: any;
@@ -83,6 +86,9 @@ export const PosView: React.FC<PosViewProps> = ({
   setPaymentType,
   saleNotes,
   setSaleNotes,
+  paidAmountInput,
+  setPaidAmountInput,
+  currency,
   removeFromCart,
   handleCheckout,
   db,
@@ -304,259 +310,406 @@ export const PosView: React.FC<PosViewProps> = ({
               exit={{ opacity: 0, y: 100 }}
               className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
             >
-              <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
-                <div className="flex items-center gap-3">
-                  <h2 className="text-xl font-extrabold text-slate-900">السلة</h2>
+              <div className="p-3.5 border-b border-slate-100 flex justify-between items-center bg-white shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-lg font-extrabold text-slate-900">سلة المبيعات</h2>
+                  <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
+                    {cart.length} صنف
+                  </span>
                   {cart.length > 0 && (
                     <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg">
                       <button 
                         onClick={handlePrintCart}
-                        className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-white rounded-md transition-all cursor-pointer shadow-sm"
+                        className="p-1 text-slate-600 hover:text-emerald-600 hover:bg-white rounded-md transition-all cursor-pointer shadow-2xs"
                         title="طباعة السلة"
                       >
-                        <Printer className="w-4 h-4" />
+                        <Printer className="w-3.5 h-3.5" />
                       </button>
                       <button 
                         onClick={handleDownloadCartPDF}
-                        className="p-1.5 text-slate-600 hover:text-emerald-600 hover:bg-white rounded-md transition-all cursor-pointer shadow-sm"
+                        className="p-1 text-slate-600 hover:text-emerald-600 hover:bg-white rounded-md transition-all cursor-pointer shadow-2xs"
                         title="تحميل PDF"
                       >
-                        <Download className="w-4 h-4" />
+                        <Download className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   )}
                 </div>
-                <button onClick={() => setIsCartExpanded(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors cursor-pointer">
-                  <X className="w-5 h-5 text-slate-500" />
+                <button onClick={() => setIsCartExpanded(false)} className="p-1.5 hover:bg-slate-100 rounded-full transition-colors cursor-pointer text-slate-400 hover:text-slate-700">
+                  <X className="w-5 h-5" />
                 </button>
               </div>
               
-              <div className="p-4 bg-slate-50 border-b border-slate-100 grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الزبون</label>
-                  <div className="flex gap-2">
-                    <select 
-                      className="flex-1 w-full p-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none"
-                      value={selectedCustomer || ''}
-                      onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
-                    >
-                      <option value="">زبون نقدي</option>
-                      {customers.map((c, idx) => (
-                        <option key={`customer-option-${c.id ?? 'no-id'}-${idx}`} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                    <button 
-                      onClick={() => { setIsCartExpanded(false); setShowAddCustomer(true); }}
-                      className="w-10 flex items-center justify-center bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-100 transition-colors shrink-0"
-                      title="إضافة زبون جديد"
-                    >
-                      <UserPlus className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">الدفع</label>
-                  <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-                    <button 
-                      onClick={() => setPaymentType('cash')}
-                      className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${paymentType === 'cash' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500'}`}
-                    >
-                      نقداً
-                    </button>
-                    <button 
-                      onClick={() => setPaymentType('debt')}
-                      className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${paymentType === 'debt' ? 'bg-red-500 text-white shadow-sm' : 'text-slate-500'}`}
-                    >
-                      دين
-                    </button>
-                  </div>
+              {/* Compact Customer & Payment Bar */}
+              <div className="p-3 bg-slate-100/80 border-b border-slate-200/60 flex flex-wrap gap-2 items-center justify-between shrink-0">
+                <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                  <select 
+                    className="flex-1 w-full p-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={selectedCustomer || ''}
+                    onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
+                  >
+                    <option value="">👤 زبون نقدي عام</option>
+                    {customers.map((c, idx) => (
+                      <option key={`customer-option-${c.id ?? 'no-id'}-${idx}`} value={c.id}>👤 {c.name}</option>
+                    ))}
+                  </select>
+                  <button 
+                    onClick={() => { setIsCartExpanded(false); setShowAddCustomer(true); }}
+                    className="h-8 w-8 flex items-center justify-center bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors shrink-0 shadow-2xs"
+                    title="إضافة زبون جديد"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                  </button>
                 </div>
 
-                {(() => {
-                  const activeCustomerInfo = customers.find(c => c.id === selectedCustomer);
-                  if (!activeCustomerInfo) return null;
+                <div className="flex bg-white p-1 rounded-xl border border-slate-200 shrink-0 w-32">
+                  <button 
+                    onClick={() => setPaymentType('cash')}
+                    className={`flex-1 py-1 text-xs font-extrabold rounded-lg transition-all ${paymentType === 'cash' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    نقداً
+                  </button>
+                  <button 
+                    onClick={() => setPaymentType('debt')}
+                    className={`flex-1 py-1 text-xs font-extrabold rounded-lg transition-all ${paymentType === 'debt' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+                  >
+                    دَيْن
+                  </button>
+                </div>
+              </div>
+              
+              {/* Single Scrollable Body containing Items first, then Payment & Notes Settings */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-50/70">
+                {/* 1. Cart Items List */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">محتويات السلة</span>
+                    <span className="text-[11px] font-bold text-slate-400">
+                      الإجمالي: <strong className="font-mono text-emerald-700">{formatPrice(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0))}</strong>
+                    </span>
+                  </div>
+
+                  {cart.length === 0 ? (
+                    <div className="text-center py-10 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
+                      <p className="text-xs font-bold text-slate-600">السلة فارغة حالياً</p>
+                      <p className="text-[10px] text-slate-400 mt-1">اضغط على المنتجات لإضافتها إلى السلة والبدء بالبيع</p>
+                    </div>
+                  ) : (
+                    cart.map((item, idx) => {
+                      const itemQuantity = Number(item.quantity) || 0;
+                      const integerPart = Math.floor(itemQuantity);
+                      const fractionalPart = parseFloat((itemQuantity % 1).toFixed(2));
+
+                      let selectedFraction = '0';
+                      if (Math.abs(fractionalPart - 0.5) < 0.05) {
+                        selectedFraction = '0.5';
+                      } else if (Math.abs(fractionalPart - 0.33) < 0.05 || Math.abs(fractionalPart - 0.3) < 0.05) {
+                        selectedFraction = '0.33';
+                      } else if (Math.abs(fractionalPart - 0.25) < 0.05) {
+                        selectedFraction = '0.25';
+                      } else if (Math.abs(fractionalPart - 0.75) < 0.05) {
+                        selectedFraction = '0.75';
+                      }
+
+                      const subtotal = item.price * itemQuantity;
+
+                      return (
+                        <div 
+                          key={`cart-item-${item.product_id ?? 'no-id'}-${idx}`} 
+                          className="bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-2xs hover:shadow-xs transition-all flex flex-col gap-1.5 text-right relative overflow-hidden"
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex-1 min-w-0 pr-1">
+                              <p className="font-extrabold text-slate-800 text-xs sm:text-sm truncate" title={item.name}>{item.name}</p>
+                              <p className="text-[10px] text-slate-500 font-bold mt-0.5">{formatPrice(item.price)} {item.unit ? `/ ${item.unit}` : ''}</p>
+                            </div>
+                            <div className="text-left shrink-0">
+                              <p className="text-[9px] text-slate-400 font-bold leading-none mb-0.5">المجموع</p>
+                              <p className="text-xs sm:text-sm font-black font-mono text-emerald-700 leading-none">
+                                {formatPrice(subtotal)}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-100">
+                            <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg overflow-hidden shrink-0">
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const currentVal = Number(item.quantity) || 0;
+                                  const val = Math.max(0, currentVal - 1);
+                                  setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
+                                }}
+                                className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-slate-700 font-black text-sm transition-all cursor-pointer"
+                              >
+                                -
+                              </button>
+                              
+                              <input 
+                                type="number"
+                                step="any"
+                                min="0"
+                                value={item.quantity === 0 ? '' : item.quantity}
+                                onChange={(e) => {
+                                  const rawVal = e.target.value;
+                                  if (rawVal === '') {
+                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: 0 } : c));
+                                    return;
+                                  }
+                                  const val = parseFloat(rawVal);
+                                  if (isNaN(val)) return;
+                                  if (val < 0) return;
+                                  if (val > item.max_stock) {
+                                    showNotification(`تنبيه: الكمية تتجاوز المخزون (${item.max_stock})`, 'error');
+                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: item.max_stock } : c));
+                                    return;
+                                  }
+                                  setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
+                                }}
+                                className="w-10 h-7 text-center bg-white border-x border-slate-200 text-xs font-extrabold font-mono outline-none"
+                                placeholder="0"
+                              />
+
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const currentVal = Number(item.quantity) || 0;
+                                  const val = currentVal + 1;
+                                  if (val > item.max_stock) {
+                                    showNotification('لا يمكن تجاوز المخزون', 'error');
+                                    return;
+                                  }
+                                  setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
+                                }}
+                                className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-slate-700 font-black text-sm transition-all cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <select
+                                value={selectedFraction}
+                                onChange={(e) => {
+                                  const fractionVal = parseFloat(e.target.value);
+                                  const baseQty = item.base_quantity || item.quantity;
+                                  
+                                  if (item.quantity !== baseQty && fractionVal !== 1) {
+                                    showNotification('يجب اختيار كامل الكمية قبل اختيار كسر', 'error');
+                                    return;
+                                  }
+
+                                  if (fractionVal === 1) {
+                                      setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: baseQty } : c));
+                                      return;
+                                  }
+
+                                  let finalQty = baseQty * fractionVal;
+                                  if (finalQty > item.max_stock) {
+                                    showNotification(`تجاوز المخزون (${item.max_stock})`, 'error');
+                                    finalQty = item.max_stock;
+                                  }
+                                  setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(finalQty.toFixed(2)) } : c));
+                                }}
+                                className="h-7 px-1.5 rounded-lg border border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-700 outline-none cursor-pointer"
+                              >
+                                <option value="1">كامل</option>
+                                <option value="0.5">نصف</option>
+                                <option value="0.33">ثلث</option>
+                                <option value="0.25">ربع</option>
+                                <option value="0.75">ثلاثة أرباع</option>
+                              </select>
+                              
+                              <button 
+                                onClick={() => removeFromCart(item.product_id)}
+                                className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                                title="حذف"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* 2. Customer Balance, Paid Amount & Payment Breakdown Card */}
+                {cart.length > 0 && (
+                  <div className="space-y-2.5 pt-2 border-t border-slate-200">
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider block px-1">تفاصيل التسديد والمالية</span>
+
+                    {/* Active Customer Balance Info */}
+                    {(() => {
+                      const activeCustomerInfo = customers.find(c => c.id === selectedCustomer);
+                      if (!activeCustomerInfo) return null;
+                      return (
+                        <div className={`p-2.5 rounded-xl border flex justify-between items-center text-xs font-bold ${
+                          activeCustomerInfo.balance > 0 
+                            ? 'bg-red-50 border-red-200 text-red-900' 
+                            : activeCustomerInfo.balance < 0 
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                              : 'bg-slate-100 border-slate-200 text-slate-600'
+                        }`}>
+                          <span>حساب الزبون الحالي:</span>
+                          <span className="font-extrabold font-mono">
+                            {activeCustomerInfo.balance > 0 
+                              ? `عليه دَيْن: ${formatPrice(activeCustomerInfo.balance)}` 
+                              : activeCustomerInfo.balance < 0 
+                                ? `له رصيد دائن: ${formatPrice(Math.abs(activeCustomerInfo.balance))}` 
+                                : 'حسابه خالِص'
+                            }
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Paid Amount Input & Quick Buttons */}
+                    {(() => {
+                      const totalCartAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                      const userPaidVal = paidAmountInput !== '' && !isNaN(parseFloat(paidAmountInput)) 
+                        ? Math.max(0, parseFloat(paidAmountInput)) 
+                        : (paymentType === 'cash' ? totalCartAmount : 0);
+                      const diff = totalCartAmount - userPaidVal;
+
+                      return (
+                        <div className="bg-white p-3 rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
+                          <div className="flex justify-between items-center">
+                            <label className="text-xs font-extrabold text-slate-800 flex items-center gap-1">
+                              💵 <span>المبلغ المدفوع الآن</span>
+                              <span className="text-[10px] text-slate-400 font-normal">(دفع جزئي أو زائد)</span>
+                            </label>
+                          </div>
+
+                          <div className="flex gap-2 items-center">
+                            <div className="relative flex-1">
+                              <input 
+                                type="number"
+                                step="any"
+                                min="0"
+                                placeholder={paymentType === 'cash' ? `الافتراضي: ${formatPrice(totalCartAmount)}` : `الافتراضي: 0 ${currency}`}
+                                value={paidAmountInput}
+                                onChange={(e) => setPaidAmountInput(e.target.value)}
+                                className="w-full p-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-900 text-xs sm:text-sm font-black font-mono outline-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all"
+                              />
+                              {paidAmountInput !== '' && (
+                                <button 
+                                  type="button"
+                                  onClick={() => setPaidAmountInput('')}
+                                  className="absolute left-1.5 top-2 text-[9px] text-slate-500 hover:text-slate-800 bg-slate-200 hover:bg-slate-300 px-1.5 py-0.5 rounded-md font-bold transition-all cursor-pointer"
+                                >
+                                  إلغاء
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Quick Action Chips */}
+                            <div className="flex gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setPaidAmountInput(String(totalCartAmount))}
+                                className="px-2 py-1.5 text-[10px] font-black bg-emerald-100 hover:bg-emerald-200 text-emerald-800 rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                                title="تسديد كامل المبلغ"
+                              >
+                                كامل
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPaidAmountInput(String(Math.round(totalCartAmount / 2)))}
+                                className="px-2 py-1.5 text-[10px] font-black bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                                title="تسديد نصف المبلغ"
+                              >
+                                نصف
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPaidAmountInput('0')}
+                                className="px-2 py-1.5 text-[10px] font-black bg-red-100 hover:bg-red-200 text-red-800 rounded-lg transition-all cursor-pointer whitespace-nowrap"
+                                title="آجل بالكامل"
+                              >
+                                0 (آجل)
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Live Status Pill */}
+                          {userPaidVal <= 0 ? (
+                            <div className="p-2 bg-red-50 border border-red-200 rounded-xl text-xs font-bold text-red-900 flex justify-between items-center">
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
+                                <span>🔴 آجل بالكامل (دَيْنٌ 100%)</span>
+                              </span>
+                              <span>المتبقي: <strong className="font-mono text-red-700">{formatPrice(totalCartAmount)}</strong></span>
+                            </div>
+                          ) : userPaidVal < totalCartAmount ? (
+                            <div className="p-2 bg-amber-50 border border-amber-200 rounded-xl text-xs font-bold text-amber-900 flex justify-between items-center">
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                <span>🟡 دفع جزئي (سدد {formatPrice(userPaidVal)})</span>
+                              </span>
+                              <span>المتبقي دَيْن: <strong className="font-mono text-red-700">{formatPrice(diff)}</strong></span>
+                            </div>
+                          ) : userPaidVal === totalCartAmount ? (
+                            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-900 flex justify-between items-center">
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                                <span>🟢 مدفوع بالكامل</span>
+                              </span>
+                              <span>المتبقي: <strong className="font-mono text-emerald-700">0 {currency}</strong></span>
+                            </div>
+                          ) : (
+                            <div className="p-2 bg-yellow-100 border border-yellow-300 rounded-xl text-xs font-black text-yellow-950 flex justify-between items-center">
+                              <span className="flex items-center gap-1.5">
+                                <span>⭐ دفع زائد (فائض {formatPrice(userPaidVal - totalCartAmount)})</span>
+                              </span>
+                              <span className="underline">رصيد دائن للعميل</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Order Notes */}
+                    <div className="bg-white p-2.5 rounded-2xl border border-slate-200/90 shadow-2xs space-y-1">
+                      <label className="text-[10px] uppercase tracking-wider font-extrabold text-slate-500 block">ملاحظة للطلب (اختياري)</label>
+                      <input 
+                        type="text"
+                        value={saleNotes}
+                        onChange={(e) => setSaleNotes(e.target.value)}
+                        placeholder="أدخل أية ملاحظة خاصة بهذه الفاتورة..."
+                        className="w-full p-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-800 outline-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Fixed Bottom Checkout Footer */}
+              <div className="p-3.5 bg-white border-t border-slate-200/80 shrink-0 space-y-2">
+                {cart.length > 0 && (() => {
+                  const totalCartAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                  const userPaidVal = paidAmountInput !== '' && !isNaN(parseFloat(paidAmountInput)) 
+                    ? Math.max(0, parseFloat(paidAmountInput)) 
+                    : (paymentType === 'cash' ? totalCartAmount : 0);
+                  const remaining = totalCartAmount - userPaidVal;
+
                   return (
-                    <div className={`col-span-2 p-3 rounded-xl border flex justify-between items-center text-xs ${
-                      activeCustomerInfo.balance > 0 
-                        ? 'bg-red-50 border-red-100 text-red-800' 
-                        : activeCustomerInfo.balance < 0 
-                          ? 'bg-emerald-50 border-emerald-100 text-emerald-800 font-extrabold animate-pulse' 
-                          : 'bg-slate-50 border-slate-100 text-slate-500'
-                    }`}>
-                      <span className="font-bold">حالة حساب هذا الزبون:</span>
-                      <span className="font-black font-mono">
-                        {activeCustomerInfo.balance > 0 
-                          ? `شراء بالدين (عليه متبقي): ${formatPrice(activeCustomerInfo.balance)}` 
-                          : activeCustomerInfo.balance < 0 
-                            ? `لديه رصيد مقدّم متوفر: ${formatPrice(Math.abs(activeCustomerInfo.balance))}` 
-                            : 'حسابه مسوّى وخالص تماماً'
-                        }
-                      </span>
+                    <div className="flex justify-between items-center px-1 text-xs font-bold text-slate-600">
+                      <span>إجمالي الفاتورة: <strong className="font-mono text-slate-900 text-sm">{formatPrice(totalCartAmount)}</strong></span>
+                      {remaining > 0 ? (
+                        <span className="text-red-700 bg-red-50 px-2 py-0.5 rounded-md border border-red-200">المتبقي دَيْن: <strong className="font-mono">{formatPrice(remaining)}</strong></span>
+                      ) : remaining < 0 ? (
+                        <span className="text-yellow-900 bg-yellow-100 px-2 py-0.5 rounded-md border border-yellow-300">الفائض: <strong className="font-mono">{formatPrice(Math.abs(remaining))}</strong></span>
+                      ) : (
+                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">مسدد بالكامل</span>
+                      )}
                     </div>
                   );
                 })()}
 
-                <div className="space-y-1 col-span-2">
-                  <label className="text-[10px] uppercase tracking-widest font-bold text-slate-400">ملاحظة للطلب (اختياري)</label>
-                  <textarea 
-                    value={saleNotes}
-                    onChange={(e) => setSaleNotes(e.target.value)}
-                    placeholder="أضف أية ملاحظات إضافية هنا..."
-                    className="w-full p-2.5 rounded-xl border border-slate-200 bg-white text-sm outline-none resize-none h-20"
-                  />
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-                {cart.length === 0 ? (
-                  <div className="text-center py-12 text-slate-400 bg-white rounded-3xl border border-dashed border-slate-200">
-                    <p className="text-sm font-bold">السلة فارغة حالياً</p>
-                    <p className="text-[10px] text-slate-400 mt-1">اضغط على المنتجات لإضافتها إلى السلة والبدء بالبيع</p>
-                  </div>
-                ) : (
-                  cart.map((item, idx) => {
-                    const itemQuantity = Number(item.quantity) || 0;
-                    const integerPart = Math.floor(itemQuantity);
-                    const fractionalPart = parseFloat((itemQuantity % 1).toFixed(2));
-
-                    let selectedFraction = '0';
-                    if (Math.abs(fractionalPart - 0.5) < 0.05) {
-                      selectedFraction = '0.5';
-                    } else if (Math.abs(fractionalPart - 0.33) < 0.05 || Math.abs(fractionalPart - 0.3) < 0.05) {
-                      selectedFraction = '0.33';
-                    } else if (Math.abs(fractionalPart - 0.25) < 0.05) {
-                      selectedFraction = '0.25';
-                    } else if (Math.abs(fractionalPart - 0.75) < 0.05) {
-                      selectedFraction = '0.75';
-                    }
-
-                    const subtotal = item.price * itemQuantity;
-
-                    return (
-                      <div 
-                        key={`cart-item-${item.product_id ?? 'no-id'}-${idx}`} 
-                        className="bg-white p-2 sm:p-2.5 rounded-xl border border-slate-150/70 hover:border-slate-200 shadow-xs transition-all flex flex-col gap-2 text-right relative overflow-hidden"
-                      >
-                        <div className="flex justify-between items-start gap-2">
-                          <div className="flex-1 min-w-0 pr-1">
-                            <p className="font-extrabold text-slate-800 text-xs sm:text-sm truncate" title={item.name}>{item.name}</p>
-                            <p className="text-[9px] text-slate-400 font-bold mt-0.5">{formatPrice(item.price)} {item.unit ? `/ ${item.unit}` : ''}</p>
-                          </div>
-                          <div className="text-left shrink-0">
-                            <p className="text-[9px] text-slate-400 font-bold leading-none mb-1">المجموع</p>
-                            <p className="text-xs font-black font-mono text-emerald-600 leading-none">
-                              {formatPrice(subtotal)}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-50">
-                          <div className="flex items-center bg-slate-50 border border-slate-100 rounded-lg overflow-hidden shrink-0">
-                            <button 
-                              type="button"
-                              onClick={() => {
-                                const currentVal = Number(item.quantity) || 0;
-                                const val = Math.max(0, currentVal - 1);
-                                setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
-                              }}
-                              className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-slate-600 font-black text-sm transition-all cursor-pointer"
-                            >
-                              -
-                            </button>
-                            
-                            <input 
-                              type="number"
-                              step="any"
-                              min="0"
-                              value={item.quantity === 0 ? '' : item.quantity}
-                              onChange={(e) => {
-                                const rawVal = e.target.value;
-                                if (rawVal === '') {
-                                  setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: 0 } : c));
-                                  return;
-                                }
-                                const val = parseFloat(rawVal);
-                                if (isNaN(val)) return;
-                                if (val < 0) return;
-                                if (val > item.max_stock) {
-                                  showNotification(`تنبيه: الكمية تتجاوز المخزون (${item.max_stock})`, 'error');
-                                  setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: item.max_stock } : c));
-                                  return;
-                                }
-                                setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: val } : c));
-                              }}
-                              className="w-10 h-7 text-center bg-white border-x border-slate-100 text-[11px] font-bold font-mono outline-none"
-                              placeholder="0"
-                            />
-
-                            <button 
-                              type="button"
-                              onClick={() => {
-                                const currentVal = Number(item.quantity) || 0;
-                                const val = currentVal + 1;
-                                if (val > item.max_stock) {
-                                  showNotification('لا يمكن تجاوز المخزون', 'error');
-                                  return;
-                                }
-                                setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(val.toFixed(2)) } : c));
-                              }}
-                              className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-slate-600 font-black text-sm transition-all cursor-pointer"
-                            >
-                              +
-                            </button>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <select
-                              value={selectedFraction}
-                              onChange={(e) => {
-                                const fractionVal = parseFloat(e.target.value);
-                                const baseQty = item.base_quantity || item.quantity;
-                                
-                                if (item.quantity !== baseQty && fractionVal !== 1) {
-                                  showNotification('يجب اختيار كامل الكمية قبل اختيار كسر', 'error');
-                                  return;
-                                }
-
-                                if (fractionVal === 1) {
-                                    setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: baseQty } : c));
-                                    return;
-                                }
-
-                                let finalQty = baseQty * fractionVal;
-                                if (finalQty > item.max_stock) {
-                                  showNotification(`تجاوز المخزون (${item.max_stock})`, 'error');
-                                  finalQty = item.max_stock;
-                                }
-                                setCart(cart.map(c => c.product_id === item.product_id ? { ...c, quantity: parseFloat(finalQty.toFixed(2)) } : c));
-                              }}
-                              className="h-7 px-1 rounded-lg border border-slate-100 bg-slate-50 text-[10px] font-bold text-slate-600 outline-none cursor-pointer"
-                            >
-                              <option value="1">كامل</option>
-                              <option value="0.5">نصف</option>
-                              <option value="0.33">ثلث</option>
-                              <option value="0.25">ربع</option>
-                              <option value="0.75">ثلاثة أرباع</option>
-                            </select>
-                            
-                            <button 
-                              onClick={() => removeFromCart(item.product_id)}
-                              className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
-                              title="حذف"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              <div className="p-4 bg-white border-t border-slate-100">
                 <Button 
-                  className="w-full py-4 text-lg rounded-2xl font-extrabold shadow-lg shadow-emerald-500/20" 
+                  className="w-full py-3.5 text-base sm:text-lg rounded-2xl font-extrabold shadow-lg shadow-emerald-500/20 active:scale-98 transition-all" 
                   onClick={() => { handleCheckout(); setIsCartExpanded(false); }}
                   disabled={cart.length === 0 || (paymentType === 'debt' && !selectedCustomer)}
                 >

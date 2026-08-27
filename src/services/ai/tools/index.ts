@@ -38,6 +38,11 @@ import {
   getTopDebtorsTool,
   checkNameAmbiguityTool,
   getProductProfitAndSalesTool,
+  getFullSystemAuditTool,
+  getSupplierPaymentsByDateTool,
+  getCreditSalesSummaryTool,
+  getWithdrawalsAndAdjustmentsTool,
+  getSystemDictionaryExplanationTool,
 } from './accountingTools';
 
 export async function executeTools(nluResult: NLUResult, memoryContext?: any): Promise<Evidence[]> {
@@ -46,7 +51,7 @@ export async function executeTools(nluResult: NLUResult, memoryContext?: any): P
 
   // Extract common parameters from entities
   const dateRangeEntity = entities.find(e => e.type === 'DATE_RANGE');
-  const dateRange = dateRangeEntity ? (dateRangeEntity.value as string) : (memoryContext?.activeEntities?.dateRange || 'TODAY');
+  const dateRange = dateRangeEntity ? (dateRangeEntity.value as string) : (memoryContext?.activeEntities?.dateRange || 'ALL');
 
   const targetNameEntity = entities.find(e => e.type === 'TARGET_NAME');
   const targetName = targetNameEntity ? targetNameEntity.value : (memoryContext?.activeEntities?.targetName);
@@ -57,6 +62,34 @@ export async function executeTools(nluResult: NLUResult, memoryContext?: any): P
   const isVerification = entities.some(e => e.type === 'IS_VERIFICATION');
 
   switch (intent.name) {
+    case 'FULL_SYSTEM_AUDIT_REPORT': {
+      const auditDateRange = dateRangeEntity ? (dateRangeEntity.value as string) : (memoryContext?.activeEntities?.dateRange || 'ALL');
+      const fullAuditEvidence = await getFullSystemAuditTool(auditDateRange);
+      evidences.push(fullAuditEvidence);
+      break;
+    }
+
+    case 'CREDIT_SALES_QUERY': {
+      const creditSalesEvidence = await getCreditSalesSummaryTool(dateRange, isVerification);
+      evidences.push(creditSalesEvidence);
+      break;
+    }
+
+    case 'WITHDRAWALS_AND_ADJUSTMENTS_QUERY': {
+      const withdrawalsEvidence = await getWithdrawalsAndAdjustmentsTool(nluResult, memoryContext || {});
+      evidences.push(withdrawalsEvidence);
+      break;
+    }
+
+    case 'SYSTEM_DICTIONARY_EXPLANATION':
+    case 'ACCOUNTING_CONCEPT':
+    case 'SYSTEM_SECTIONS_GUIDE':
+    case 'SYSTEM_INFO': {
+      const dictionaryEvidence = await getSystemDictionaryExplanationTool(nluResult, memoryContext || {});
+      evidences.push(dictionaryEvidence);
+      break;
+    }
+
     case 'STORE_HEALTH_DIAGNOSTIC': {
       const healthEvidence = await getStoreHealthDiagnosticTool();
       evidences.push(healthEvidence);
@@ -153,7 +186,7 @@ export async function executeTools(nluResult: NLUResult, memoryContext?: any): P
     }
 
     case 'SUPPLIER_PAYMENTS': {
-      const supplierPaymentsEvidence = await getSupplierPaymentsTool(targetName, dateRange, isVerification);
+      const supplierPaymentsEvidence = await getSupplierPaymentsByDateTool(nluResult, memoryContext || {});
       evidences.push(supplierPaymentsEvidence);
       break;
     }
@@ -257,7 +290,8 @@ export async function executeTools(nluResult: NLUResult, memoryContext?: any): P
     case 'PROFIT_SUMMARY':
     case 'PROFIT_ANALYSIS':
     case 'PROFIT_MARGIN_RANKING': {
-      const profitEvidence = await getProfitSummaryTool(dateRange);
+      const rawQuery = (nluResult as any).rawQuery || '';
+      const profitEvidence = await getProfitSummaryTool(dateRange, rawQuery);
       evidences.push(profitEvidence);
       break;
     }

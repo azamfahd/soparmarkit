@@ -674,6 +674,7 @@ export default function App() {
   const [selectedCustomer, setSelectedCustomer] = useState<number | null>(null);
   const [paymentType, setPaymentType] = useState<'cash' | 'debt'>('cash');
   const [saleNotes, setSaleNotes] = useState('');
+  const [paidAmountInput, setPaidAmountInput] = useState<string>('');
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [pendingBarcode, setPendingBarcode] = useState<string>('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
@@ -697,8 +698,6 @@ export default function App() {
   const [updatingStockProduct, setUpdatingStockProduct] = useState<Product | null>(null);
   const [updatingStockAmount, setUpdatingStockAmount] = useState<string>('');
   const [updatingStockNotes, setUpdatingStockNotes] = useState<string>('');
-  const [updatingStockType, setUpdatingStockType] = useState<'add' | 'subtract'>('add');
-  const [updateSupplierBalance, setUpdateSupplierBalance] = useState<boolean>(true);
 
   // --- Licensing & Subscription States ---
   const [isAutoBackupEnabled, setIsAutoBackupEnabled] = useState<boolean>(() => {
@@ -767,12 +766,6 @@ export default function App() {
   const [pinChangeError, setPinChangeError] = useState<string>('');
   
   // Cloud Licensing States
-  const [clientStoreName, setClientStoreName] = useState<string>(() => {
-    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientStoreName') || '') : '';
-  });
-  const [clientPhone, setClientPhone] = useState<string>(() => {
-    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientPhone') || '') : '';
-  });
   const [requestedRenewalDuration, setRequestedRenewalDuration] = useState<number>(365);
   const [showModalEditDetails, setShowModalEditDetails] = useState<boolean>(false);
   const [cloudRequest, setCloudRequest] = useState<ActivationRequest | null>(null);
@@ -835,8 +828,15 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCategorySidebarOpen, setIsCategorySidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [storeName, setStoreName] = useState('النظام المحاسبي');
-  const [storePhone, setStorePhone] = useState('');
+  const [storeName, setStoreName] = useState<string>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('cache_clientStoreName') || 'النظام المحاسبي الذكي';
+    }
+    return 'النظام المحاسبي الذكي';
+  });
+  const [storePhone, setStorePhone] = useState<string>(() => {
+    return typeof localStorage !== 'undefined' ? (localStorage.getItem('cache_clientPhone') || '') : '';
+  });
   const [currency, setCurrency] = useState('ر.ي');
   const [roundingFactor, setRoundingFactor] = useState<number | null>(null);
   const [showReceipt, setShowReceipt] = useState<any>(null);
@@ -1022,6 +1022,41 @@ export default function App() {
   }, [activeOutstandingCash, currentCycleCashTotal]);
 
   const [lastBackupDate, setLastBackupDate] = useState<string | null>(null);
+  const [firstLaunchDate, setFirstLaunchDate] = useState<string | null>(null);
+  const [backupAlertInterval, setBackupAlertInterval] = useState<string>('7'); // '7' | '30' | '60' | 'off'
+
+  // Check if backup is overdue based on configured interval (7 days, 30 days, 60 days, or off)
+  const isBackupOverdue = React.useMemo(() => {
+    if (backupAlertInterval === 'off') return false;
+    const targetDays = parseInt(backupAlertInterval, 10) || 7;
+    
+    // Baseline date is either last backup date or first launch / installation date
+    const baseDateStr = lastBackupDate || firstLaunchDate;
+    if (!baseDateStr) return false; // If no date recorded yet, give user time until interval passes
+    
+    const baseDate = new Date(baseDateStr);
+    if (isNaN(baseDate.getTime())) return false;
+    
+    const now = new Date();
+    const diffTime = now.getTime() - baseDate.getTime();
+    if (diffTime < 0) return false;
+    
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays >= targetDays;
+  }, [lastBackupDate, firstLaunchDate, backupAlertInterval]);
+
+  const updateBackupAlertInterval = async (interval: string) => {
+    setBackupAlertInterval(interval);
+    try {
+      await db.settings.put({ key: 'backupAlertInterval', value: interval });
+      const label = interval === '7' ? 'أسبوعياً (كل 7 أيام)' :
+                    interval === '30' ? 'شهرياً (كل 30 يوماً)' :
+                    interval === '60' ? 'كل شهرين (كل 60 يوماً)' : 'تم تعطيل التنبيه';
+      showNotification(`تم حفظ تكرار تنبيه النسخ الاحتياطي: ${label}`, 'success');
+    } catch (err) {
+      console.error('Failed to update backup alert interval', err);
+    }
+  };
 
   // Automated background backup to file system (قاعدة بيانات النظام)
   const [autoBackupFileStatus, setAutoBackupFileStatus] = useState<{ exists: boolean, lastModified?: string, size?: number, path?: string } | null>(null);
@@ -1107,7 +1142,6 @@ export default function App() {
     const nameSetting = appSettings.find(s => s.key === 'storeName');
     if (nameSetting) {
       setStoreName(nameSetting.value);
-      setClientStoreName(nameSetting.value);
     }
     const phoneSetting = appSettings.find(s => s.key === 'storePhone' || s.key === 'phone');
     if (phoneSetting) {
@@ -1120,15 +1154,18 @@ export default function App() {
     const backupSetting = appSettings.find(s => s.key === 'lastBackupDate');
     if (backupSetting) {
       setLastBackupDate(backupSetting.value);
-      
-      // Check if backup is older than 7 days
-      const lastBackup = new Date(backupSetting.value);
-      const now = new Date();
-      const diffDays = Math.floor((now.getTime() - lastBackup.getTime()) / (1000 * 60 * 60 * 24));
-      if (diffDays >= 7 && !backupWarningShownRef.current) {
-        showNotification('تنبيه: لم تقم بأخذ نسخة احتياطية منذ أكثر من أسبوع!', 'error');
-        backupWarningShownRef.current = true;
-      }
+    }
+    const launchSetting = appSettings.find(s => s.key === 'firstLaunchDate');
+    if (launchSetting) {
+      setFirstLaunchDate(launchSetting.value);
+    } else {
+      const todayIso = new Date().toISOString();
+      db.settings.put({ key: 'firstLaunchDate', value: todayIso });
+      setFirstLaunchDate(todayIso);
+    }
+    const backupIntervalSetting = appSettings.find(s => s.key === 'backupAlertInterval');
+    if (backupIntervalSetting) {
+      setBackupAlertInterval(backupIntervalSetting.value);
     }
     const roundingSetting = appSettings.find(s => s.key === 'roundingFactor');
     if (roundingSetting) {
@@ -1425,27 +1462,27 @@ export default function App() {
 
   useEffect(() => {
     if (cloudRequest) {
-      if (!clientStoreName && cloudRequest.storeName) {
-        setClientStoreName(cloudRequest.storeName);
+      if (!storeName && cloudRequest.storeName) {
+        setStoreName(cloudRequest.storeName);
         if (typeof localStorage !== 'undefined') localStorage.setItem('cache_clientStoreName', cloudRequest.storeName);
       }
-      if (!clientPhone && cloudRequest.phone) {
-        setClientPhone(cloudRequest.phone);
+      if (!storePhone && cloudRequest.phone) {
+        setStorePhone(cloudRequest.phone);
         if (typeof localStorage !== 'undefined') localStorage.setItem('cache_clientPhone', cloudRequest.phone);
       }
     }
   }, [cloudRequest]);
 
   const handleRequestCloudActivation = async (customDuration?: number, forcedRenewal?: boolean) => {
-    if (!clientStoreName.trim()) {
+    if (!storeName.trim()) {
       showNotification('يرجى إدخال اسم المتجر أولاً!', 'error');
       return;
     }
 
     try {
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('cache_clientStoreName', clientStoreName);
-        localStorage.setItem('cache_clientPhone', clientPhone);
+        localStorage.setItem('cache_clientStoreName', storeName);
+        localStorage.setItem('cache_clientPhone', storePhone);
       }
     } catch (e) {
       console.warn("Failed to persist store details locally:", e);
@@ -1457,7 +1494,7 @@ export default function App() {
     
     setIsSubmittingRequest(true);
     try {
-      await submitActivationRequest(deviceID, clientStoreName, clientPhone, reqType, durationToUse);
+      await submitActivationRequest(deviceID, storeName, storePhone, reqType, durationToUse);
       showNotification(
         reqType === 'renewal'
           ? 'تم إرسال طلب تجديد وتمديد الاشتراك إلى المدير بنجاح!'
@@ -2235,13 +2272,8 @@ export default function App() {
       const dbProduct = await db.products.get(updatingStockProduct.id);
       if (!dbProduct) return;
 
-      const changeAmount = updatingStockType === 'add' ? amount : -amount;
+      const changeAmount = amount;
       const newStock = dbProduct.stock_quantity + changeAmount;
-
-      if (newStock < 0) {
-        showNotification('الكمية المراد سحبها أكبر من المخزون المتوفر', 'error');
-        return;
-      }
 
       await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
         // Update product stock
@@ -2252,7 +2284,7 @@ export default function App() {
           product_id: dbProduct.id!,
           change_amount: changeAmount,
           reason: 'manual_update',
-          notes: updatingStockNotes || (updatingStockType === 'add' ? 'إضافة مخزون يدوية' : 'سحب/تسوية مخزون يدوية'),
+          notes: updatingStockNotes || 'إضافة مخزون يدوية',
           created_at: new Date().toISOString()
         });
       });
@@ -2261,8 +2293,6 @@ export default function App() {
       setUpdatingStockProduct(null);
       setUpdatingStockAmount('');
       setUpdatingStockNotes('');
-      setUpdatingStockType('add');
-      setUpdateSupplierBalance(true);
     } catch (e) {
       console.error(e);
       showNotification('حدث خطأ أثناء تحديث المخزون', 'error');
@@ -2482,14 +2512,6 @@ export default function App() {
 
   const updateStoreName = async (newName: string) => {
     try {
-      // Assuming a backend endpoint for settings exists or we can just update locally
-      // For now, let's just update locally and maybe add a backend call if needed
-      await db.settings.where('key').equals('storeName').modify({ value: newName });
-      setStoreName(newName);
-      showNotification('تم تحديث اسم النشاط التجاري');
-    } catch (err) {
-      console.error("Failed to update store name:", err);
-      // Fallback to local DB
       const existing = await db.settings.where('key').equals('storeName').first();
       if (existing) {
         await db.settings.update(existing.id!, { value: newName });
@@ -2497,7 +2519,13 @@ export default function App() {
         await db.settings.add({ key: 'storeName', value: newName });
       }
       setStoreName(newName);
-      showNotification('تم تحديث اسم النشاط التجاري (محلياً)');
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('cache_clientStoreName', newName);
+      }
+      showNotification('تم تحديث اسم النشاط التجاري');
+    } catch (err) {
+      console.error("Failed to update store name:", err);
+      showNotification('خطأ في تحديث اسم النشاط التجاري', 'error');
     }
   };
 
@@ -3641,21 +3669,54 @@ export default function App() {
   const handleCheckout = async () => {
     const rawTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     const total = applyCurrencyRounding(rawTotal);
-    const saleData = {
-      customer_id: selectedCustomer,
-      items: cart.map(item => ({ product_id: item.product_id, quantity: item.quantity, price: item.price })),
-      payment_type: paymentType,
-      total_amount: total
-    };
+
+    // Calculate actual paid amount
+    let actualPaid: number;
+    if (paidAmountInput !== '' && !isNaN(parseFloat(paidAmountInput))) {
+      actualPaid = applyCurrencyRounding(Math.max(0, parseFloat(paidAmountInput)));
+    } else {
+      actualPaid = paymentType === 'cash' ? total : 0;
+    }
+
+    const remaining = applyCurrencyRounding(total - actualPaid);
+
+    // Determine payment status
+    let paymentStatus: 'unpaid' | 'partial' | 'paid' | 'overpaid';
+    if (actualPaid <= 0) {
+      paymentStatus = 'unpaid';
+    } else if (actualPaid < total) {
+      paymentStatus = 'partial';
+    } else if (actualPaid === total) {
+      paymentStatus = 'paid';
+    } else {
+      paymentStatus = 'overpaid';
+    }
+
+    // Auto-generated detailed note/explanation
+    let autoExplanation = '';
+    if (paymentStatus === 'unpaid') {
+      autoExplanation = `فاتورة آجل بالكامل: إجمالي الفاتورة ${formatPrice(total)} - لم يُدفع منها شيء وقُيدت بالكامل كدَيْنٌ على العميل.`;
+    } else if (paymentStatus === 'partial') {
+      autoExplanation = `دفع جزئي: إجمالي الفاتورة ${formatPrice(total)} - سدد العميل منها ${formatPrice(actualPaid)} نقداً - المتبقي دَيْنٌ مستحق على العميل ${formatPrice(remaining)}.`;
+    } else if (paymentStatus === 'paid') {
+      autoExplanation = `دفع مكتمل: إجمالي الفاتورة ${formatPrice(total)} - تم تسديد المبلغ بالكامل نقداً.`;
+    } else {
+      autoExplanation = `دفع زائد (فائض): إجمالي الفاتورة ${formatPrice(total)} - سدد العميل ${formatPrice(actualPaid)} (فائض ${formatPrice(Math.abs(remaining))}) - تم إيداع الفائض كرصيد دائن لصالح العميل.`;
+    }
+
+    const fullNotes = saleNotes.trim() ? `${autoExplanation} | ملاحظة: ${saleNotes.trim()}` : autoExplanation;
 
     try {
       await db.transaction('rw', [db.sales, db.saleItems, db.products, db.inventoryLogs, db.customers, db.debts, db.suppliers], async () => {
         const saleId = await db.sales.add({
           customer_id: selectedCustomer,
           total_amount: total,
+          paid_amount: actualPaid,
+          remaining_amount: remaining,
+          payment_status: paymentStatus,
           payment_type: paymentType,
           created_at: new Date().toISOString(),
-          notes: saleNotes
+          notes: fullNotes
         });
 
         for (const item of cart) {
@@ -3690,23 +3751,45 @@ export default function App() {
           }
         }
 
-        if (paymentType === 'debt' && selectedCustomer) {
+        // Customer ledger and balance update
+        if (selectedCustomer) {
           const customer = await db.customers.get(selectedCustomer);
           if (customer) {
+            const newCustomerBalance = applyCurrencyRounding(customer.balance + remaining);
             await db.customers.update(selectedCustomer, {
-              balance: customer.balance + total
+              balance: newCustomerBalance
             });
-            await db.debts.add({
-              customer_id: selectedCustomer,
-              sale_id: saleId as number,
-              amount: total,
-              type: 'purchase',
-              created_at: new Date().toISOString()
-            });
+
+            if (remaining > 0) {
+              await db.debts.add({
+                customer_id: selectedCustomer,
+                sale_id: saleId as number,
+                amount: remaining,
+                type: 'purchase',
+                created_at: new Date().toISOString(),
+                notes: fullNotes
+              });
+            } else if (remaining < 0) {
+              await db.debts.add({
+                customer_id: selectedCustomer,
+                sale_id: saleId as number,
+                amount: Math.abs(remaining),
+                type: 'payment',
+                created_at: new Date().toISOString(),
+                notes: `فائض دفع الفاتورة #${saleId}: تم قيد ${formatPrice(Math.abs(remaining))} كرصيد دائن لصالح العميل`
+              });
+            }
           }
         }
       });
-      showNotification('تمت العملية بنجاح');
+
+      if (paymentStatus === 'partial') {
+        showNotification(`تم حفظ الفاتورة دفع جزئي (سدد ${formatPrice(actualPaid)} والمتبقي دَيْن ${formatPrice(remaining)})`, 'success');
+      } else if (paymentStatus === 'overpaid') {
+        showNotification(`تم حفظ الفاتورة وإيداع الفائض (${formatPrice(Math.abs(remaining))}) كرصيد دائن للعميل`, 'success');
+      } else {
+        showNotification('تمت العملية بنجاح', 'success');
+      }
     } catch (err) {
       console.error("Failed to checkout:", err);
       showNotification('خطأ في إتمام العملية', 'error');
@@ -3716,6 +3799,7 @@ export default function App() {
     setSelectedCustomer(null);
     setPaymentType('cash');
     setSaleNotes('');
+    setPaidAmountInput('');
   };
 
   const requestGlobalCameraPermission = async () => {
@@ -3853,7 +3937,7 @@ export default function App() {
             </div>
           ) : (
             <div className="space-y-4">
-              {(clientStoreName || isActivated || cloudRequest) ? (
+              {(storeName || isActivated || cloudRequest) ? (
                 /* Streamlined Renewal Form using saved Store Name & Phone */
                 <div className="space-y-3.5 text-right bg-slate-900/90 p-4 border border-slate-800 rounded-2xl">
                   <div className="flex justify-between items-center border-b border-slate-800/80 pb-2.5">
@@ -3866,9 +3950,9 @@ export default function App() {
                     </button>
                     <div className="space-y-0.5">
                       <span className="text-xs font-bold text-slate-300 block">
-                        اسم المتجر: <span className="text-white font-extrabold">{clientStoreName || 'غير محدد'}</span>
+                        اسم المتجر: <span className="text-white font-extrabold">{storeName || 'غير محدد'}</span>
                       </span>
-                      {clientPhone && <span className="text-xs font-mono text-emerald-400 font-bold block">{clientPhone}</span>}
+                      {storePhone && <span className="text-xs font-mono text-emerald-400 font-bold block">{storePhone}</span>}
                     </div>
                   </div>
 
@@ -3878,8 +3962,8 @@ export default function App() {
                         <label className="text-xs font-bold text-slate-400">تعديل اسم المتجر:</label>
                         <input 
                           type="text"
-                          value={clientStoreName}
-                          onChange={(e) => setClientStoreName(e.target.value)}
+                          value={storeName}
+                          onChange={(e) => setStoreName(e.target.value)}
                           className="w-full p-2.5 bg-slate-950 text-white rounded-xl border border-slate-800 text-xs font-bold"
                         />
                       </div>
@@ -3887,8 +3971,8 @@ export default function App() {
                         <label className="text-xs font-bold text-slate-400">تعديل رقم الهاتف:</label>
                         <input 
                           type="text"
-                          value={clientPhone}
-                          onChange={(e) => setClientPhone(e.target.value)}
+                          value={storePhone}
+                          onChange={(e) => setStorePhone(e.target.value)}
                           className="w-full p-2.5 bg-slate-950 text-white rounded-xl border border-slate-800 text-xs font-mono text-left"
                         />
                       </div>
@@ -3936,8 +4020,8 @@ export default function App() {
                     <label className="text-xs font-bold text-slate-300">اسم المتجر / النشاط التجاري:</label>
                     <input 
                       type="text"
-                      value={clientStoreName}
-                      onChange={(e) => setClientStoreName(e.target.value)}
+                      value={storeName}
+                      onChange={(e) => setStoreName(e.target.value)}
                       placeholder="مثال: سوبرماركت الوفاء"
                       className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm transition-all"
                     />
@@ -3947,8 +4031,8 @@ export default function App() {
                     <label className="text-xs font-bold text-slate-300">رقم الهاتف (للتواصل):</label>
                     <input 
                       type="text"
-                      value={clientPhone}
-                      onChange={(e) => setClientPhone(e.target.value)}
+                      value={storePhone}
+                      onChange={(e) => setStorePhone(e.target.value)}
                       placeholder="مثال: 777xxxxxx"
                       className="w-full p-3 bg-slate-950 text-white rounded-xl border border-slate-800 focus:border-emerald-500 outline-none text-sm font-mono transition-all text-left"
                     />
@@ -4211,13 +4295,23 @@ export default function App() {
             {/* زر نسخة احتياطية */}
             <button 
               onClick={exportData} 
-              className="flex items-center gap-2 p-2 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-100/60 rounded-xl transition-all text-right cursor-pointer group"
+              className={`flex items-center gap-2 p-2 rounded-xl transition-all text-right cursor-pointer group ${
+                isBackupOverdue 
+                  ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white border border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse hover:from-red-500 hover:to-rose-500' 
+                  : 'bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-100/60'
+              }`}
             >
-              <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg group-hover:bg-emerald-100 transition-all shrink-0">
-                <Download className="w-3.5 h-3.5 group-hover:translate-y-0.5 transition-transform" />
+              <div className={`p-1.5 rounded-lg transition-all shrink-0 ${
+                isBackupOverdue 
+                  ? 'bg-white/20 text-white' 
+                  : 'bg-emerald-50 text-emerald-600 group-hover:bg-emerald-100'
+              }`}>
+                <Download className={`w-3.5 h-3.5 ${isBackupOverdue ? 'animate-bounce text-white' : 'group-hover:translate-y-0.5 transition-transform'}`} />
               </div>
               <div className="min-w-0">
-                <span className="text-[10px] font-black text-slate-700 block truncate leading-tight">النسخ الاحتياطي</span>
+                <span className={`text-[10px] font-black block truncate leading-tight ${isBackupOverdue ? 'text-white' : 'text-slate-700'}`}>
+                  {isBackupOverdue ? 'نسخة احتياطية مطلوبة ⚠️' : 'النسخ الاحتياطي'}
+                </span>
               </div>
             </button>
           </div>
@@ -4383,8 +4477,24 @@ export default function App() {
               </span>
             )}
           </div>
-          <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
-            <TrendingUp className="text-emerald-600 w-5 h-5" />
+          <div className="flex items-center gap-2">
+            {isBackupOverdue && (
+              <motion.button
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: [1, 1.05, 1], opacity: 1 }}
+                transition={{ repeat: Infinity, duration: 2 }}
+                onClick={exportData}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 text-white text-[11px] font-black rounded-xl shadow-[0_0_15px_rgba(239,68,68,0.65)] border border-red-400/80 cursor-pointer hover:from-red-500 hover:to-rose-500 active:scale-95 transition-all"
+                title="مطلوب أخذ نسخة احتياطية للبيانات فوراً"
+              >
+                <Download className="w-3.5 h-3.5 animate-bounce" />
+                <span className="hidden sm:inline">نسخة احتياطية ⚠️</span>
+                <span className="sm:hidden">احتياطية ⚠️</span>
+              </motion.button>
+            )}
+            <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+              <TrendingUp className="text-emerald-600 w-5 h-5" />
+            </div>
           </div>
         </div>
       </header>
@@ -4474,6 +4584,7 @@ export default function App() {
               setScannerMode={setScannerMode}
               setIsScannerOpen={setIsScannerOpen}
               exportData={exportData}
+              isBackupOverdue={isBackupOverdue}
               verifyAdminPermission={verifyAdminPermission}
               setSalesDetailsTab={setSalesDetailsTab}
               setShowMonthlySalesDetailsModal={setShowMonthlySalesDetailsModal}
@@ -4527,6 +4638,9 @@ export default function App() {
               setPaymentType={setPaymentType}
               saleNotes={saleNotes}
               setSaleNotes={setSaleNotes}
+              paidAmountInput={paidAmountInput}
+              setPaidAmountInput={setPaidAmountInput}
+              currency={currency}
               removeFromCart={removeFromCart}
               handleCheckout={handleCheckout}
               db={db}
@@ -4665,6 +4779,8 @@ export default function App() {
               setActiveTab={setActiveTab}
               storeName={storeName}
               setStoreName={setStoreName}
+              storePhone={storePhone}
+              setStorePhone={setStorePhone}
               updateStoreName={updateStoreName}
               currency={currency}
               updateCurrency={updateCurrency}
@@ -4674,6 +4790,10 @@ export default function App() {
               verifyAdminPermission={verifyAdminPermission}
               setShowPermissionsConfigModal={setShowPermissionsConfigModal}
               exportData={exportData}
+              isBackupOverdue={isBackupOverdue}
+              lastBackupDate={lastBackupDate}
+              backupAlertInterval={backupAlertInterval}
+              updateBackupAlertInterval={updateBackupAlertInterval}
               handleImportPython={handleImportPython}
               importData={importData}
               isBackupSyncing={isBackupSyncing}
@@ -4697,10 +4817,6 @@ export default function App() {
               handleActivateApp={handleActivateApp}
               cloudRequest={cloudRequest}
               handleDeleteCloudRequest={handleDeleteCloudRequest}
-              clientStoreName={clientStoreName}
-              setClientStoreName={setClientStoreName}
-              clientPhone={clientPhone}
-              setClientPhone={setClientPhone}
               isSubmittingRequest={isSubmittingRequest}
               handleRequestCloudActivation={handleRequestCloudActivation}
               handleDeactivateApp={handleDeactivateApp}
@@ -5132,7 +5248,7 @@ export default function App() {
                   <div>
                     <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
                       <RefreshCcw className="w-5 h-5 text-indigo-600" />
-                      تحديث المخزون
+                      إضافة مخزون يدوية
                     </h3>
                     <p className="text-xs text-slate-500 font-bold mt-1 line-clamp-1">{updatingStockProduct.name}</p>
                   </div>
@@ -5149,36 +5265,18 @@ export default function App() {
                   <div className="w-px h-10 bg-slate-200"></div>
                   <div className="text-center">
                     <p className="text-[10px] text-indigo-400 font-bold mb-1">بعد التحديث</p>
-                    <p className={`text-2xl font-black font-mono ${updatingStockType === 'add' ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {updatingStockAmount ? (updatingStockProduct.stock_quantity + (updatingStockType === 'add' ? Number(updatingStockAmount) : -Number(updatingStockAmount))) : updatingStockProduct.stock_quantity}
+                    <p className="text-2xl font-black font-mono text-emerald-600">
+                      {updatingStockAmount ? (updatingStockProduct.stock_quantity + Number(updatingStockAmount)) : updatingStockProduct.stock_quantity}
                     </p>
                   </div>
                 </div>
 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">نوع التحديث</label>
-                    <div className="flex bg-slate-100 p-1 rounded-xl">
-                      <button 
-                        onClick={() => setUpdatingStockType('add')}
-                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${updatingStockType === 'add' ? 'bg-white shadow-sm text-emerald-700 border border-emerald-100' : 'text-slate-500 hover:bg-slate-200/50'}`}
-                      >
-                        إضافة (+)
-                      </button>
-                      <button 
-                        onClick={() => setUpdatingStockType('subtract')}
-                        className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${updatingStockType === 'subtract' ? 'bg-white shadow-sm text-red-700 border border-red-100' : 'text-slate-500 hover:bg-slate-200/50'}`}
-                      >
-                        سحب (-)
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-2">الكمية المراد {updatingStockType === 'add' ? 'إضافتها' : 'سحبها'}</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">الالكمية المراد إضافتها</label>
                     <input 
                       type="number" 
-                      className={`w-full p-4 rounded-xl border-2 bg-slate-50 text-xl font-black font-mono text-center focus:outline-none transition-all ${updatingStockType === 'add' ? 'border-emerald-200 focus:border-emerald-500 text-emerald-700' : 'border-red-200 focus:border-red-500 text-red-700'}`}
+                      className="w-full p-4 rounded-xl border-2 bg-slate-50 text-xl font-black font-mono text-center focus:outline-none transition-all border-emerald-200 focus:border-emerald-500 text-emerald-700"
                       value={updatingStockAmount}
                       onChange={e => setUpdatingStockAmount(e.target.value)}
                       placeholder="0"
@@ -5193,21 +5291,9 @@ export default function App() {
                       className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/20 outline-none"
                       value={updatingStockNotes}
                       onChange={e => setUpdatingStockNotes(e.target.value)}
-                      placeholder={updatingStockType === 'add' ? "مثال: بضاعة جديدة، جرد..." : "مثال: تالف، مفقود، جرد..."}
+                      placeholder="مثال: بضاعة جديدة، جرد..."
                     />
                   </div>
-
-                  {updatingStockType === 'subtract' && updatingStockProduct.supplier_id && updatingStockProduct.cost_price > 0 && (
-                    <label className="flex items-center gap-2 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
-                      <input 
-                        type="checkbox" 
-                        checked={updateSupplierBalance} 
-                        onChange={(e) => setUpdateSupplierBalance(e.target.checked)}
-                        className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                      />
-                      <span className="text-sm font-bold text-slate-700">خصم التكلفة من حساب المورد (إرجاع أو تصحيح)</span>
-                    </label>
-                  )}
                 </div>
 
                 <div className="flex gap-2 pt-2">

@@ -450,7 +450,6 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const [liquidityDonutType, setLiquidityDonutType] = useState<'revenue_mix' | 'liquidity_allocation'>('revenue_mix');
 
   // --- Interactive Ledger explorer category ---
-  const [activeExplorerTab, setActiveExplorerTab] = useState<'products'>('products');
   const [showDailyLogModal, setShowDailyLogModal] = useState(false);
   const [showCustomerReceivablesModal, setShowCustomerReceivablesModal] = useState(false);
 
@@ -2199,6 +2198,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
       </div>
 
+
       {/* BI Analytics Visualizer - Charts Workspace */}
       <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
         <button 
@@ -2594,17 +2594,17 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
               <Users className="w-3.5 h-3.5" />
               <span>👤 ذمم العملاء</span>
             </button>
-            <button
-              onClick={() => setActiveExplorerTab('products')}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-white text-indigo-600 shadow-sm"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>🏆 الرفوف والسلع</span>
-            </button>
+             <button
+               className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-white text-indigo-600 shadow-sm font-black"
+             >
+               <Layers className="w-3.5 h-3.5" />
+               <span>🏆 الرفوف والسلع</span>
+             </button>
           </div>
+
         </div>
 
-{/* Tab Content Panels */}
+        {/* Tab Content Panels */}
         <div className="p-5">
           <AnimatePresence mode="wait">
             <motion.div
@@ -2698,6 +2698,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
             </motion.div>
           </AnimatePresence>
         </div>
+
       </div>
 
       {/* Visual Models Extension Component (Market Basket, Profit Scatter, Credit Risk, Cashflow Waterfall) */}

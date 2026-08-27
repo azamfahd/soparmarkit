@@ -40,6 +40,9 @@ export interface Sale {
   id?: number;
   customer_id: number | null;
   total_amount: number;
+  paid_amount?: number;
+  remaining_amount?: number;
+  payment_status?: 'unpaid' | 'partial' | 'paid' | 'overpaid';
   payment_type: 'cash' | 'debt';
   created_at: string;
   notes?: string;

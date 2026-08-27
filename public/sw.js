@@ -1,11 +1,12 @@
-const CACHE_NAME = 'future-pos-offline-v2';
+const CACHE_NAME = 'future-pos-offline-v3';
 
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/icon.png',
-  '/icon.svg'
+  '/icon.svg',
+  'https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap'
 ];
 
 // Install Event - Precache essential assets
@@ -89,7 +90,7 @@ self.addEventListener('fetch', (event) => {
     caches.match(req).then((cachedResponse) => {
       const fetchPromise = fetch(req)
         .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200 && (networkResponse.type === 'basic' || networkResponse.type === 'cors')) {
+          if (networkResponse && (networkResponse.status === 200 || networkResponse.type === 'opaque' || networkResponse.type === 'cors')) {
             const responseToCache = networkResponse.clone();
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(req, responseToCache);

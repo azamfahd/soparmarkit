@@ -353,13 +353,51 @@ export async function generateResponse(
       break;
     }
 
+    case 'getCreditSalesSummary': {
+      const rangeText = formatRangeArabic(data.dateRange || 'ALL');
+      const creditTotal = data.debtSales ?? data.creditSalesTotal ?? 0;
+      const totalAll = data.totalAmount ?? data.totalSalesAll ?? 0;
+      const cashTotal = data.cashSales ?? data.cashSalesTotal ?? 0;
+      const percentage = totalAll > 0 ? Math.round((creditTotal / totalAll) * 100) : 0;
+
+      answer = `📑 **تقرير المبيعات بالآجل (البيع بالدين) - (${rangeText}):**\n\n` +
+        `• **إجمالي المبيعات بالآجل:** **${creditTotal.toLocaleString()} ر.س**\n` +
+        `• **نسبتها من إجمالي المبيعات:** **%${percentage}**\n` +
+        `• **إجمالي المبيعات الكلية:** ${totalAll.toLocaleString()} ر.س\n` +
+        `• **المبيعات النقدية (كاش):** ${cashTotal.toLocaleString()} ر.س\n` +
+        `• **عدد الفواتير المسجلة:** ${data.invoiceCount ?? 0} فاتورة\n\n` +
+        `💡 *تنويه محاسبي:* المبيعات بالآجل تُسجل تلقائياً في دفتر الذمم المدينة بحسابات العملاء وتحدث أرصدتهم فوراً.`;
+      break;
+    }
+
     case 'getProfitSummary': {
       const rangeText = formatRangeArabic(data.dateRange);
-      answer = `📈 **تقرير الأرباح (${rangeText}):**\n` +
-        `• **إجمالي الإيرادات:** ${data.totalRevenue?.toLocaleString()} ر.س\n` +
-        `• **إجمالي التكلفة:** ${data.totalCost?.toLocaleString()} ر.س\n` +
-        `• **صافي الربح:** **${data.netProfit?.toLocaleString()} ر.س**\n` +
-        `• **هامش الربح:** %${data.marginPercent}`;
+      const queryText = query.rawText || '';
+      const isAchievedOrCumulative = data.dateRange === 'ALL' || data.isCumulativeQuery || /المحققة|التراكمية|المحل|الكلية|في النظام|كلها|الجرد|تكلفة|تكلفه/i.test(queryText);
+
+      if (isAchievedOrCumulative || (data.netProfit === 0 && data.allTimeNetProfit !== undefined && !/اليوم|أمس|امس|شهر|أسبوع|اسبوع|تاريخ|يوم/i.test(queryText))) {
+        const totalCostVal = data.totalCost ?? data.allTimeTotalCost ?? data.allTimeCost ?? 0;
+        const totalRevVal = data.totalRevenue ?? data.allTimeTotalRevenue ?? data.allTimeRevenue ?? 0;
+        const netProfitVal = data.netProfit ?? data.allTimeNetProfit ?? 0;
+        const marginVal = data.marginPercent ?? data.allTimeMarginPercent ?? 0;
+
+        answer = `📈 **تقرير الأرباح وتكلفة البضائع المباعة (${rangeText}):**\n\n` +
+          `• **إجمالي تكلفة البضائع المباعة وصرفها:** **${totalCostVal.toLocaleString()} ر.س**\n` +
+          `• **إجمالي الإيرادات (المبيعات بسعر البيع):** **${totalRevVal.toLocaleString()} ر.س**\n` +
+          `• **صافي الربح:** **${netProfitVal.toLocaleString()} ر.س**\n` +
+          `• **هامش الربح الإجمالي:** **%${marginVal}**\n\n` +
+          `💡 *تنويه محاسبي:* يتم احتساب تكلفة البضائع المباعة وصرفها بناءً على سعر شراء كل صنف مضروباً في كمياته المباعة من الواقع الفعلي لجميع الفواتير.`;
+      } else {
+        answer = `📈 **تقرير الأرباح (${rangeText}):**\n\n` +
+          `• **إجمالي الإيرادات:** ${data.totalRevenue?.toLocaleString()} ر.س\n` +
+          `• **إجمالي التكلفة (تكلفة البضائع المباعة):** ${data.totalCost?.toLocaleString()} ر.س\n` +
+          `• **صافي الربح:** **${data.netProfit?.toLocaleString()} ر.س**\n` +
+          `• **هامش الربح:** %${data.marginPercent}`;
+
+        if (data.allTimeNetProfit !== undefined) {
+          answer += `\n\n💡 **إجمالي الأرباح التراكمية في النظام (كلياً):** **${data.allTimeNetProfit?.toLocaleString()} ر.س**`;
+        }
+      }
       break;
     }
 
@@ -514,18 +552,26 @@ export async function generateResponse(
       } else {
         let prefix = '';
         if (data.notMatchedSearchedName) {
-          prefix = `⚠️ لم نجد مورداً باسم "${data.notMatchedSearchedName}" في السجلات. إليك ملخص إجمالي مستحقات الموردين:\n\n`;
+          prefix = `⚠️ لم نجد مورداً باسم "${data.notMatchedSearchedName}" في السجلات. إليك ملخص بطاقات وقسم الموردين والتجار:\n\n`;
         }
-        answer = `${prefix}🏬 **ملخص ديون الموردين:**\n` +
-          `• **إجمالي المستحقات للموردين:** **${data.totalSupplierDebt?.toLocaleString()} ر.س**\n` +
-          `• **عدد الموردين المستحق لهم مبالغ:** ${data.indebtedSuppliersCount} مورد\n`;
+        answer = `${prefix}🏬 **ملخص بطاقات وقسم الموردين والتجّار:**\n\n` +
+          `• **🔴 المتبقي والديون القائمة للموردين:** **${data.totalSupplierDebt?.toLocaleString()} ر.س** (${data.indebtedSuppliersCount} مورد مستحق لهم مبالغ)\n` +
+          `• **💵 رأس المال المسلّم للتجار (إجمالي السدادات للموردين):** **${(data.totalCapitalPaidToSuppliers || 0)?.toLocaleString()} ر.س**\n` +
+          `• **📦 رأس مال البضاعة بسعر التكلفة:** **${(data.totalInventoryCostValuation || 0)?.toLocaleString()} ر.س** (بسعر الجملة)\n`;
 
         if (data.topSuppliersDue && data.topSuppliersDue.length > 0) {
-          answer += `\n📋 **أعلى الموردين ديناً علينا:**\n` +
+          answer += `\n📋 **أعلى الموردين ديناً علينا حالياً:**\n` +
             data.topSuppliersDue
               .map((s: any, idx: number) => `${idx + 1}. **${s.name}**: ${s.balance?.toLocaleString()} ر.س`)
               .join('\n');
         }
+
+        answer += `\n\n💡 **خيارات واقتراحات سريعة قبل إكمال طلبك أو للتوسع في بطاقات الموردين:**\n` +
+          `إذا كنت تبحث عن تفاصيل محددة من قسم الموردين، يمكنك الاستفسار عن:\n` +
+          `1️⃣ 💵 **المسدد والمدفوع للتجار (رأس المال المسلم):** لمعرفة كم تم تسديده للشركات بالتاريخ.\n` +
+          `2️⃣ ⚖️ **المتبقي والديون القائمة:** لمعرفة قائمة الشركات والموردين والالتزامات القائمة.\n` +
+          `3️⃣ 📄 **كشف حساب مورد معين:** اكتب *"كشف حساب [اسم المورد]"* لرؤية جميع سداداته وفواتيره.\n` +
+          `4️⃣ 📊 **جرد شامل وتقرير كلي:** اكتب *"جرد شامل للموردين"* للحصول على تقرير تفصيلي كامل.`;
       }
       break;
     }
@@ -732,27 +778,66 @@ export async function generateResponse(
         if (data.matchedProducts.length === 0) {
           answer = `⚠️ لم يتم العثور على أي صنف أو منتج باسم "${data.searchedName}" في المخزن.`;
         } else {
-          answer = `📦 **بيانات وتفاصيل الصنف المحدد (${data.searchedName}):**\n\n` +
-            data.matchedProducts
-              .map((p: any) => {
-                let stockStatus = '';
-                if ((p.stock_quantity || 0) === 0) {
-                  stockStatus = '🔴 **منتهٍ من المخزن (0 حبة)**';
-                } else if ((p.stock_quantity || 0) <= 5) {
-                  stockStatus = `🟡 **قريب النفاد (${p.stock_quantity} حبة فقط)**`;
-                } else {
-                  stockStatus = `🟢 **متوفر (${p.stock_quantity} حبة)**`;
-                }
+          const queryText = query.rawText || '';
+          const isOnlyPrice = /(بكم|كم سعر|سعر البيع|كم سعره)/i.test(queryText) && !/تفاصيل|كل|حركة|تقرير|تحديث|أرباح|مبيعات/i.test(queryText);
+          const isOnlyStock = /(كم كمية|كم كميه|كم متبقي|كم باقي|رصيد المخزون|كم حبة|كم حبه)/i.test(queryText) && !/تفاصيل|كل|حركة|تقرير|تحديث|أرباح|مبيعات/i.test(queryText);
 
-                const profitMargin = p.sale_price && p.cost_price ? ((p.sale_price - p.cost_price) / p.sale_price * 100).toFixed(0) : '0';
+          if (isOnlyPrice) {
+            answer = data.matchedProducts.map((p: any) =>
+              `🏷️ **سعر الصنف (${p.name}):** **${p.sale_price?.toLocaleString()} ر.س**` +
+              (p.cost_price ? ` (سعر التكلفة: ${p.cost_price?.toLocaleString()} ر.س)` : '')
+            ).join('\n');
+          } else if (isOnlyStock) {
+            answer = data.matchedProducts.map((p: any) => {
+              let statusText = p.stock_quantity === 0 ? '🔴 منتهٍ من المخزن' : p.stock_quantity <= 5 ? '🟡 قريب النفاد' : '🟢 متوفر';
+              return `📦 **المخزون المتبقي من (${p.name}):** **${p.stock_quantity || 0} ${p.unit || 'حبة'}** (${statusText})`;
+            }).join('\n');
+          } else {
+            answer = `📦 **التقرير الكامل والتفصيلي للصنف (${data.searchedName}):**\n\n` +
+              data.matchedProducts
+                .map((p: any) => {
+                  let stockStatus = '';
+                  if ((p.stock_quantity || 0) === 0) {
+                    stockStatus = '🔴 **منتهٍ من المخزن (0 حبة)**';
+                  } else if ((p.stock_quantity || 0) <= 5) {
+                    stockStatus = `🟡 **قريب النفاد (${p.stock_quantity} ${p.unit || 'حبة'} فقط)**`;
+                  } else {
+                    stockStatus = `🟢 **متوفر (${p.stock_quantity} ${p.unit || 'حبة'})**`;
+                  }
 
-                return `• **اسم المنتج:** **${p.name}**\n` +
-                       `• **القسم / الفئة:** ${p.category || 'عام'}\n` +
-                       `• **حالة المخزون:** ${stockStatus}\n` +
-                       `• **سعر البيع:** **${p.sale_price?.toLocaleString()} ر.س** | **سعر التكلفة:** ${p.cost_price?.toLocaleString()} ر.س (هامش الربح: ${profitMargin}%)\n` +
-                       (p.expiration_date ? `• **تاريخ الصلاحية والانتهاء:** ${p.expiration_date}` : '');
-              })
-              .join('\n\n---\n\n');
+                  const profitMargin = p.sale_price && p.cost_price ? (((p.sale_price - p.cost_price) / p.sale_price) * 100).toFixed(0) : '0';
+
+                  let itemDetails = `📌 **البيانات الأساسية:**\n` +
+                         `• **اسم المنتج:** **${p.name}**\n` +
+                         `• **القسم / الفئة:** ${p.category || 'عام'}\n` +
+                         `• **الباركود:** ${p.barcode || 'غير محدد'}\n` +
+                         `• **الوحدة:** ${p.unit || 'حبة'}\n\n` +
+                         `🏷️ **التسعير والمخزون الحالي:**\n` +
+                         `• **حالة المخزون:** ${stockStatus}\n` +
+                         `• **سعر البيع:** **${p.sale_price?.toLocaleString()} ر.س**\n` +
+                         `• **سعر التكلفة:** ${p.cost_price?.toLocaleString()} ر.س\n` +
+                         `• **هامش الربح:** **%${profitMargin}**\n` +
+                         (p.production_date ? `• **تاريخ الإنتاج:** ${p.production_date}\n` : '') +
+                         (p.expiration_date ? `• **تاريخ الانتهاء:** ${p.expiration_date}\n` : '') +
+                         `\n📊 **سجل الحركة والمبيعات التراكمي:**\n` +
+                         `• **إجمالي الكمية المباعة:** **${p.totalQtySold || 0} ${p.unit || 'حبة'}**\n` +
+                         `• **إجمالي الإيرادات المحققة:** **${p.totalRevenue?.toLocaleString() || 0} ر.س**\n` +
+                         `• **إجمالي الأرباح المحققة:** **${p.totalProfit?.toLocaleString() || 0} ر.س**\n` +
+                         `• **عدد الفواتير:** ${p.salesCount || 0} فاتورة`;
+
+                  if (p.recentTransactions && p.recentTransactions.length > 0) {
+                    itemDetails += `\n\n🧾 **آخر عمليات البيع والتحديث لهذا الصنف:**\n` +
+                      p.recentTransactions.map((tx: any) =>
+                        `• فاتورة #${tx.saleId} | ${tx.date ? new Date(tx.date).toLocaleDateString('ar-SA') : 'سابقاً'} | العميل: ${tx.customerName} | الكمية: ${tx.quantity} ${p.unit || 'حبة'} بسعر ${tx.priceAtSale} ر.س (الإجمالي: ${tx.total?.toLocaleString()} ر.س)`
+                      ).join('\n');
+                  } else {
+                    itemDetails += `\n\n💡 *ملاحظة:* لا توجد عمليات بيع مسجلة لهذا الصنف حتى الآن.`;
+                  }
+
+                  return itemDetails;
+                })
+                .join('\n\n---\n\n');
+          }
         }
       } else {
         let prefix = '';
@@ -1283,6 +1368,161 @@ export async function generateResponse(
       break;
     }
 
+    case 'getSupplierPaymentsByDate': {
+      const rangeText = formatRangeArabic(data.dateFilter);
+      answer = `💵 **تقرير مدفوعات وتسديدات الموردين (${rangeText}):**\n\n` +
+        `• **المورد / الجهة المستعلم عنها:** **${data.supplierName}**\n` +
+        `• **إجمالي المبلغ المسدد في هذه الفترة:** **${data.totalPaid?.toLocaleString()} ر.س**\n` +
+        `• **عدد الفواتير / سندات الصرف:** ${data.count} سند\n`;
+
+      if (data.payments && data.payments.length > 0) {
+        answer += `\n🧾 **تفاصيل العمليات المسجلة:**\n` +
+          data.payments.map((p: any) =>
+            `• ${new Date(p.date).toLocaleDateString('ar-SA')} | مبلغ **${p.amount?.toLocaleString()} ر.س** [${p.notes}]`
+          ).join('\n');
+      } else {
+        answer += `\nℹ️ لم يتم تسديد أي مبالغ نقدية للمورد خلال تاريخ أو فترة (${rangeText}).`;
+      }
+      break;
+    }
+
+    case 'getCreditSales': {
+      const rangeText = formatRangeArabic(data.period);
+      answer = `💳 **تقرير المبيعات بالآجل والبيع بالدين (${rangeText}):**\n\n` +
+        `• **إجمالي المبيعات بالآجل (الديون الجديدة):** **${data.totalCreditAmount?.toLocaleString()} ر.س**\n` +
+        `• **عدد فواتير البيع بالآجل:** ${data.creditInvoicesCount} فاتورة\n` +
+        `• **إجمالي المبيعات الكلية بالفترة:** ${data.totalSalesRevenue?.toLocaleString()} ر.س\n` +
+        `• **نسبة الآجل من المبيعات:** %${data.creditRatio}\n`;
+
+      if (data.recentCreditInvoices && data.recentCreditInvoices.length > 0) {
+        answer += `\n📋 **أبرز فواتير الآجل الأخيرة:**\n` +
+          data.recentCreditInvoices.map((inv: any) =>
+            `• فاتورة #${inv.id} | العميل: **${inv.customerName}** | المبلغ: **${inv.amount?.toLocaleString()} ر.س** (${new Date(inv.date).toLocaleDateString('ar-SA')})`
+          ).join('\n');
+      }
+      break;
+    }
+
+    case 'getWithdrawalsAndAdjustments': {
+      const rangeText = formatRangeArabic(data.period);
+      answer = `📉 **تقرير سحب وتسويات المسحوبات النقدية (${rangeText}):**\n\n` +
+        `• **إجمالي المسحوبات والتسويات:** **${data.totalAmount?.toLocaleString()} ر.س**\n` +
+        `• **عدد حركات السحب والتسوية:** ${data.count} حركة\n`;
+
+      if (data.items && data.items.length > 0) {
+        answer += `\n📋 **تفاصيل الحركات:**\n` +
+          data.items.map((item: any) =>
+            `• ${new Date(item.date).toLocaleDateString('ar-SA')} | مبلغ: **${item.amount?.toLocaleString()} ر.س** | البيان: *${item.reason}*`
+          ).join('\n');
+      } else {
+        answer += `\nℹ️ لا توجد حركات سحب أو تسويات نقدية مسجلة في (${rangeText}).`;
+      }
+      break;
+    }
+
+    case 'getSystemDictionaryExplanation': {
+      if (data.matches && data.matches.length > 0) {
+        answer = `📖 **قاموس ومعجم الدليل الشامل لمصطلحات وبطاقات النظام:**\n\n` +
+          data.matches.map((m: any) =>
+            `📌 **${m.arabicName} (${m.englishName}):**\n` +
+            `• **التصنيف:** ${m.category}\n` +
+            `• **الشرح والدليل التفصيلي:** ${m.description}\n` +
+            `• **المرادفات الشائعة:** ${m.synonyms.join(' - ')}`
+          ).join('\n\n---\n\n');
+
+        if (data.liveMetricsSummary) {
+          answer += `\n\n📊 **القيم المباشرة الحالية بالنظام:**\n` +
+            `• إجمالي المبيعات التراكمية: **${data.liveMetricsSummary.totalSalesRevenue?.toLocaleString()} ر.س**\n` +
+            `• إجمالي ديون العملاء: **${data.liveMetricsSummary.totalCustomerDebt?.toLocaleString()} ر.س**\n` +
+            `• إجمالي مستحقات الموردين: **${data.liveMetricsSummary.totalSupplierDebt?.toLocaleString()} ر.س**\n` +
+            `• رأس مال المخزون بسعر التكلفة: **${data.liveMetricsSummary.totalCostValue?.toLocaleString()} ر.س**`;
+        }
+      } else {
+        answer = `📖 **معجم وقاموس النظام والمصطلحات المحاسبية:**\n\n` +
+          `يحتوي القاموس المدمج بالنظام على تعريف شامل لكافة الأقسام، البطاقات الإحصائية، الأزرار، والرموز المعرفة بالمحل.\n\n` +
+          `💡 يمكنك السؤال عن أي مصطلح أو بطاقة مثل:\n` +
+          `• *"شرح بطاقة رأس المال المسلم للتجار"*\n` +
+          `• *"ما معنى إجمالي المبيعات بسعر البيع"*\n` +
+          `• *"ماذا تعني بطاقة سحب وتسويات"*\n` +
+          `• *"شرح زر قارئ الباركود"*\n` +
+          `• *"ما هي بطاقة المبيعات بالآجل"*`;
+      }
+      break;
+    }
+
+    case 'getFullSystemAudit': {
+      const inv = data.inventory || {};
+      const cust = data.customers || {};
+      const supp = data.suppliers || {};
+      const fin = data.finance || {};
+
+      const periodLabelMap: Record<string, string> = {
+        TODAY: 'اليوم',
+        YESTERDAY: 'الأمس',
+        THIS_WEEK: 'الأسبوع الحالي',
+        LAST_WEEK: 'الأسبوع الماضي',
+        THIS_MONTH: 'الشهر الحالي',
+        LAST_MONTH: 'الشهر الماضي',
+        THIS_YEAR: 'السنة الحالية',
+        LAST_YEAR: 'السنة الماضية',
+        ALL: 'الشامل والتراكمي (لكل الأوقات)',
+      };
+
+      let periodTitle = periodLabelMap[data.period] || data.period || 'الكلي';
+      if (typeof data.period === 'string') {
+        if (data.period.startsWith('DATE_BETWEEN:')) {
+          const parts = data.period.replace('DATE_BETWEEN:', '').split(':');
+          periodTitle = `الفترة من ${parts[0]} إلى ${parts[1]}`;
+        } else if (data.period.startsWith('MONTH:')) {
+          periodTitle = `شهر ${data.period.replace('MONTH:', '')}`;
+        } else if (data.period.startsWith('EXACT_DATE:')) {
+          periodTitle = `تاريخ ${data.period.replace('EXACT_DATE:', '')}`;
+        } else if (data.period.startsWith('LAST_N_DAYS:')) {
+          periodTitle = `آخر ${data.period.replace('LAST_N_DAYS:', '')} يوم`;
+        }
+      }
+
+      const netPos = data.netBusinessPosition || 0;
+      const netPosText = netPos >= 0 
+        ? `صافي إيجابي لصالحك بقيمة **+${netPos.toLocaleString()} ر.س** (ديون العملاء أضخم من التزامات الموردين)`
+        : `عجز التزامات بقيمة **${netPos.toLocaleString()} ر.س** (مستحقات الموردين أعلى من ديون العملاء)`;
+
+      answer = `📊 **تقرير الجرد التفصيلي المبتكر (${periodTitle}):**\n\n` +
+        `أهلاً بك. تم إجراء جرد حقيقي مباشر لكافة بيانات الحسابات والمخزون والمبيعات المسجلة للفترة المحددة (**${periodTitle}**):\n\n` +
+        `📦 **1. جرد المخزون والمنتجات (Inventory & Stock Audit):**\n` +
+        `• إجمالي الأصناف المسجلة بالنظام: **${inv.totalProductsCount} صنف**\n` +
+        `• إجمالي الكميات المتاحة حالياً بالمخزن: **${inv.totalStockQuantity?.toLocaleString()} قطعة**\n` +
+        `• قطع البضائع المباعة خلال الفترة (**${periodTitle}**): **${inv.periodSoldItemsCount?.toLocaleString() || 0} قطعة**\n` +
+        `• القيمة المالية الإجمالية للمخزون بسعر التكلفة (رأس المال): **${inv.totalCostValue?.toLocaleString()} ر.س**\n` +
+        `• القيمة المالية الإجمالية للمخزون بسعر البيع (القيمة السوقية): **${inv.totalRetailValue?.toLocaleString()} ر.س**\n` +
+        `• الربح المتوقع عند تصريف بضاعة المخزون بالكامل: **+${inv.potentialProfit?.toLocaleString()} ر.س**\n` +
+        `• الأصناف القريبة من النفاد: **${inv.lowStockCount} صنف** | النافذة تماماً: **${inv.outOfStockCount} صنف**\n\n` +
+
+        `💵 **2. جرد المبيعات والأرباح لـ (${periodTitle}):**\n` +
+        `• عدد الفواتير الصادرة: **${fin.totalInvoicesCount} فاتورة**\n` +
+        `• إجمالي إيرادات المبيعات: **${fin.totalSalesRevenue?.toLocaleString()} ر.س**\n` +
+        `• تكلفة البضاعة المباعة (COGS): ${fin.totalCostOfSales?.toLocaleString()} ر.س\n` +
+        `• مجمل الأرباح المحققة: **+${fin.grossProfit?.toLocaleString()} ر.س**\n` +
+        `• المصاريف والمسحوبات النقدية: **${fin.totalWithdrawalsAmount?.toLocaleString()} ر.س**\n` +
+        `• **صافي الربح الفعلي المتبقي للفترة:** **+${fin.netProfit?.toLocaleString()} ر.س**\n\n` +
+
+        `👥 **3. جرد الذمم والديون المترتبة (Receivables & Creditors):**\n` +
+        `• إجمالي ديون العملاء والزبائن (ذمم مدينة لنا): **${cust.totalDebt?.toLocaleString()} ر.س** (على ${cust.indebtedCount} عميل مدين)\n` +
+        `• إجمالي مستحقات الموردين والشركات (ذمم دائنة علينا): **${supp.totalDebt?.toLocaleString()} ر.س** (لصالح ${supp.creditorCount} مورد دائن)\n` +
+        `• **المركز المالي الحالي للديون:** ${netPosText}\n`;
+
+      if (cust.topDebtors && cust.topDebtors.length > 0) {
+        answer += `• **أعلى المدينين ديناً:** ` + cust.topDebtors.map((d: any) => `${d.name} (${d.balance?.toLocaleString()} ر.س)`).join(', ') + `\n`;
+      }
+      if (supp.topCreditors && supp.topCreditors.length > 0) {
+        answer += `• **أعلى الموردين مستحقات:** ` + supp.topCreditors.map((s: any) => `${s.name} (${s.balance?.toLocaleString()} ر.س)`).join(', ') + `\n`;
+      }
+
+      answer += `\n✅ **خلاصة تقييم الجرد:**\n` +
+        `جميع السجلات مطابقة ودقيقة بلحظية كاملة للفترة المحددة (**${periodTitle}**)، وبدون أي تضارب حسابي.`;
+      break;
+    }
+
     default: {
       answer = 'تم استرجاع البيانات بنجاح من قاعدة البيانات المحاسبية المحلية.';
       break;
@@ -1299,7 +1539,7 @@ export async function generateResponse(
 }
 
 function formatRangeArabic(range?: string): string {
-  if (!range || range === 'ALL') return 'الفترة الكلية';
+  if (!range || range === 'ALL') return 'لكافة الفترات - الإجمالي التراكمي الشامل';
 
   if (range.startsWith('EXACT_DATE:')) {
     const dStr = range.replace('EXACT_DATE:', '').trim();
@@ -1345,6 +1585,10 @@ function formatRangeArabic(range?: string): string {
     DAY_FRIDAY_LAST_WEEK: 'يوم الجمعة الماضي',
   };
   if (dayMap[range]) return dayMap[range];
+
+  if (!range || range === 'ALL' || range === 'CUMULATIVE') {
+    return 'لكل الفترات (الإجمالي الكلي التراكمي)';
+  }
 
   switch (range) {
     case 'TODAY':

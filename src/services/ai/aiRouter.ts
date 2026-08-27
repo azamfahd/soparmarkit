@@ -7,6 +7,7 @@ import { getMemoryContext, saveAIMessage, updateMemoryState, saveTurnExecutionOu
 import { generateResponse } from './providers';
 import { normalizeArabic } from './nlu/arabicNormalizer';
 import { addTrainingExample } from './engine/trainingManager';
+import { resolveOptionSelectionFromHistory } from './nlu/optionResolver';
 import {
   validateQuerySecurity,
   getCachedQueryResponse,
@@ -54,9 +55,21 @@ export async function processUserQuery(
   // 4. Fetch Context / Memory
   const memoryContext = await getMemoryContext(conversationId);
 
+  // 4.5 Resolve Numbered Option Selection (e.g. 1, 2, 3, 4) from previous assistant response
+  const resolvedOption = resolveOptionSelectionFromHistory(sanitizedQueryText, memoryContext);
+  if (resolvedOption) {
+    query.rawText = resolvedOption.resolvedText;
+    query.normalizedText = normalizeArabic(resolvedOption.resolvedText);
+  }
+
   // 5. NLU (Intent & Entity Extraction) - Support Compound Queries
   let nluResults = await parseCompoundQuery(query);
   let primaryNlu = nluResults[0];
+
+  if (resolvedOption?.forceIntent) {
+    primaryNlu.intent.name = resolvedOption.forceIntent as any;
+    primaryNlu.intent.confidence = 0.98;
+  }
 
   // Learning Engine Loop: Handle User Corrections
   if (primaryNlu.intent.name === 'USER_CORRECTION_FEEDBACK' && memoryContext.recentMessages.length > 0) {

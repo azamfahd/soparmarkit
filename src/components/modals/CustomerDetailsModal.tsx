@@ -266,91 +266,148 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
               {filteredEntries.map((entry, idx) => {
                 let typeLabel = '';
                 let badgeColor = '';
-                let iconColor = '';
+                let cardStyle = '';
                 let amountPrefix = '';
                 let amountText = '';
                 let showItems = false;
                 let noteText = '';
-                
+                let totalAmount = 0;
+                let paidAmount = 0;
+                let remainingAmount = 0;
+                let paymentStatus = 'paid';
+
                 if (entry.entryType === 'sale') {
-                  typeLabel = 'فاتورة شراء';
-                  badgeColor = 'bg-rose-50 text-rose-700 border border-rose-100';
-                  amountPrefix = '+';
-                  amountText = formatPrice(entry.total_amount);
-                  iconColor = 'border-r-rose-400';
+                  totalAmount = entry.total_amount || 0;
+                  paidAmount = entry.paid_amount !== undefined 
+                    ? entry.paid_amount 
+                    : (entry.payment_type === 'cash' ? totalAmount : 0);
+                  remainingAmount = totalAmount - paidAmount;
+                  paymentStatus = entry.payment_status || (paidAmount === 0 ? 'unpaid' : paidAmount < totalAmount ? 'partial' : paidAmount === totalAmount ? 'paid' : 'overpaid');
+
                   showItems = true;
                   noteText = entry.notes || '';
+                  amountText = formatPrice(totalAmount);
+
+                  if (paymentStatus === 'unpaid') {
+                    typeLabel = '🔴 آجل بالكامل (دَيْنٌ)';
+                    badgeColor = 'bg-red-100 text-red-800 border border-red-300 font-extrabold';
+                    cardStyle = 'bg-red-50/70 border border-red-200/80 border-r-4 border-r-red-600 text-red-950 shadow-2xs';
+                    amountPrefix = '+';
+                  } else if (paymentStatus === 'partial') {
+                    typeLabel = '🟡 دفع جزئي (متبقي دَيْن)';
+                    badgeColor = 'bg-amber-100 text-amber-900 border border-amber-300 font-extrabold';
+                    cardStyle = 'bg-amber-50/70 border border-amber-200/80 border-r-4 border-r-amber-500 text-amber-950 shadow-2xs';
+                    amountPrefix = '+';
+                  } else if (paymentStatus === 'overpaid') {
+                    typeLabel = '⭐ دفع زائد (رصيد دائن للعميل)';
+                    badgeColor = 'bg-yellow-200 text-yellow-950 border border-yellow-400 font-black';
+                    cardStyle = 'bg-yellow-50/80 border border-yellow-300/80 border-r-4 border-r-yellow-500 text-yellow-950 shadow-2xs';
+                    amountPrefix = '';
+                  } else {
+                    typeLabel = '🟢 مدفوع بالكامل';
+                    badgeColor = 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-extrabold';
+                    cardStyle = 'bg-emerald-50/70 border border-emerald-200/80 border-r-4 border-r-emerald-500 text-emerald-950 shadow-2xs';
+                    amountPrefix = '';
+                  }
                 } else {
                   if (entry.amount === 0) {
-                    typeLabel = 'ملاحظة حساب';
-                    badgeColor = 'bg-slate-100 text-slate-600';
+                    typeLabel = '💬 ملاحظة حساب';
+                    badgeColor = 'bg-slate-100 text-slate-700 border border-slate-200';
+                    cardStyle = 'bg-white border border-slate-200/80 border-r-4 border-r-slate-400 shadow-2xs';
                     amountPrefix = '';
                     amountText = '0 ' + currency;
-                    iconColor = 'border-r-slate-400';
                     noteText = entry.notes || 'ملاحظة عامة';
                   } else if (entry.type === 'purchase') {
-                    typeLabel = 'زيادة مديونية';
-                    badgeColor = 'bg-amber-50 text-amber-700 border border-amber-100';
+                    typeLabel = '📈 زيادة مديونية';
+                    badgeColor = 'bg-amber-100 text-amber-800 border border-amber-300 font-extrabold';
+                    cardStyle = 'bg-amber-50/50 border border-amber-200/80 border-r-4 border-r-amber-500 text-amber-950 shadow-2xs';
                     amountPrefix = '+';
                     amountText = formatPrice(entry.amount);
-                    iconColor = 'border-r-amber-400';
-                    noteText = entry.notes || 'تعديل بالزيادة';
+                    noteText = entry.notes || 'تعديل مديونية بالزيادة';
                   } else {
-                    typeLabel = 'دفعة مالية';
-                    badgeColor = 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+                    typeLabel = '💵 سداد دفعة مالية';
+                    badgeColor = 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-extrabold';
+                    cardStyle = 'bg-emerald-50/50 border border-emerald-200/80 border-r-4 border-r-emerald-600 text-emerald-950 shadow-2xs';
                     amountPrefix = '-';
                     amountText = formatPrice(entry.amount);
-                    iconColor = 'border-r-emerald-400';
-                    noteText = entry.notes || '';
+                    noteText = entry.notes || 'دفعة مسددة لحساب الدين';
                   }
                 }
                 
                 return (
                   <div 
                     key={`ledger-${entry.entryType}-${entry.id ?? 'no-id'}-${idx}`} 
-                    className={`bg-white p-4 rounded-2xl border-r-4 shadow-sm transition-all hover:shadow-md ${iconColor}`}
+                    className={`p-2.5 sm:p-3 rounded-xl transition-all hover:shadow-xs space-y-1.5 ${cardStyle}`}
                   >
-                    <div className="flex justify-between items-start mb-2">
+                    <div className="flex justify-between items-start gap-2">
                       <div>
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase ${badgeColor}`}>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-md inline-block uppercase tracking-tight ${badgeColor}`}>
                           {typeLabel}
                         </span>
-                        <p className="text-xs text-slate-400 font-medium mt-1">{formatDateTimeWithDay(entry.created_at)}</p>
+                        <p className="text-[10px] text-slate-500 font-bold mt-1">{formatDateTimeWithDay(entry.created_at)}</p>
                       </div>
-                      <p className="text-lg font-black font-mono flex items-center gap-1" dir="ltr">
-                        <span className="text-slate-400 text-sm font-sans">{amountPrefix}</span>
-                        {amountText}
-                      </p>
+                      <div className="text-left">
+                        <p className="text-sm sm:text-base font-black font-mono flex items-center justify-end gap-0.5" dir="ltr">
+                          <span className="text-slate-500 text-xs font-sans">{amountPrefix}</span>
+                          {amountText}
+                        </p>
+                        {entry.entryType === 'sale' && (
+                          <p className="text-[9px] font-bold text-slate-400 text-left">إجمالي الفاتورة</p>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Breakdown bar for sales */}
+                    {entry.entryType === 'sale' && (
+                      <div className="pt-1.5 border-t border-slate-200/60 flex flex-wrap gap-1.5 text-[10px] font-bold">
+                        <span className="bg-white/80 px-2 py-0.5 rounded-md border border-slate-200/80 text-slate-700">
+                          الإجمالي: {formatPrice(totalAmount)}
+                        </span>
+                        <span className="bg-white/80 px-2 py-0.5 rounded-md border border-slate-200/80 text-slate-700">
+                          المدفوع: {formatPrice(paidAmount)}
+                        </span>
+                        {remainingAmount > 0 && (
+                          <span className="bg-red-100 text-red-900 px-2 py-0.5 rounded-md border border-red-300 font-extrabold">
+                            المتبقي دَيْن: {formatPrice(remainingAmount)}
+                          </span>
+                        )}
+                        {remainingAmount < 0 && (
+                          <span className="bg-yellow-200 text-yellow-950 px-2 py-0.5 rounded-md border border-yellow-400 font-extrabold">
+                            فائض رصيد: +{formatPrice(Math.abs(remainingAmount))}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     
                     {noteText && (
-                      <div className="mt-2 text-xs bg-slate-50 text-slate-600 p-2.5 rounded-xl border border-slate-100 font-medium leading-relaxed flex gap-1.5 items-start">
-                        <span>📝</span> <span>{noteText}</span>
+                      <div className="text-[11px] bg-white/80 text-slate-800 p-2 rounded-lg border border-slate-200/60 font-semibold leading-tight flex gap-1.5 items-start">
+                        <span className="shrink-0">💡</span> 
+                        <span>{noteText}</span>
                       </div>
                     )}
                     
                     {showItems && (
-                      <div className="mt-3 pt-3 border-t border-slate-100">
-                        <div className="space-y-1">
+                      <div className="pt-1.5 border-t border-slate-200/60 space-y-1">
+                        <div className="space-y-0.5 bg-white/70 p-1.5 rounded-lg border border-slate-200/60 text-[11px]">
                           {(() => {
                             let parsedItems: any[] = [];
                             try {
                               parsedItems = typeof entry.items === 'string' ? JSON.parse(entry.items) : (entry.items || []);
                             } catch (e) {}
                             return Array.isArray(parsedItems) ? parsedItems.map((item: any, i: number) => (
-                              <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-xs text-slate-600">
-                                <span>{item.name} <span className="text-slate-400 font-mono">× {item.quantity}</span></span>
-                                <span className="font-semibold">{formatPrice(item.price * item.quantity)}</span>
+                              <div key={`ledger-sub-${item.product_id ?? i}-${i}`} className="flex justify-between text-slate-700 font-medium py-0.5 border-b border-slate-100 last:border-0">
+                                <span className="truncate max-w-[200px]">{item.name || item.product_name} <span className="text-slate-400 font-mono text-[10px]">×{item.quantity}</span></span>
+                                <span className="font-extrabold font-mono text-slate-800 shrink-0">{formatPrice((item.price || item.price_at_sale) * item.quantity)}</span>
                               </div>
                             )) : null;
                           })()}
                         </div>
-                        <div className="mt-3 flex justify-end">
+                        <div className="flex justify-end pt-0.5">
                           <button 
                             onClick={() => printReceipt(entry)}
-                            className="text-[10px] text-emerald-700 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                            className="text-[10px] text-emerald-800 bg-white border border-emerald-300 px-2.5 py-1 rounded-md font-bold flex items-center gap-1 hover:bg-emerald-50 cursor-pointer transition-all shadow-2xs"
                           >
-                            <Printer className="w-3 h-3" /> طباعة الفاتورة
+                            <Printer className="w-3 h-3 text-emerald-600" /> طباعة الإيصال
                           </button>
                         </div>
                       </div>

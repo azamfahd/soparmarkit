@@ -851,97 +851,129 @@ ${detailsList}
                 </div>
               </div>
 
-              {/* Transactions Table Snippet */}
+              {/* Transactions Timeline / List Snippet */}
               <div className="mb-5">
-                <h4 className={`text-xs font-bold mb-2 flex items-center justify-between ${
-                  theme === 'modern_light' ? 'text-slate-700' : 'text-slate-300'
+                <h4 className={`text-sm font-black mb-3 flex items-center justify-between ${
+                  theme === 'modern_light' ? 'text-slate-800' : 'text-slate-200'
                 }`}>
-                  <span>كشف كامل العمليات ({ledgerEntries.length} عملية):</span>
-                  <span className="text-[10px] font-normal opacity-70">البيان الرسمي</span>
+                  <span className="flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-emerald-500" />
+                    سجل العمليات التفصيلي ({ledgerEntries.length})
+                  </span>
+                  <span className="text-[10px] font-bold px-2 py-1 rounded-md opacity-80 bg-slate-500/10">البيان المالي</span>
                 </h4>
 
                 <div 
                   id="statement-table-container"
-                  className={`rounded-xl border overflow-hidden ${
-                    theme === 'modern_light' ? 'bg-white border-slate-200' : 'bg-slate-900/80 border-slate-800'
-                  }`}
+                  className="flex flex-col gap-2.5"
                 >
-                  <table className="w-full text-xs text-right border-collapse">
-                    <thead>
-                      <tr 
-                        id="statement-table-header"
-                        className={theme === 'modern_light' ? 'bg-slate-100 text-slate-700' : 'bg-slate-800 text-slate-300'}
-                      >
-                        <th className="py-2 px-2.5 border-b border-slate-200/30 whitespace-nowrap w-36">التاريخ والوقت</th>
-                        <th className="py-2 px-2.5 border-b border-slate-200/30">نوع العملية والتفاصيل</th>
-                        <th className="py-2 px-2.5 border-b border-slate-200/30 text-left whitespace-nowrap w-28">المبلغ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-500/10">
-                      {ledgerEntries.map((entry, idx) => {
-                        let isSale = entry.entryType === 'sale';
-                        let isPayment = !isSale && (entry.type === 'payment' || entry.amount > 0);
-                        let title = isSale
-                          ? `فاتورة شراء #${entry.id || ''}`
-                          : entry.notes || (entry.type === 'purchase' ? 'زيادة حساب' : 'دفعة سداد');
+                  {ledgerEntries.map((entry, idx) => {
+                    let isSale = entry.entryType === 'sale';
+                    let isPayment = !isSale && (entry.type === 'payment' || entry.amount > 0);
+                    let title = isSale
+                      ? `فاتورة مبيعات #${entry.id || ''}`
+                      : entry.notes || (entry.type === 'purchase' ? 'زيادة حساب' : 'دفعة سداد');
 
-                        let itemsSummary = '';
-                        if (isSale && entry.items) {
-                          try {
-                            const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
-                            if (Array.isArray(parsed) && parsed.length > 0) {
-                              itemsSummary = parsed.map((i: any) => `${i.name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
-                            }
-                          } catch (e) {}
+                    let itemsSummary = '';
+                    if (isSale && entry.items) {
+                      try {
+                        const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
+                        if (Array.isArray(parsed) && parsed.length > 0) {
+                          itemsSummary = parsed.map((i: any) => `${i.name || i.product_name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
                         }
+                      } catch (e) {}
+                    }
 
-                        let amtText = isSale ? formatPrice(entry.total_amount) : formatPrice(entry.amount);
+                    let statusBadge = null;
+                    if (isSale) {
+                      const totalAmount = entry.total_amount || 0;
+                      const paidAmount = entry.paid_amount !== undefined 
+                        ? entry.paid_amount 
+                        : (entry.payment_type === 'cash' ? totalAmount : 0);
+                      const paymentStatus = entry.payment_status || (paidAmount === 0 ? 'unpaid' : paidAmount < totalAmount ? 'partial' : paidAmount === totalAmount ? 'paid' : 'overpaid');
 
-                        return (
-                          <tr key={`card-tr-${idx}`} className={`hover:bg-slate-500/5 border-b border-slate-500/10 ${theme === 'modern_light' ? 'text-slate-800' : 'text-slate-200'}`}>
-                            <td className={`py-1.5 px-2.5 text-[11px] whitespace-nowrap font-sans ${theme === 'modern_light' ? 'text-slate-500' : 'text-slate-400'}`}>
-                              {formatDateTimeWithDay(entry.created_at)}
-                            </td>
-                            <td className="py-1.5 px-2.5 font-medium text-[11px]">
-                              <div className="flex items-start gap-1">
-                                <span className={`inline-block w-2 h-2 rounded-full ml-1 mt-1 shrink-0 ${
-                                  isSale ? 'bg-rose-500' : isPayment ? 'bg-emerald-400' : 'bg-amber-400'
-                                }`}></span>
-                                <div>
-                                  <span className="font-bold">{title}</span>
-                                  {itemsSummary ? (
-                                    <div className={`text-[10px] leading-tight mt-0.5 ${
-                                      theme === 'modern_light' ? 'text-slate-600' : 'text-slate-300'
-                                    }`}>
-                                      <span className={theme === 'modern_light' ? 'text-emerald-700 font-bold' : 'text-emerald-400 font-bold'}>
-                                        الأصناف: 
-                                      </span>{' '}
-                                      {itemsSummary}
-                                    </div>
-                                  ) : isSale && entry.notes ? (
-                                    <div className={`text-[10px] leading-tight mt-0.5 ${
-                                      theme === 'modern_light' ? 'text-slate-500' : 'text-slate-400'
-                                    }`}>
-                                      {entry.notes}
-                                    </div>
-                                  ) : null}
+                      if (paymentStatus === 'unpaid') {
+                        statusBadge = <span className="px-1.5 py-0.5 text-[9px] font-extrabold rounded-md bg-red-100 text-red-800 border border-red-200 whitespace-nowrap">🔴 آجل بالكامل</span>;
+                      } else if (paymentStatus === 'partial') {
+                        statusBadge = <span className="px-1.5 py-0.5 text-[9px] font-extrabold rounded-md bg-amber-100 text-amber-900 border border-amber-200 whitespace-nowrap">🟡 سدد {formatPrice(paidAmount)}</span>;
+                      } else if (paymentStatus === 'overpaid') {
+                        statusBadge = <span className="px-1.5 py-0.5 text-[9px] font-black rounded-md bg-yellow-100 text-yellow-900 border border-yellow-300 whitespace-nowrap">⭐ فائض {formatPrice(paidAmount - totalAmount)}</span>;
+                      } else {
+                        statusBadge = <span className="px-1.5 py-0.5 text-[9px] font-extrabold rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap">🟢 مدفوع نقداً</span>;
+                      }
+                    }
+
+                    let amtText = isSale ? formatPrice(entry.total_amount) : formatPrice(entry.amount);
+
+                    return (
+                      <div 
+                        key={`card-tr-${idx}`} 
+                        className={`p-3 sm:p-3.5 rounded-xl border relative overflow-hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs transition-all ${
+                          theme === 'modern_light' 
+                            ? 'bg-white border-slate-200/80' 
+                            : 'bg-slate-800/40 border-slate-700/60'
+                        }`}
+                      >
+                        {/* Edge indicator */}
+                        <div className={`absolute top-0 bottom-0 right-0 w-1 ${
+                          isSale ? 'bg-rose-500' : isPayment ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`}></div>
+
+                        <div className="flex flex-col gap-1.5 pr-2.5 flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`font-bold text-[13px] ${theme === 'modern_light' ? 'text-slate-800' : 'text-slate-100'}`}>
+                              {title}
+                            </span>
+                            {statusBadge}
+                          </div>
+                          
+                          <span className={`text-[10px] font-medium flex items-center gap-1.5 ${theme === 'modern_light' ? 'text-slate-400' : 'text-slate-500'}`}>
+                            <Calendar className="w-3 h-3" />
+                            {formatDateTimeWithDay(entry.created_at)}
+                          </span>
+
+                          {(itemsSummary || entry.notes) && (
+                            <div className="mt-1 space-y-1">
+                              {itemsSummary && (
+                                <div className={`text-[10px] leading-relaxed p-1.5 rounded-md inline-block max-w-full ${
+                                  theme === 'modern_light' ? 'bg-slate-50 text-slate-600 border border-slate-100' : 'bg-slate-900/50 text-slate-300 border border-slate-700/50'
+                                }`}>
+                                  <span className={theme === 'modern_light' ? 'text-emerald-700 font-bold' : 'text-emerald-400 font-bold'}>
+                                    الأصناف: 
+                                  </span>{' '}
+                                  {itemsSummary}
                                 </div>
-                              </div>
-                            </td>
-                            <td className={`py-1.5 px-2.5 font-bold text-[11px] text-left font-mono whitespace-nowrap ${
+                              )}
+                              {entry.notes && (
+                                <div className={`text-[10px] leading-tight flex items-start gap-1 p-1.5 rounded-md inline-block max-w-full ${
+                                  theme === 'modern_light' ? 'bg-blue-50/50 text-slate-600 border border-blue-100/50' : 'bg-blue-900/20 text-slate-300 border border-blue-800/30'
+                                }`}>
+                                  <span className="shrink-0 text-[11px]">💡</span> 
+                                  <span className="font-medium">{entry.notes}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="text-left shrink-0 self-end sm:self-center pr-2 sm:pr-0">
+                           <p className={`text-base sm:text-lg font-black font-mono flex items-center justify-end gap-1 ${
                               isSale 
                                 ? theme === 'modern_light' ? 'text-rose-600' : 'text-rose-400'
                                 : isPayment 
                                 ? theme === 'modern_light' ? 'text-emerald-600' : 'text-emerald-400'
                                 : theme === 'modern_light' ? 'text-amber-600' : 'text-amber-400'
                             }`}>
-                              {isSale ? '+' : isPayment ? '-' : '+'}{amtText}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                             <span className="text-xs font-sans opacity-70">{isSale ? '+' : isPayment ? '-' : '+'}</span>
+                             {amtText}
+                           </p>
+                           {isSale && (
+                             <p className={`text-[9px] font-bold ${theme === 'modern_light' ? 'text-slate-400' : 'text-slate-500'}`}>إجمالي الفاتورة</p>
+                           )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 

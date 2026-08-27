@@ -140,31 +140,39 @@ export function rankCandidateIntents(
     const hasTopRevenueProductWord = /(اكثر صنف جاب فلوس|اكثر منتج دخل فلوس|ايش اكثر صنف جاب|اكثر صنف ربحنا منه|اكثر المنتجات ربحا ومبيعا|اعلى المنتجات دخلا)/i.test(textCombined);
     const hasTopDebtorsWord = /(اكثر واحد عليه فلوس|من عليه ديون|اكثر العملاء ديونا|اعلى الزبائن ديونا|اكبر المدينين|من اكثر واحد يدين)/i.test(textCombined);
     const hasLowStockWord = /(المنتجات الناقصه|الاصناف اللي بتخلص|ايش عاد به ناقص|ايش الاشياء اللي قربت تخلص|قربت تخلص|نواقص المخزن|النواقص|نواقص|الاصناف الناقصه|الاصناف الناقصة|السلع الناقصة)/i.test(textCombined);
+    const hasCreditSalesWord = /(بالاجل|بالآجل|بالدين|مبيعات الاجل|مبيعات الآجل|البيع بالدين|بيعت بالاجل|باعت بالاجل|كم باعت بالاجل|كم باعت المنشاه بالاجل|كم باعت المنشأة بالآجل|شغل الاجل|دين الزباين في هذه الدوره|مبيعات المنشاه بالاجل|مبيعات المنشأة بالآجل)/i.test(textCombined);
+    const hasCOGSWord = /(تكلفة|تكلفه) (البضائع|البضاعه|المبيعات|السلع|المنتجات|المباعه|المباعة) (التي|تم|المباعه|المباعة|وصرفها)?/i.test(textCombined) || /تكلفة البضائع/i.test(textCombined) || /تكلفة المبيعات/i.test(textCombined);
 
     // --- Relational Scoring Adjustments ---
-    if (def.name === 'STORE_HEALTH_DIAGNOSTIC') {
-      if (hasStoreHealthWord) score += 35;
+    if (def.name === 'PROFIT_SUMMARY' && hasCOGSWord) {
+      score += 45;
     }
-    else if (def.name === 'PERFORMANCE_COMPARISON') {
-      if (hasComparisonWord || /(مقارنه اداء الشهر|هل الشغل هذا الشهر افضل|هل مبيعاتنا احسن)/i.test(textCombined)) score += 35;
+    if (def.name === 'CREDIT_SALES_QUERY' && hasCreditSalesWord) {
+      score += 40;
     }
-    else if (def.name === 'TOP_REVENUE_PRODUCT_QUERY') {
-      if (hasTopRevenueProductWord) score += 35;
+    if (def.name === 'STORE_HEALTH_DIAGNOSTIC' && hasStoreHealthWord) {
+      score += 35;
     }
-    else if (def.name === 'TOP_DEBTORS_QUERY') {
-      if (hasTopDebtorsWord) score += 35;
+    if (def.name === 'PERFORMANCE_COMPARISON' && (hasComparisonWord || /(مقارنه اداء الشهر|هل الشغل هذا الشهر افضل|هل مبيعاتنا احسن)/i.test(textCombined))) {
+      score += 35;
     }
-    else if (def.name === 'LOW_STOCK') {
-      if (hasLowStockWord) score += 35;
+    if (def.name === 'TOP_REVENUE_PRODUCT_QUERY' && hasTopRevenueProductWord) {
+      score += 35;
     }
-    else if (def.name === 'LARGEST_SALE_QUERY') {
-      if (hasLargestSaleWord) score += 30;
+    if (def.name === 'TOP_DEBTORS_QUERY' && hasTopDebtorsWord) {
+      score += 35;
     }
-    else if (def.name === 'DRILLDOWN_EXPLANATION') {
-      if (hasDrilldownExplanationWord) score += 25;
+    if (def.name === 'LOW_STOCK' && hasLowStockWord) {
+      score += 35;
     }
-    else if (def.name === 'DIAGNOSTIC_ANALYSIS') {
-      if (hasDiagnosticWord) score += 30;
+    if (def.name === 'LARGEST_SALE_QUERY' && hasLargestSaleWord) {
+      score += 30;
+    }
+    if (def.name === 'DRILLDOWN_EXPLANATION' && hasDrilldownExplanationWord) {
+      score += 25;
+    }
+    if (def.name === 'DIAGNOSTIC_ANALYSIS' && hasDiagnosticWord) {
+      score += 30;
     }
     else if (def.name === 'GROWTH_ADVICE') {
       if (hasGrowthWord) score += 30;

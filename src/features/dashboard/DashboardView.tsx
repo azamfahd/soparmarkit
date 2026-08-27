@@ -37,6 +37,7 @@ interface DashboardViewProps {
   setScannerMode: (mode: any) => void;
   setIsScannerOpen: (open: boolean) => void;
   exportData: () => void;
+  isBackupOverdue?: boolean;
   verifyAdminPermission: (action: string, callback: () => void, title: string) => void;
   setSalesDetailsTab: (tab: 'days' | 'weeks' | 'months') => void;
   setShowMonthlySalesDetailsModal: (show: boolean) => void;
@@ -59,6 +60,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   setScannerMode,
   setIsScannerOpen,
   exportData,
+  isBackupOverdue,
   verifyAdminPermission,
   setSalesDetailsTab,
   setShowMonthlySalesDetailsModal,
@@ -183,12 +185,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <motion.button 
             whileTap={{ scale: 0.95 }}
             onClick={exportData} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-amber-200 hover:shadow-md transition-all group"
+            className={`p-1.5 sm:p-2 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-all group cursor-pointer ${
+              isBackupOverdue 
+                ? 'bg-gradient-to-br from-red-600 via-rose-600 to-red-700 text-white border border-red-400/90 shadow-[0_0_16px_rgba(239,68,68,0.7)] animate-pulse hover:from-red-500 hover:to-rose-500' 
+                : 'bg-white border border-slate-100 shadow-sm hover:border-amber-200 hover:shadow-md'
+            }`}
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-amber-50 rounded-lg flex items-center justify-center group-hover:bg-amber-500 transition-colors">
-              <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 group-hover:text-white transition-colors" />
+            <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors ${
+              isBackupOverdue ? 'bg-white/20 text-white' : 'bg-amber-50 group-hover:bg-amber-500'
+            }`}>
+              <Download className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
+                isBackupOverdue ? 'text-white animate-bounce' : 'text-amber-600 group-hover:text-white transition-colors'
+              }`} />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">احتياطية</span>
+            <span className={`font-extrabold text-[9px] sm:text-[10px] ${
+              isBackupOverdue ? 'text-white' : 'text-slate-700'
+            }`}>
+              {isBackupOverdue ? 'احتياطية ⚠️' : 'احتياطية'}
+            </span>
           </motion.button>
 
           <motion.button 
