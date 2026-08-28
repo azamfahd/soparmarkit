@@ -13,7 +13,16 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: false,
-        includeAssets: ['icon.png', 'icon.svg', 'manifest.json'],
+        includeAssets: [
+          'icon.png',
+          'icon.svg',
+          'manifest.json',
+          'icons/icon-192.png',
+          'icons/icon-512.png',
+          'icons/apple-touch-icon.png',
+          'screenshot-wide.png',
+          'screenshot-narrow.png'
+        ],
         manifest: {
           name: 'النظام المحاسبي الذكي',
           short_name: 'المحاسبي',
@@ -24,14 +33,36 @@ export default defineConfig(({mode}) => {
           start_url: '/',
           icons: [
             {
-              src: '/icon.png',
-              sizes: '512x512',
-              type: 'image/png'
+              src: '/icons/icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any maskable'
             },
             {
-              src: '/icon.svg',
+              src: '/icons/icon-512.png',
               sizes: '512x512',
-              type: 'image/svg+xml'
+              type: 'image/png',
+              purpose: 'any maskable'
+            },
+            {
+              src: '/icons/apple-touch-icon.png',
+              sizes: '180x180',
+              type: 'image/png',
+              purpose: 'any'
+            }
+          ],
+          screenshots: [
+            {
+              src: '/screenshot-wide.png',
+              sizes: '1280x720',
+              type: 'image/png',
+              form_factor: 'wide'
+            },
+            {
+              src: '/screenshot-narrow.png',
+              sizes: '540x1170',
+              type: 'image/png',
+              form_factor: 'narrow'
             }
           ]
         },
@@ -89,6 +120,10 @@ export default defineConfig(({mode}) => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
+    },
+    preview: {
+      host: '0.0.0.0',
+      allowedHosts: true,
     },
   };
 });

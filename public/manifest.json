@@ -2,33 +2,52 @@
   "name": "النظام المحاسبي الذكي",
   "short_name": "المحاسبي الذكي",
   "description": "نظام محاسبة ومبيعات متكامل يعمل بالكامل محلياً وأوفلاين مع مستشار مالي ذكي.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "any",
   "dir": "rtl",
   "lang": "ar",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
   "categories": ["finance", "business", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/icon.png",
+      "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icon.png",
+      "src": "/icons/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icon.svg",
-      "sizes": "512x512",
-      "type": "image/svg+xml",
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
       "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "لوحة النظام المحاسبي الذكي على الكمبيوتر والأجهزة اللوحية"
+    },
+    {
+      "src": "/screenshot-narrow.png",
+      "sizes": "540x1170",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "لوحة النظام المحاسبي الذكي على الهاتف"
     }
   ]
 }

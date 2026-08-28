@@ -1,4 +1,4 @@
-const CACHE_NAME = 'future-pos-offline-v3';
+const CACHE_NAME = 'future-pos-offline-v4-pwa-assets';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -6,6 +6,11 @@ const PRECACHE_ASSETS = [
   '/manifest.json',
   '/icon.png',
   '/icon.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/apple-touch-icon.png',
+  '/screenshot-wide.png',
+  '/screenshot-narrow.png',
   'https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap'
 ];
 
