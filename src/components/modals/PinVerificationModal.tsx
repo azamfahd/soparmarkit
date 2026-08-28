@@ -84,7 +84,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
         <div className="grid grid-cols-3 gap-2.5 max-w-[260px] mx-auto pt-2">
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
             <button
-              key={num}
+              key={`pin-num-btn-${num}`}
               type="button"
               onClick={() => {
                 setPinModal((p: any) => {

@@ -162,9 +162,9 @@ export const PermissionsConfigModal: React.FC<PermissionsConfigModalProps> = ({
                       { key: 'smart_import', label: 'الاستيراد الذكي بالذكاء الاصطناعي', desc: 'استيراد البيانات وفواتير الشراء تلقائياً باستخدام الذكاء الاصطناعي' },
                       { key: 'analytics', label: 'الوصول لقسم التحليلات وPower BI', desc: 'رؤية صافي الأرباح وإحصاءات المبيعات وسرعة دوران السلع' },
                       { key: 'settings', label: 'الوصول لإعدادات النظام العامة', desc: 'تصدير البيانات، تغيير العملة، إعدادات التقريب' }
-                    ].map((action) => (
+                    ].map((action, idx) => (
                       <label 
-                        key={action.key} 
+                        key={`perm-action-${action.key}-${idx}`} 
                         className="flex items-start gap-3 p-3 bg-white hover:bg-slate-50 border border-slate-150/70 rounded-2xl cursor-pointer transition-colors shadow-2xs"
                       >
                         <input 

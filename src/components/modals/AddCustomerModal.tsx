@@ -251,9 +251,9 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
           <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-2.5 text-right space-y-1">
             <span className="text-[10px] text-slate-500 font-bold block">💡 أسماء مشابهة مسجلة في النظام:</span>
             <div className="flex flex-wrap gap-1.5">
-              {similarCustomers.map((c) => (
+              {similarCustomers.map((c, idx) => (
                 <button
-                  key={`sim-${c.id}`}
+                  key={`sim-cust-${c.id ?? 'noid'}-${idx}`}
                   type="button"
                   onClick={() => handleUseExisting(c)}
                   className="text-[11px] font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 px-2 py-1 rounded-lg transition-colors flex items-center gap-1"

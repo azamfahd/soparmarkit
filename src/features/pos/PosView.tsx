@@ -12,7 +12,13 @@ import {
   Printer, 
   Download, 
   UserPlus, 
-  Trash2 
+  Trash2,
+  Users,
+  User,
+  Check,
+  Phone,
+  Wallet,
+  MapPin
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 
@@ -94,6 +100,33 @@ export const PosView: React.FC<PosViewProps> = ({
   db,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [customerFilter, setCustomerFilter] = useState<'all' | 'debtors' | 'cleared'>('all');
+
+  const normalizeArabic = (text: string) => {
+    if (!text) return '';
+    return text
+      .replace(/[\u064B-\u065F\u0670]/g, '') // remove tashkeel
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي')
+      .toLowerCase()
+      .trim();
+  };
+
+  const filteredCustomers = customers.filter(c => {
+    if (customerFilter === 'debtors' && !(c.balance > 0)) return false;
+    if (customerFilter === 'cleared' && c.balance > 0) return false;
+    
+    if (!customerSearchTerm.trim()) return true;
+    const q = normalizeArabic(customerSearchTerm);
+    const nameMatch = normalizeArabic(c.name || '').includes(q);
+    const phoneMatch = (c.phone || '').includes(customerSearchTerm.trim());
+    const notesMatch = normalizeArabic(c.notes || '').includes(q);
+    const addressMatch = normalizeArabic(c.address || '').includes(q);
+    return nameMatch || phoneMatch || notesMatch || addressMatch;
+  });
 
   return (
     <motion.div 
@@ -342,20 +375,51 @@ export const PosView: React.FC<PosViewProps> = ({
               
               {/* Compact Customer & Payment Bar */}
               <div className="p-3 bg-slate-100/80 border-b border-slate-200/60 flex flex-wrap gap-2 items-center justify-between shrink-0">
-                <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
-                  <select 
-                    className="flex-1 w-full p-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                    value={selectedCustomer || ''}
-                    onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
-                  >
-                    <option value="">👤 زبون نقدي عام</option>
-                    {customers.map((c, idx) => (
-                      <option key={`customer-option-${c.id ?? 'no-id'}-${idx}`} value={c.id}>👤 {c.name}</option>
-                    ))}
-                  </select>
+                <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                  <div className="relative flex-1">
+                    <select 
+                      className={`w-full p-2 ${selectedCustomer ? 'pl-7 bg-emerald-50/60 border-emerald-300 text-emerald-950 font-black' : 'bg-white border-slate-200 text-slate-800 font-bold'} rounded-xl border text-xs outline-none focus:ring-2 focus:ring-emerald-500 transition-colors`}
+                      value={selectedCustomer || ''}
+                      onChange={(e) => setSelectedCustomer(Number(e.target.value) || null)}
+                    >
+                      <option value="">👤 زبون نقدي عام</option>
+                      {customers.map((c, idx) => (
+                        <option key={`customer-option-${c.id ?? 'no-id'}-${idx}`} value={c.id}>
+                          👤 {c.name} {c.balance > 0 ? `(عليه: ${formatPrice(c.balance)})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedCustomer && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCustomer(null)}
+                        className="absolute left-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-rose-600 rounded-full transition-colors cursor-pointer"
+                        title="إلغاء تحديد العميل (الرجوع لزبون نقدي عام)"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* زر البحث السريع عن عميل */}
                   <button 
+                    type="button"
+                    onClick={() => {
+                      setCustomerSearchTerm('');
+                      setIsCustomerSearchOpen(true);
+                    }}
+                    className="h-8 px-2.5 flex items-center justify-center gap-1 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200/80 rounded-xl transition-all shrink-0 shadow-2xs font-bold text-xs cursor-pointer active:scale-95"
+                    title="بحث سريع عن عميل بالاسم أو الهاتف"
+                  >
+                    <Search className="w-3.5 h-3.5" />
+                    <span className="text-[11px] hidden sm:inline">بحث عميل</span>
+                  </button>
+
+                  {/* زر إضافة زبون جديد */}
+                  <button 
+                    type="button"
                     onClick={() => { setIsCartExpanded(false); setShowAddCustomer(true); }}
-                    className="h-8 w-8 flex items-center justify-center bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors shrink-0 shadow-2xs"
+                    className="h-8 w-8 flex items-center justify-center bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-colors shrink-0 shadow-2xs cursor-pointer active:scale-95"
                     title="إضافة زبون جديد"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
@@ -364,14 +428,21 @@ export const PosView: React.FC<PosViewProps> = ({
 
                 <div className="flex bg-white p-1 rounded-xl border border-slate-200 shrink-0 w-32">
                   <button 
+                    type="button"
                     onClick={() => setPaymentType('cash')}
-                    className={`flex-1 py-1 text-xs font-extrabold rounded-lg transition-all ${paymentType === 'cash' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+                    className={`flex-1 py-1 text-xs font-extrabold rounded-lg transition-all cursor-pointer ${paymentType === 'cash' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
                   >
                     نقداً
                   </button>
                   <button 
-                    onClick={() => setPaymentType('debt')}
-                    className={`flex-1 py-1 text-xs font-extrabold rounded-lg transition-all ${paymentType === 'debt' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+                    type="button"
+                    onClick={() => {
+                      setPaymentType('debt');
+                      setCustomerSearchTerm('');
+                      setIsCustomerSearchOpen(true);
+                    }}
+                    className={`flex-1 py-1 text-xs font-extrabold rounded-lg transition-all cursor-pointer ${paymentType === 'debt' ? 'bg-red-600 text-white shadow-xs' : 'text-slate-600 hover:bg-slate-50'}`}
+                    title="البيع بالدَّيْن (يفتح قائمة البحث عن عميل مباشرة)"
                   >
                     دَيْن
                   </button>
@@ -715,6 +786,268 @@ export const PosView: React.FC<PosViewProps> = ({
                 >
                   إتمام العملية ({formatPrice(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0))})
                 </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* نافذة البحث السريع عن عميل في سلة البيع */}
+      <AnimatePresence>
+        {isCustomerSearchOpen && (
+          <div 
+            key="modal-quick-customer-search" 
+            className="fixed inset-0 bg-slate-950/60 z-[100] flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setIsCustomerSearchOpen(false);
+            }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ duration: 0.18 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full max-w-lg overflow-hidden flex flex-col max-h-[85vh]"
+              dir="rtl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* ترويسة النافذة */}
+              <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-850 to-slate-900 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-2xl bg-sky-500/20 border border-sky-400/30 flex items-center justify-center text-sky-300">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base text-white">البحث السريع عن عميل</h3>
+                    <p className="text-[11px] text-slate-300 font-medium">اختر عميلاً لتسجيل الفاتورة باسمه أو متابعة ديونه</p>
+                  </div>
+                </div>
+                <button 
+                  type="button"
+                  onClick={() => setIsCustomerSearchOpen(false)}
+                  className="p-1.5 hover:bg-white/10 rounded-full text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* شريط البحث وتصفيات الفرز السريعة */}
+              <div className="p-3.5 bg-slate-50 border-b border-slate-200/80 space-y-2.5 shrink-0">
+                <div className="relative">
+                  <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                  <input 
+                    type="text"
+                    autoFocus
+                    placeholder="اكتب اسم العميل، رقم الهاتف، أو الملاحظات..."
+                    value={customerSearchTerm}
+                    onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                    className="w-full py-2.5 pr-9 pl-9 bg-white border border-slate-200 rounded-2xl text-xs sm:text-sm font-bold text-slate-800 placeholder-slate-400 outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 shadow-2xs transition-all"
+                  />
+                  {customerSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomerSearchTerm('')}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5 rounded-full"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* أزرار الفلترة السريعة */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setCustomerFilter('all')}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      customerFilter === 'all'
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/80'
+                    }`}
+                  >
+                    الكل ({customers.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomerFilter('debtors')}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                      customerFilter === 'debtors'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'bg-white text-rose-700 hover:bg-rose-50 border border-rose-200'
+                    }`}
+                  >
+                    <Wallet className="w-3 h-3" />
+                    عليهم ديون ({customers.filter(c => c.balance > 0).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomerFilter('cleared')}
+                    className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      customerFilter === 'cleared'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white text-emerald-700 hover:bg-emerald-50 border border-emerald-200'
+                    }`}
+                  >
+                    حساب خالص ({customers.filter(c => c.balance <= 0).length})
+                  </button>
+                </div>
+              </div>
+
+              {/* قائمة العملاء */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar bg-slate-50/50">
+                {/* خيار زبون نقدي عام */}
+                <div 
+                  onClick={() => {
+                    setSelectedCustomer(null);
+                    setIsCustomerSearchOpen(false);
+                    showNotification('تم تحديد: زبون نقدي عام', 'info');
+                  }}
+                  className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                    selectedCustomer === null
+                      ? 'bg-sky-50/80 border-sky-300 ring-2 ring-sky-500/20'
+                      : 'bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center font-bold">
+                      👤
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-800 text-xs sm:text-sm">زبون نقدي عام</h4>
+                      <p className="text-[10px] text-slate-500 font-medium">مبيعات فورية نقدية بدون تسجيل على حساب عميل</p>
+                    </div>
+                  </div>
+                  {selectedCustomer === null && (
+                    <span className="text-[11px] font-extrabold text-sky-700 bg-sky-100 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                      <Check className="w-3 h-3" /> محدد
+                    </span>
+                  )}
+                </div>
+
+                {/* عرض نتائج العملاء */}
+                {filteredCustomers.length === 0 ? (
+                  <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-slate-200 space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                      <Search className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-extrabold text-slate-700">لا يوجد عميل مطابق للبحث</p>
+                      {customerSearchTerm && (
+                        <p className="text-[11px] text-slate-400 mt-0.5 font-medium">"{customerSearchTerm}"</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCustomerSearchOpen(false);
+                        setIsCartExpanded(false);
+                        setShowAddCustomer(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      إضافة عميل جديد الآن
+                    </button>
+                  </div>
+                ) : (
+                  filteredCustomers.map((c, idx) => {
+                    const isSelected = selectedCustomer === c.id;
+                    const hasDebt = (c.balance || 0) > 0;
+                    const hasCredit = (c.balance || 0) < 0;
+
+                    return (
+                      <div
+                        key={`quick-cust-card-${c.id ?? 'noid'}-${idx}`}
+                        onClick={() => {
+                          setSelectedCustomer(c.id);
+                          setIsCustomerSearchOpen(false);
+                          showNotification(`تم تحديد العميل: ${c.name}`, 'info');
+                        }}
+                        className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-2.5 ${
+                          isSelected
+                            ? 'bg-emerald-50/90 border-emerald-300 ring-2 ring-emerald-500/20'
+                            : 'bg-white hover:bg-slate-50 border-slate-200/80 shadow-2xs hover:border-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${
+                            isSelected
+                              ? 'bg-emerald-600 text-white'
+                              : hasDebt
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {c.name ? c.name.charAt(0).toUpperCase() : 'ع'}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm truncate">{c.name}</h4>
+                              {isSelected && (
+                                <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                                  <Check className="w-2.5 h-2.5" /> محدد
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-3 text-[11px] text-slate-500 mt-0.5">
+                              {c.phone && (
+                                <span className="flex items-center gap-1 font-mono text-[11px]">
+                                  <Phone className="w-2.5 h-2.5 text-slate-400" />
+                                  {c.phone}
+                                </span>
+                              )}
+                              {c.address && (
+                                <span className="hidden sm:inline text-slate-400 truncate max-w-[140px]">
+                                  📍 {c.address}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-left shrink-0">
+                          {hasDebt ? (
+                            <div className="text-right sm:text-left">
+                              <span className="inline-block px-2 py-0.5 rounded-lg bg-rose-50 text-rose-700 border border-rose-200/80 text-[10px] sm:text-xs font-black font-mono">
+                                دَيْن: {formatPrice(c.balance)}
+                              </span>
+                            </div>
+                          ) : hasCredit ? (
+                            <div className="text-right sm:text-left">
+                              <span className="inline-block px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200/80 text-[10px] sm:text-xs font-black font-mono">
+                                له: {formatPrice(Math.abs(c.balance))}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="inline-block px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-bold">
+                              خالِص
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* ذيل النافذة */}
+              <div className="p-3 bg-white border-t border-slate-200/80 flex items-center justify-between shrink-0">
+                <span className="text-[11px] font-bold text-slate-500">
+                  عدد النتائج: <strong className="text-slate-800">{filteredCustomers.length}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCustomerSearchOpen(false);
+                    setIsCartExpanded(false);
+                    setShowAddCustomer(true);
+                  }}
+                  className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>إضافة عميل جديد</span>
+                </button>
               </div>
             </motion.div>
           </div>

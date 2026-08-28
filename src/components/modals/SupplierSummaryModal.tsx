@@ -103,9 +103,9 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 
                 <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                   {suppliers.length > 0 ? (
-                    suppliers.map(s => (
+                    suppliers.map((s, idx) => (
                       <div 
-                        key={s.id} 
+                        key={`supp-sum-${s.id ?? 'noid'}-${idx}`} 
                         onClick={() => {
                           setShowSupplierSummaryModal(false);
                           fetchSupplierHistory(s);
@@ -147,9 +147,9 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
 
                 <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                   {enrichedSupplierPayments.length > 0 ? (
-                    enrichedSupplierPayments.map(p => (
+                    enrichedSupplierPayments.map((p, idx) => (
                       <div 
-                        key={p.id} 
+                        key={`supp-pay-item-${p.id ?? 'noid'}-${idx}`} 
                         onClick={() => setSelectedSupplierPayment(p)}
                         className="bg-slate-50 p-2.5 rounded-xl shadow-xs border border-slate-100 flex justify-between items-center hover:bg-violet-50/50 cursor-pointer transition-all active:scale-[0.98] gap-3"
                       >

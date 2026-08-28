@@ -36,7 +36,10 @@ import { CustomerDetailsModal } from './components/modals/CustomerDetailsModal';
 import { PinVerificationModal } from './components/modals/PinVerificationModal';
 import { PermissionsConfigModal } from './components/modals/PermissionsConfigModal';
 import { WithdrawModal } from './components/modals/WithdrawModal';
-import { Scan, QrCode } from 'lucide-react';
+import { InstallAppModal } from './components/InstallAppModal';
+import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
+import { BrowserInstallBanner } from './components/BrowserInstallBanner';
+import { Scan, QrCode, Smartphone } from 'lucide-react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -161,7 +164,16 @@ interface Summary {
 // --- Components ---
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam && ['dashboard', 'pos', 'products', 'customers', 'suppliers', 'notes', 'history', 'analytics', 'smart-import', 'settings'].includes(tabParam)) {
+        return tabParam;
+      }
+    }
+    return 'dashboard';
+  });
   const [showInventoryDetailsModal, setShowInventoryDetailsModal] = useState(false);
   const [showSupplierSummaryModal, setShowSupplierSummaryModal] = useState(false);
   const [showSalesSummaryModal, setShowSalesSummaryModal] = useState(false);
@@ -828,6 +840,68 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCategorySidebarOpen, setIsCategorySidebarOpen] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  // Standalone / APK detection
+  const isStandaloneMode = React.useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const isStandaloneWindow = window.matchMedia('(display-mode: standalone)').matches ||
+                               window.matchMedia('(display-mode: fullscreen)').matches ||
+                               window.matchMedia('(display-mode: window-controls-overlay)').matches ||
+                               (window.navigator as any).standalone === true;
+    const isTwaReferrer = typeof document !== 'undefined' && document.referrer.includes('android-app://');
+    return Boolean(isStandaloneWindow || isTwaReferrer);
+  }, []);
+
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [showBrowserBanner, setShowBrowserBanner] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+                         (window.navigator as any).standalone === true ||
+                         (typeof document !== 'undefined' && document.referrer.includes('android-app://'));
+    if (isStandalone) return false;
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('dismiss_browser_install_banner') === 'true') {
+      return false;
+    }
+    return true;
+  });
+
+  const handleInstallPWA = () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+          showNotification('🎉 شكراً لتثبيت التطبيق بنجاح!', 'success');
+          setDeferredPrompt(null);
+          setShowInstallModal(false);
+        }
+      });
+    } else {
+      showNotification('لتثبيت تطبيق الويب: افتح قائمة المتصفح (⋮) ثم اضغط "إضافة إلى الشاشة الرئيسية" أو "تثبيت التطبيق"', 'success');
+    }
+  };
+
+  const handleDownloadAPK = () => {
+    const link = document.createElement('a');
+    link.href = '/smart_account.apk';
+    link.download = 'smart_account.apk';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showNotification('جاري بدء تنزيل ملف smart_account.apk...', 'success');
+  };
+
+  const handleUpdateAppNow = () => {
+    if (typeof window !== 'undefined') {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(regs => {
+          regs.forEach(reg => reg.update());
+        });
+      }
+      window.location.reload();
+    }
+  };
+
   const [storeName, setStoreName] = useState<string>(() => {
     if (typeof localStorage !== 'undefined') {
       return localStorage.getItem('cache_clientStoreName') || 'النظام المحاسبي الذكي';
@@ -1339,20 +1413,109 @@ export default function App() {
   }, [isDeveloperMode]);
 
   useEffect(() => {
-    window.addEventListener('beforeinstallprompt', (e) => {
+    // 1. Auto-request persistent storage for IndexedDB/Dexie on Android/Desktop
+    if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+      navigator.storage.persisted().then((isPersisted) => {
+        if (!isPersisted) {
+          navigator.storage.persist().then((granted) => {
+            if (granted) {
+              console.log('✅ تم تفعيل التخزين الدائم للبيانات في ذاكرة الهاتف/النظام.');
+            }
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+
+    // 2. Handle PWA install prompt
+    const handleInstallPrompt = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
-    });
+    };
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
     
+    // 3. Online/Offline indicators
     const handleOnline = () => {
-      showNotification('تم استعادة الاتصال');
+      showNotification('تم استعادة الاتصال 🟢');
     };
     window.addEventListener('online', handleOnline);
 
+    // 4. Handle deep-linking and browser popstate for shortcuts (?tab=pos, etc.)
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam && ['dashboard', 'pos', 'products', 'customers', 'suppliers', 'notes', 'history', 'analytics', 'smart-import', 'settings'].includes(tabParam)) {
+        setActiveTab(tabParam);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+
     return () => {
+      window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('popstate', handlePopState);
     };
   }, []);
+
+  // Listen for Service Worker and APK updates
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+
+    try {
+      navigator.serviceWorker.ready.then(registration => {
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                setShowUpdateBanner(true);
+              }
+            });
+          }
+        });
+      });
+    } catch {
+      // SW not supported or failed
+    }
+
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!refreshing) {
+        refreshing = true;
+        setShowUpdateBanner(true);
+      }
+    });
+  }, []);
+
+  // Sync current tab to URL query without triggering page reload
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+      const currentUrl = new URL(window.location.href);
+      if (currentUrl.searchParams.get('tab') !== activeTab) {
+        currentUrl.searchParams.set('tab', activeTab);
+        window.history.replaceState({}, '', currentUrl.toString());
+      }
+    }
+  }, [activeTab]);
+
+  // Screen Wake Lock API: Keep the cashier screen active while inside POS mode
+  useEffect(() => {
+    let wakeLockSentinel: any = null;
+    if (activeTab === 'pos' && typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      const requestWakeLock = async () => {
+        try {
+          wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+        } catch {
+          // Wake lock request failed or not allowed
+        }
+      };
+      requestWakeLock();
+    }
+    return () => {
+      if (wakeLockSentinel) {
+        wakeLockSentinel.release().catch(() => {});
+      }
+    };
+  }, [activeTab]);
 
   useEffect(() => {
     if (products.length === 0) return;
@@ -4310,25 +4473,38 @@ export default function App() {
               </div>
               <div className="min-w-0">
                 <span className={`text-[10px] font-black block truncate leading-tight ${isBackupOverdue ? 'text-white' : 'text-slate-700'}`}>
-                  {isBackupOverdue ? 'نسخة احتياطية مطلوبة ⚠️' : 'النسخ الاحتياطي'}
+                  {isBackupOverdue ? 'نسخة مطلوبة ⚠️' : 'النسخ الاحتياطي'}
                 </span>
               </div>
             </button>
           </div>
           
-          {deferredPrompt && (
-            <button onClick={handleInstall} className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-100 rounded-lg transition-all mt-2 cursor-pointer">
-              <Download className="w-3 h-3" />
-              <span className="text-[9px] font-black">تثبيت التطبيق السريع</span>
-            </button>
-          )}
-          
-          <div className="mt-2 p-1.5 bg-slate-100/50 border border-slate-200/20 rounded-lg flex items-center justify-center gap-1">
-            <AlertCircle className="w-2.5 h-2.5 text-slate-400 shrink-0" />
-            <p className="text-[8px] text-slate-400 font-medium leading-none text-center">
-              يمكن تثبيت التطبيق يدوياً من قائمة المتصفح.
-            </p>
-          </div>
+          {/* زر تثبيت البرنامج وتحميل APK بجانب الإعدادات */}
+          <button 
+            onClick={() => setShowInstallModal(true)} 
+            className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl transition-all mt-2 cursor-pointer shadow-sm ${
+              isStandaloneMode 
+                ? 'bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800'
+                : 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white border border-emerald-500 font-bold'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <div className={`p-1 rounded-lg ${isStandaloneMode ? 'bg-emerald-100 text-emerald-700' : 'bg-white/20 text-white'}`}>
+                <Smartphone className="w-3.5 h-3.5" />
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-black block leading-none">
+                  {isStandaloneMode ? 'تطبيق مستقل (APK)' : 'تثبيت البرنامج (APK / PWA)'}
+                </span>
+                <span className={`text-[8px] block font-medium mt-0.5 ${isStandaloneMode ? 'text-emerald-600' : 'text-emerald-100'}`}>
+                  {isStandaloneMode ? 'يعمل بدون متصفح بكامل الصلاحيات' : 'تنزيل APK أو التثبيت السريع'}
+                </span>
+              </div>
+            </div>
+            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${isStandaloneMode ? 'bg-emerald-200 text-emerald-800' : 'bg-white text-emerald-700'}`}>
+              {isStandaloneMode ? 'مثبت ✓' : 'تحميل'}
+            </span>
+          </button>
         </div>
       </motion.aside>
     </>
@@ -5605,6 +5781,38 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+
+        {/* راية إشعار تثبيت التطبيق للمتصفح لأول مرة */}
+        <BrowserInstallBanner 
+          key="global-browser-install-banner"
+          show={showBrowserBanner}
+          onOpenInstallModal={() => setShowInstallModal(true)}
+          onDismiss={() => {
+            setShowBrowserBanner(false);
+            if (typeof sessionStorage !== 'undefined') {
+              sessionStorage.setItem('dismiss_browser_install_banner', 'true');
+            }
+          }}
+        />
+
+        {/* راية تنبيه التحديثات والإصدارات الجديدة */}
+        <UpdateNotificationBanner 
+          key="global-update-notification-banner"
+          show={showUpdateBanner}
+          onUpdateNow={handleUpdateAppNow}
+          onDismiss={() => setShowUpdateBanner(false)}
+          onDownloadAPK={handleDownloadAPK}
+        />
+
+        {/* نافذة تثبيت التطبيق وتحميل ملف APK المستقل */}
+        <InstallAppModal 
+          key="global-install-app-modal"
+          isOpen={showInstallModal}
+          onClose={() => setShowInstallModal(false)}
+          deferredPrompt={deferredPrompt}
+          onInstallPWA={handleInstallPWA}
+          isStandalone={isStandaloneMode}
+        />
       </main>
     </div>
   );

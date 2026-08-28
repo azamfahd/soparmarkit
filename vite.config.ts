@@ -25,12 +25,110 @@ export default defineConfig(({mode}) => {
         ],
         manifest: {
           name: 'النظام المحاسبي الذكي',
-          short_name: 'المحاسبي',
-          description: 'نظام إدارة السوبرماركت والمبيعات يعمل أوفلاين بالكامل.',
-          theme_color: '#059669',
-          background_color: '#ffffff',
+          short_name: 'المحاسبي الذكي',
+          description: 'نظام محاسبة ومبيعات متكامل يعمل بالكامل محلياً وأوفلاين مع مستشار مالي ذكي ودعم قارئ الباركود والطباعة وإدارة الديون.',
+          theme_color: '#0f172a',
+          background_color: '#0f172a',
           display: 'standalone',
-          start_url: '/',
+          display_override: ['window-controls-overlay', 'standalone', 'minimal-ui', 'browser'],
+          orientation: 'any',
+          dir: 'rtl',
+          lang: 'ar',
+          start_url: '/?source=pwa',
+          scope: '/',
+          categories: ['finance', 'business', 'productivity', 'utilities'],
+          prefer_related_applications: false,
+          related_applications: [
+            {
+              platform: 'play',
+              id: 'app.azamfahd.account20.twa',
+              url: 'https://play.google.com/store/apps/details?id=app.azamfahd.account20.twa'
+            },
+            {
+              platform: 'webapp',
+              url: 'https://account20.netlify.app/manifest.json'
+            }
+          ],
+          shortcuts: [
+            {
+              name: 'نقطة البيع (الكاشير)',
+              short_name: 'الكاشير',
+              description: 'فتح واجهة البيع السريع وإصدار الفواتير الفورية',
+              url: '/?tab=pos',
+              icons: [
+                {
+                  src: '/icons/icon-192.png',
+                  sizes: '192x192',
+                  type: 'image/png'
+                }
+              ]
+            },
+            {
+              name: 'إدارة المخزون والمنتجات',
+              short_name: 'المخزون',
+              description: 'جرد البضائع وتعديل الأسعار والكميات وتتبع النواقص',
+              url: '/?tab=products',
+              icons: [
+                {
+                  src: '/icons/icon-192.png',
+                  sizes: '192x192',
+                  type: 'image/png'
+                }
+              ]
+            },
+            {
+              name: 'حسابات العملاء والديون',
+              short_name: 'العملاء',
+              description: 'متابعة كشوفات الحساب وسداد الديون والآجل',
+              url: '/?tab=customers',
+              icons: [
+                {
+                  src: '/icons/icon-192.png',
+                  sizes: '192x192',
+                  type: 'image/png'
+                }
+              ]
+            },
+            {
+              name: 'المستشار الذكي والتحليلات',
+              short_name: 'التحليلات',
+              description: 'استشارات مالية ذكية وتحليلات الأرباح والمخاطر',
+              url: '/?tab=analytics',
+              icons: [
+                {
+                  src: '/icons/icon-192.png',
+                  sizes: '192x192',
+                  type: 'image/png'
+                }
+              ]
+            },
+            {
+              name: 'سجل المبيعات والحركات',
+              short_name: 'السجل',
+              description: 'استعراض وتعديل فواتير البيع ومراجعة العمليات',
+              url: '/?tab=history',
+              icons: [
+                {
+                  src: '/icons/icon-192.png',
+                  sizes: '192x192',
+                  type: 'image/png'
+                }
+              ]
+            },
+            {
+              name: 'لوحة الإحصائيات والأرباح',
+              short_name: 'الإحصائيات',
+              description: 'الاطلاع على تقارير المبيعات والأرباح اليومية والشهرية',
+              url: '/?tab=dashboard',
+              icons: [
+                {
+                  src: '/icons/icon-192.png',
+                  sizes: '192x192',
+                  type: 'image/png'
+                }
+              ]
+            }
+          ],
           icons: [
             {
               src: '/icons/icon-192.png',
@@ -56,13 +154,15 @@ export default defineConfig(({mode}) => {
               src: '/screenshot-wide.png',
               sizes: '1280x720',
               type: 'image/png',
-              form_factor: 'wide'
+              form_factor: 'wide',
+              label: 'لوحة النظام المحاسبي الذكي على الكمبيوتر والأجهزة اللوحية'
             },
             {
               src: '/screenshot-narrow.png',
               sizes: '540x1170',
               type: 'image/png',
-              form_factor: 'narrow'
+              form_factor: 'narrow',
+              label: 'لوحة النظام المحاسبي الذكي على الهاتف'
             }
           ]
         },

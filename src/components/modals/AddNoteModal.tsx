@@ -66,11 +66,11 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
                 { key: 'high', label: '🔴 عاجل وهام', color: 'border-red-200 text-red-700 bg-red-50/30', activeColor: 'ring-2 ring-red-500 bg-red-50 border-red-300' },
                 { key: 'info', label: '🔵 حسابات وكاش', color: 'border-blue-200 text-blue-700 bg-blue-50/30', activeColor: 'ring-2 ring-blue-500 bg-blue-50 border-blue-300' },
                 { key: 'warning', label: '🟡 نواقص بضاعة', color: 'border-amber-200 text-amber-700 bg-amber-50/30', activeColor: 'ring-2 ring-amber-500 bg-amber-50 border-amber-300' }
-              ].map(item => {
+              ].map((item, idx) => {
                 const isSelected = newNote.priority === item.key;
                 return (
                   <button
-                    key={item.key}
+                    key={`add-note-prio-${item.key}-${idx}`}
                     type="button"
                     onClick={() => setNewNote({ ...newNote, priority: item.key as any })}
                     className={`p-2.5 rounded-xl border text-xs font-black text-center transition-all cursor-pointer ${

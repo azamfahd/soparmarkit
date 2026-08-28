@@ -412,7 +412,7 @@ const MessageStagesWidget = ({ stages }: { stages: any[] }) => {
       {isOpen && (
         <div className="mt-2.5 pt-2.5 border-t border-indigo-500/20 space-y-2 text-[10px]">
           {stages.map((stg: any, i: number) => (
-            <div key={i} className="bg-slate-900/95 border border-indigo-900/40 rounded-xl p-2.5 space-y-1.5 shadow-xs">
+            <div key={`stage-item-${stg.stageNumber || i}-${i}`} className="bg-slate-900/95 border border-indigo-900/40 rounded-xl p-2.5 space-y-1.5 shadow-xs">
               <div className="flex items-center justify-between gap-1 flex-wrap">
                 <span className="font-black text-amber-300 flex items-center gap-1.5 text-[11px]">
                   <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -837,7 +837,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     }, 250);
   };
 
-  const formatInlineStyles = (rawText: string) => {
+  const formatInlineStyles = (rawText: string, lineKeyPrefix: string | number = 'inline') => {
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
     const boldRegex = /\*\*(.*?)\*\*/g;
@@ -848,7 +848,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
         parts.push(rawText.substring(lastIndex, match.index));
       }
       parts.push(
-        <strong key={match.index} className="font-black text-amber-300 mx-0.5">
+        <strong key={`${lineKeyPrefix}-bold-${match.index}`} className="font-black text-amber-300 mx-0.5">
           {match[1]}
         </strong>
       );
@@ -860,16 +860,17 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     return parts.length > 0 ? parts : rawText;
   };
 
-  const formatAssistantMessage = (text: string) => {
+  const formatAssistantMessage = (text: string, msgPrefix: string = 'msg') => {
     return text.split('\n').map((line, idx) => {
       let content = line.trim();
-      if (!content) return <div key={idx} className="h-2" />;
+      const lineKey = `${msgPrefix}-l-${idx}`;
+      if (!content) return <div key={lineKey} className="h-2" />;
 
       // Match markdown headers like ### or ## or #
       if (content.startsWith('###') || content.startsWith('##') || content.startsWith('#')) {
         const titleText = content.replace(/^#+\s*/, '');
         return (
-          <div key={idx} className="mt-3.5 mb-2 first:mt-0" dir="rtl">
+          <div key={lineKey} className="mt-3.5 mb-2 first:mt-0" dir="rtl">
             <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-amber-500/20 via-indigo-500/15 to-transparent border-r-4 border-amber-400 rounded-xl text-amber-300 font-black text-xs sm:text-sm shadow-2xs">
               <Sparkles className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
               <span>{titleText}</span>
@@ -881,8 +882,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       // Check for prominent header lines with emojis
       if (/^(🔒|📊|🏬|📋|✨|💡|🩺|⚠️|✅|📦|👥|💵|🧠|🔮|🛡️|🚨|📌|🎯|🏆|🏷️|🔄)\s+/.test(content)) {
         return (
-          <div key={idx} className="mt-3 mb-1.5 first:mt-0 font-black text-xs sm:text-sm text-amber-300 flex items-center gap-2 border-b border-indigo-500/20 pb-1" dir="rtl">
-            <span>{formatInlineStyles(content)}</span>
+          <div key={lineKey} className="mt-3 mb-1.5 first:mt-0 font-black text-xs sm:text-sm text-amber-300 flex items-center gap-2 border-b border-indigo-500/20 pb-1" dir="rtl">
+            <span>{formatInlineStyles(content, lineKey)}</span>
           </div>
         );
       }
@@ -893,12 +894,12 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
         const num = numberedMatch[1];
         const rest = numberedMatch[2];
         return (
-          <div key={idx} className="flex items-start gap-2.5 my-1.5 p-2.5 bg-slate-950/60 hover:bg-slate-950/80 border border-white/5 rounded-2xl transition-colors text-xs leading-relaxed" dir="rtl">
+          <div key={lineKey} className="flex items-start gap-2.5 my-1.5 p-2.5 bg-slate-950/60 hover:bg-slate-950/80 border border-white/5 rounded-2xl transition-colors text-xs leading-relaxed" dir="rtl">
             <span className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white font-black text-[10px] flex items-center justify-center shrink-0 shadow-2xs mt-0.5 border border-indigo-400/30">
               {num}
             </span>
             <div className="flex-1 text-slate-100 font-medium">
-              {formatInlineStyles(rest)}
+              {formatInlineStyles(rest, lineKey)}
             </div>
           </div>
         );
@@ -909,10 +910,10 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       if (isListItem) {
         let cleanText = content.replace(/^[-*•]\s*/, '');
         return (
-          <div key={idx} className="flex items-start gap-2 my-1.5 pr-1.5 text-xs leading-relaxed text-slate-100" dir="rtl">
+          <div key={lineKey} className="flex items-start gap-2 my-1.5 pr-1.5 text-xs leading-relaxed text-slate-100" dir="rtl">
             <span className="text-teal-400 select-none font-bold mt-1 shrink-0 text-[10px]">◆</span>
             <div className="flex-1 font-medium">
-              {formatInlineStyles(cleanText)}
+              {formatInlineStyles(cleanText, lineKey)}
             </div>
           </div>
         );
@@ -920,8 +921,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
       // Regular paragraph
       return (
-        <p key={idx} className="my-1.5 leading-relaxed text-xs text-slate-100 text-right font-medium" dir="rtl">
-          {formatInlineStyles(content)}
+        <p key={lineKey} className="my-1.5 leading-relaxed text-xs text-slate-100 text-right font-medium" dir="rtl">
+          {formatInlineStyles(content, lineKey)}
         </p>
       );
     });
@@ -1975,9 +1976,9 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
               { id: '30days', label: '٣٠ يوماً' },
               { id: 'month', label: 'الشهر الجاري' },
               { id: 'all', label: 'الكل' }
-            ].map((p) => (
+            ].map((p, idx) => (
               <button
-                key={p.id}
+                key={`analytics-period-btn-${p.id}-${idx}`}
                 onClick={() => setDateFilter(p.id as any)}
                 className={`px-3 py-1.5 text-xs font-black rounded-xl transition-all cursor-pointer ${
                   dateFilter === p.id 
@@ -2026,8 +2027,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
               className="w-full bg-slate-50 border border-slate-100 p-2.5 rounded-2xl font-black text-xs text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden cursor-pointer"
             >
               <option value="all">كل الأشهر (عرض إجمالي للعام)</option>
-              {availableMonthsList.map(([monthKey, formattedName]) => (
-                <option key={monthKey} value={monthKey}>{formattedName} ({monthKey})</option>
+              {availableMonthsList.map(([monthKey, formattedName], idx) => (
+                <option key={`month-filter-${monthKey}-${idx}`} value={monthKey}>{formattedName} ({monthKey})</option>
               ))}
             </select>
           </div>
@@ -2039,8 +2040,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
               className="w-full bg-slate-50 border border-slate-100 p-2.5 rounded-2xl font-black text-xs text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:outline-hidden cursor-pointer"
             >
               <option value="all">كل الفئات والسلع الحسابية</option>
-              {categoriesList.map(cat => (
-                <option key={cat} value={cat}>{cat}</option>
+              {categoriesList.map((cat, idx) => (
+                <option key={`cat-filter-${cat}-${idx}`} value={cat}>{cat}</option>
               ))}
             </select>
           </div>
@@ -2054,8 +2055,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
               <option value="all">أجهزة الدفع، الديون، وكل العملاء</option>
               <option value="cash">المقبوض النقدي كاش وشبكة (فوري)</option>
               <option value="debtors">الذمم المدينة (ديون العملاء)</option>
-              {customers.map(c => (
-                <option key={c.id} value={String(c.id)}>{c.name} {c.balance > 0 ? `(آجل: ${formatPrice(c.balance)})` : ''}</option>
+              {customers.map((c, idx) => (
+                <option key={`cust-filter-${c.id ?? 'noid'}-${idx}`} value={String(c.id)}>{c.name} {c.balance > 0 ? `(آجل: ${formatPrice(c.balance)})` : ''}</option>
               ))}
             </select>
           </div>
@@ -2268,9 +2269,9 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                       >
                         الكل ({availableMonthsList.length} أشهر)
                       </button>
-                      {availableMonthsList.map(([mKey, mName]) => (
+                      {availableMonthsList.map(([mKey, mName], idx) => (
                         <button
-                          key={mKey}
+                          key={`month-pill-${mKey}-${idx}`}
                           onClick={() => setSelectedMonth(mKey)}
                           className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer shrink-0 ${
                             selectedMonth === mKey 
@@ -2664,7 +2665,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                       const percentage = ((cat.sales / totalSalesForPercentage) * 100);
                       
                       return (
-                        <div key={idx} className="p-3 bg-white rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-right">
+                        <div key={`cat-sales-chart-${cat.name || 'cat'}-${idx}`} className="p-3 bg-white rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-right">
                           <div className="space-y-1 w-full">
                             <div className="flex justify-between items-center">
                               <span className="font-extrabold text-xs text-slate-800">{cat.name}</span>
@@ -2963,7 +2964,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                           const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
                           return (
                             <div
-                              key={msg.id}
+                              key={`chat-msg-${msg.id || idx}-${idx}`}
                               className={`flex flex-col max-w-[92%] sm:max-w-[88%] rounded-3xl p-3.5 sm:p-5 text-xs sm:text-sm shadow-xl transition-all ${
                                 msg.role === 'user'
                                   ? 'bg-gradient-to-r from-indigo-600 via-indigo-600 to-indigo-700 text-white self-start rounded-tr-none border border-indigo-400/20 shadow-indigo-600/10'
@@ -3000,7 +3001,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                                 </div>
                               </div>
                               <div className="whitespace-pre-wrap leading-relaxed">
-                                {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text)}
+                                {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text, `chat-${msg.id || idx}-${idx}`)}
                               </div>
                               {msg.role === 'assistant' && (
                                 <div className="flex justify-between items-center gap-2 mt-3 pt-2 border-t border-slate-800 text-right flex-wrap">
@@ -3121,9 +3122,9 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                       </div>
 
                       <div className="space-y-2.5 overflow-y-auto custom-scrollbar pr-1 flex-1" dir="rtl">
-                        {smartAIRecommendations.map((insight) => (
+                        {smartAIRecommendations.map((insight, idx) => (
                           <div 
-                            key={insight.id} 
+                            key={`insight-item-${insight.id || idx}-${idx}`} 
                             className={`p-3 rounded-2xl border transition-all duration-200 ${
                               insight.type === 'success' 
                                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-100' 
@@ -3395,14 +3396,14 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
                 {/* Category Buttons Filter */}
                 <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1">
-                  {QUICK_QUESTION_CATEGORIES.map(cat => {
+                  {QUICK_QUESTION_CATEGORIES.map((cat, idx) => {
                     const isSelected = selectedQuickCategory === cat.id;
                     const count = cat.id === 'all' 
                       ? COMPREHENSIVE_QUICK_QUESTIONS.length 
                       : COMPREHENSIVE_QUICK_QUESTIONS.filter(q => q.category === cat.id).length;
                     return (
                       <button
-                        key={cat.id}
+                        key={`quick-cat-btn-${cat.id || idx}-${idx}`}
                         type="button"
                         onClick={() => setSelectedQuickCategory(cat.id)}
                         className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-all flex items-center gap-1.5 border shrink-0 ${
@@ -3435,7 +3436,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                         q.description.includes(quickQuestionFilter.trim());
                       return matchCat && matchSearch;
                     })
-                    .map(q => {
+                    .map((q, idx) => {
                       const colorMap = {
                         emerald: 'bg-emerald-50/80 hover:bg-emerald-100/90 text-emerald-950 border-emerald-200/90 hover:border-emerald-300',
                         rose: 'bg-rose-50/80 hover:bg-rose-100/90 text-rose-950 border-rose-200/90 hover:border-rose-300',
@@ -3455,7 +3456,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
 
                       return (
                         <button
-                          key={q.id}
+                          key={`quick-q-btn-${q.id || idx}-${idx}`}
                           type="button"
                           onClick={() => {
                             handleSendMessage(q.question);

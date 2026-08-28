@@ -184,7 +184,7 @@ export const InventoryDetailsModal: React.FC<InventoryDetailsModalProps> = ({
 
                     return (
                       <div 
-                        key={item.id || idx} 
+                        key={`inv-cost-item-${item.id ?? 'item'}-${idx}`} 
                         className="flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-slate-100/50 border border-slate-100/80 transition-all text-right"
                       >
                         <div className="space-y-0.5 min-w-0 flex-1 pl-3">

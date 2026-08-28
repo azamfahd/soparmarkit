@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { 
   X, Camera, RefreshCw, Sparkles, Volume2, VolumeX, Zap, ZapOff, 
-  ShoppingCart, Plus, Minus, Trash2, Check, CreditCard, DollarSign, User, AlertTriangle, Printer, Download 
+  ShoppingCart, Plus, Minus, Trash2, Check, CreditCard, DollarSign, User, AlertTriangle, Printer, Download, Search 
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { type Customer } from '../db';
@@ -56,6 +56,8 @@ export default function BarcodeScanner({
   const [hasTorch, setHasTorch] = useState(false);
   const [flashActive, setFlashActive] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
+  const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const html5QrcodeRef = useRef<Html5Qrcode | null>(null);
   const lastScannedCode = useRef<string>('');
   const lastScannedTime = useRef<number>(0);
@@ -772,9 +774,9 @@ export default function BarcodeScanner({
                   {/* Scrollable list inside the sidebar */}
                   <div className="flex-1 overflow-y-auto divide-y divide-slate-900/60 max-h-[200px] sm:max-h-[240px] pr-1">
                     {cart.length > 0 ? (
-                      cart.map((item) => (
+                      cart.map((item, idx) => (
                         <motion.div 
-                          key={`scanned-cart-item-${item.product_id}`}
+                          key={`scanned-cart-item-${item.product_id}-${idx}`}
                           initial={{ opacity: 0, y: 5 }}
                           animate={{ opacity: 1, y: 0 }}
                           className="py-2.5 flex flex-col gap-1 text-right"
@@ -852,12 +854,17 @@ export default function BarcodeScanner({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setPaymentType('debt')}
+                        onClick={() => {
+                          setPaymentType('debt');
+                          setCustomerSearchTerm('');
+                          setIsCustomerSearchOpen(true);
+                        }}
                         className={`py-1.5 px-2 rounded-lg text-[9px] font-black transition-all flex items-center justify-center gap-1 cursor-pointer ${
                           paymentType === 'debt' 
                             ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10' 
                             : 'text-slate-400 hover:text-slate-200'
                         }`}
+                        title="البيع بالدَّيْن (يفتح قائمة البحث عن عميل مباشرة)"
                       >
                         <CreditCard className="w-2.5 h-2.5" />
                         دين (آجل)
@@ -867,22 +874,34 @@ export default function BarcodeScanner({
 
                   {/* Customer Selector for Debt */}
                   {paymentType === 'debt' && setSelectedCustomer && customers.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="relative">
+                    <div className="flex items-center gap-1">
+                      <div className="relative flex-1">
                         <select
                           value={selectedCustomer || ''}
                           onChange={(e) => setSelectedCustomer(e.target.value ? Number(e.target.value) : null)}
                           className="w-full py-1 px-2 bg-slate-950 border border-slate-800 rounded-lg text-white text-[9px] font-bold outline-none cursor-pointer pr-5 text-right appearance-none"
                         >
                           <option value="">-- اختر العميل --</option>
-                          {customers.map(c => (
-                            <option key={`sc-cust-${c.id}`} value={c.id}>
+                          {customers.map((c, idx) => (
+                            <option key={`sc-cust-${c.id ?? 'noid'}-${idx}`} value={c.id}>
                               {c.name}
                             </option>
                           ))}
                         </select>
                         <User className="absolute right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 text-slate-500 pointer-events-none" />
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomerSearchTerm('');
+                          setIsCustomerSearchOpen(true);
+                        }}
+                        className="py-1 px-1.5 bg-sky-950/70 hover:bg-sky-900 border border-sky-800/80 rounded-lg text-sky-300 hover:text-white transition-colors cursor-pointer text-[9px] font-bold flex items-center gap-0.5"
+                        title="بحث سريع عن عميل"
+                      >
+                        <Search className="w-2.5 h-2.5" />
+                        <span>بحث</span>
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1001,6 +1020,109 @@ export default function BarcodeScanner({
             )}
           </div>
         </div>
+
+        {/* Quick Customer Search Modal for Barcode Scanner */}
+        <AnimatePresence>
+          {isCustomerSearchOpen && setSelectedCustomer && (
+            <div 
+              className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setIsCustomerSearchOpen(false);
+              }}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[80vh] shadow-2xl text-white"
+                dir="rtl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-3 bg-slate-950 border-b border-slate-800 flex justify-between items-center">
+                  <h4 className="font-black text-xs sm:text-sm text-white flex items-center gap-1.5">
+                    <User className="w-4 h-4 text-sky-400" />
+                    <span>البحث عن عميل للفاتورة</span>
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomerSearchOpen(false)}
+                    className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-3 bg-slate-950/60 border-b border-slate-800">
+                  <div className="relative">
+                    <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="ابحث باسم العميل أو رقم الهاتف..."
+                      value={customerSearchTerm}
+                      onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                      className="w-full py-2 pr-8 pl-8 bg-slate-900 border border-slate-800 rounded-xl text-xs font-bold text-white placeholder-slate-500 outline-none focus:border-sky-500"
+                    />
+                    {customerSearchTerm && (
+                      <button
+                        type="button"
+                        onClick={() => setCustomerSearchTerm('')}
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-2 space-y-1.5 custom-scrollbar">
+                  {customers
+                    .filter(c => {
+                      if (!customerSearchTerm.trim()) return true;
+                      const q = customerSearchTerm.trim().toLowerCase();
+                      return (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
+                    })
+                    .map((c, idx) => {
+                      const isSelected = selectedCustomer === c.id;
+                      return (
+                        <div
+                          key={`scan-cust-${c.id ?? 'noid'}-${idx}`}
+                          onClick={() => {
+                            setSelectedCustomer(c.id);
+                            setIsCustomerSearchOpen(false);
+                          }}
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                            isSelected
+                              ? 'bg-emerald-950/60 border-emerald-600/80 text-white'
+                              : 'bg-slate-950/40 hover:bg-slate-800/60 border-slate-800 text-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-xs">
+                              {c.name ? c.name.charAt(0) : 'ع'}
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-white">{c.name}</p>
+                              {c.phone && <p className="text-[10px] text-slate-400 font-mono">{c.phone}</p>}
+                            </div>
+                          </div>
+                          <div className="text-left">
+                            {c.balance > 0 ? (
+                              <span className="text-[10px] font-bold text-rose-400 bg-rose-950/80 border border-rose-800/60 px-1.5 py-0.5 rounded-md">
+                                دين: {formatPrice ? formatPrice(c.balance) : c.balance}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-slate-500">خالص</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </div>
   );

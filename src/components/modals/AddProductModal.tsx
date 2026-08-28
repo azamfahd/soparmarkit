@@ -475,9 +475,9 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               <span className="text-[10px] text-slate-400 font-bold">اختيارات سريعة:</span>
             </div>
             <div className="flex flex-wrap gap-1.5 mb-1.5">
-              {commonUnits.map(u => (
+              {commonUnits.map((u, idx) => (
                 <button
-                  key={u}
+                  key={`add-prod-unit-${u}-${idx}`}
                   type="button"
                   onClick={() => setNewProduct({ ...newProduct, unit: u })}
                   className={`px-2.5 py-1 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
@@ -516,8 +516,8 @@ export const AddProductModal: React.FC<AddProductModalProps> = ({
               }
             >
               <option value="">-- اختار المورد --</option>
-              {suppliers.map(s => (
-                <option key={s.id} value={s.id}>
+              {suppliers.map((s, idx) => (
+                <option key={`add-prod-supp-${s.id ?? 'noid'}-${idx}`} value={s.id}>
                   {s.name}
                 </option>
               ))}

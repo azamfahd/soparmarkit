@@ -305,7 +305,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                             const totalCost = Math.abs(log.change_amount) * costPrice;
                             const badgeStyle = getProductBadgeStyles(log.product_name || '');
                             return (
-                              <tr key={`supp-sale-log-${log.id ?? idx}`} className="hover:bg-slate-50/50">
+                              <tr key={`supp-sale-log-${log.id ?? 'log'}-${idx}`} className="hover:bg-slate-50/50">
                                 <td className="py-2.5 px-3">
                                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${badgeStyle.bg}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`}></span>
@@ -349,7 +349,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
               ) : (
                 supplierHistory.payments.map((pay, idx) => (
                   <div 
-                    key={`supp-payment-${pay.id ?? idx}`} 
+                    key={`supp-payment-${pay.id ?? 'pay'}-${idx}`} 
                     onClick={() => setSelectedSupplierPayment({ ...pay, supplier_name: showSupplierDetails.name })}
                     className={`bg-white p-4 rounded-2xl border-r-4 ${pay.amount < 0 ? 'border-r-amber-500' : 'border-r-emerald-500'} shadow-xs flex flex-col gap-2 cursor-pointer hover:bg-slate-50 active:scale-[0.99] transition-all`}
                   >
@@ -413,7 +413,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                   }
 
                   return (
-                    <div key={`supp-prod-${prod.id ?? idx}`} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-100 hover:shadow-sm transition-all flex flex-col gap-3">
+                    <div key={`supp-prod-${prod.id ?? 'prod'}-${idx}`} className="bg-white p-4 rounded-2xl shadow-xs border border-slate-100 hover:shadow-sm transition-all flex flex-col gap-3">
                       <div className="flex justify-between items-start">
                         <div className="space-y-1">
                           <p className="font-extrabold text-slate-800 text-sm">{prod.name}</p>
@@ -494,7 +494,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                             const isUpdate = log.reason === 'manual_update' && log.change_amount > 0;
                             const badgeStyle = getProductBadgeStyles(log.product_name || '');
                             return (
-                              <tr key={`supp-stock-log-${log.id ?? idx}`} className="hover:bg-slate-50/50">
+                              <tr key={`supp-stock-log-${log.id ?? 'log'}-${idx}`} className="hover:bg-slate-50/50">
                                 <td className="py-2.5 px-3">
                                   <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-extrabold border ${badgeStyle.bg} shadow-sm transition-all duration-300 hover:shadow-md hover:ring-2 hover:ring-offset-1 ${isReturn ? 'hover:ring-rose-200' : isWithdrawal ? 'hover:ring-amber-200' : isUpdate ? 'hover:ring-sky-200' : 'hover:ring-indigo-200'}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${badgeStyle.dot}`}></span>

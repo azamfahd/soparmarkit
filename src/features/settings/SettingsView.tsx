@@ -777,7 +777,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   ) : (
                     userFeedbackList.map((item, index) => (
-                      <div key={item.id || index} className="p-2 bg-slate-50 border border-slate-100 rounded-xl text-xs space-y-1">
+                      <div key={`feedback-item-${item.id ?? index}-${index}`} className="p-2 bg-slate-50 border border-slate-100 rounded-xl text-xs space-y-1">
                         <div className="flex justify-between items-center text-[10px] opacity-80 border-b border-slate-200/50 pb-0.5">
                           <span className="font-extrabold">
                             {item.rating === 'THUMBS_UP' ? (
@@ -801,7 +801,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   ) : (
                     systemErrorList.map((item, index) => (
-                      <div key={item.id || index} className="p-2 bg-rose-50/50 border border-rose-100 rounded-xl text-xs space-y-1">
+                      <div key={`error-item-${item.id ?? index}-${index}`} className="p-2 bg-rose-50/50 border border-rose-100 rounded-xl text-xs space-y-1">
                         <div className="flex justify-between items-center text-[10px] opacity-80 border-b border-rose-200/50 pb-0.5">
                           <span className="font-extrabold text-rose-700 bg-rose-100 px-1 py-0.5 rounded">
                             🚨 {item.intent}
@@ -1296,11 +1296,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   ) : (
                     <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                      {allCloudRequests.map((req) => {
+                      {allCloudRequests.map((req, reqIdx) => {
                         const isRenewal = req.requestType === 'renewal';
                         const selectedDuration = requestDurations[req.deviceId] || req.requestedDuration || 365;
                         return (
-                          <div key={req.deviceId} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-right">
+                          <div key={`cloud-req-${req.deviceId || 'nodev'}-${req.id || ''}-${reqIdx}`} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-right">
                             {/* Request Header */}
                             <div className="flex items-start justify-between">
                               <div className="flex items-center gap-1.5">

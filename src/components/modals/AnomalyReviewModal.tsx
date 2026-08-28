@@ -299,9 +299,9 @@ export const AnomalyReviewModal: React.FC<AnomalyReviewModalProps> = ({
                   <p className="text-xs text-slate-400 font-bold mt-1">جميع سندات السحب مطابقة ومعتمدة في السجلات</p>
                 </div>
               ) : (
-                filteredWithdrawals.map(w => (
+                filteredWithdrawals.map((w, idx) => (
                   <div 
-                    key={w.id} 
+                    key={`anomaly-w-${w.id ?? 'noid'}-${idx}`} 
                     className="p-4 bg-slate-50/80 hover:bg-slate-50 rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all"
                   >
                     <div className="space-y-1 flex-1">
@@ -373,12 +373,12 @@ export const AnomalyReviewModal: React.FC<AnomalyReviewModalProps> = ({
                   <p className="text-xs text-slate-400 font-bold mt-1">جميع الفواتير تمت مراجعتها والتأكد من صحتها</p>
                 </div>
               ) : (
-                filteredAnomalousSales.map(s => {
+                filteredAnomalousSales.map((s, idx) => {
                   const saleHour = new Date(s.created_at).getHours();
                   const isLateNight = saleHour >= 0 && saleHour < 5;
                   return (
                     <div 
-                      key={s.id}
+                      key={`anomaly-s-${s.id ?? 'noid'}-${idx}`}
                       className="p-4 bg-slate-50/80 hover:bg-slate-50 rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all"
                     >
                       <div className="space-y-1 flex-1">
@@ -448,12 +448,12 @@ export const AnomalyReviewModal: React.FC<AnomalyReviewModalProps> = ({
                   <p className="text-xs text-slate-400 font-bold mt-1">جميع المنتجات تحقق هوامش ربح صحيحة ومجدية</p>
                 </div>
               ) : (
-                filteredPricingProducts.map(p => {
+                filteredPricingProducts.map((p, idx) => {
                   const margin = p.sale_price - p.cost_price;
                   const isNegative = margin < 0;
                   return (
                     <div 
-                      key={p.id}
+                      key={`anomaly-p-${p.id ?? 'noid'}-${idx}`}
                       className="p-4 bg-slate-50/80 hover:bg-slate-50 rounded-2xl border border-slate-200/80 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 transition-all"
                     >
                       <div className="space-y-1 flex-1">

@@ -1153,7 +1153,7 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
               <tbody className="divide-y divide-slate-100">
                 {/* Standard Single DataType reviews */}
                 {dataType !== 'mixed' && itemsList.map((item, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={`import-row-${item.id ?? 'item'}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 text-xs font-mono font-bold text-slate-500">{idx + 1}</td>
                     
                     {/* Name */}
@@ -1272,7 +1272,7 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
 
                 {/* Mixed DataType review: Products list */}
                 {dataType === 'mixed' && activeMixedTab === 'products' && mixedProducts.map((item, idx) => (
-                  <tr key={`p-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={`mixed-p-row-${item.id ?? 'item'}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 text-xs font-mono font-bold text-slate-500">{idx + 1}</td>
                     
                     <td className="p-3">
@@ -1386,7 +1386,7 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
 
                 {/* Mixed DataType review: Customers list */}
                 {dataType === 'mixed' && activeMixedTab === 'customers' && mixedCustomers.map((item, idx) => (
-                  <tr key={`c-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={`mixed-c-row-${item.id ?? 'cust'}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 text-xs font-mono font-bold text-slate-500">{idx + 1}</td>
                     
                     <td className="p-3">
@@ -1447,7 +1447,7 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
 
                 {/* Mixed DataType review: Suppliers list */}
                 {dataType === 'mixed' && activeMixedTab === 'suppliers' && mixedSuppliers.map((item, idx) => (
-                  <tr key={`s-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={`mixed-s-row-${item.id ?? 'supp'}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                     <td className="p-4 text-xs font-mono font-bold text-slate-500">{idx + 1}</td>
                     
                     <td className="p-3">

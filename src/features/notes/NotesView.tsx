@@ -123,9 +123,9 @@ export const NotesView: React.FC<NotesViewProps> = ({
               { key: 'pending', label: 'المعلقة 📝', count: notes.filter(n => !n.is_completed).length },
               { key: 'completed', label: 'المكتملة ✓', count: notes.filter(n => n.is_completed).length },
               { key: 'high', label: 'عاجلة وهامة 🚨', count: notes.filter(n => (n.priority || 'normal') === 'high').length }
-            ].map(pill => (
+            ].map((pill, idx) => (
               <button
-                key={pill.key}
+                key={`note-filter-pill-${pill.key}-${idx}`}
                 onClick={() => setNoteFilter(pill.key as any)}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
                   noteFilter === pill.key
@@ -202,7 +202,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
 
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {filteredNotes.map(note => {
+                {filteredNotes.map((note, idx) => {
                   const priority = note.priority || 'normal';
                   let pConfig = {
                     badgeBg: 'bg-slate-100 text-slate-600 border border-slate-200/50',
@@ -235,7 +235,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
 
                   return (
                     <Card 
-                      key={note.id} 
+                      key={`note-card-${note.id ?? 'noid'}-${idx}`} 
                       onClick={() => setSelectedNote(note)}
                       className={`relative overflow-hidden group hover:shadow-sm transition-all border border-slate-150/70 bg-white p-4 rounded-2xl flex flex-col justify-between cursor-pointer ${pConfig.borderColor} ${pConfig.bgHover} ${note.is_completed ? 'opacity-70 bg-slate-50/40' : ''}`}
                     >
@@ -372,7 +372,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
                   {currentCycleWithdrawals.map((w, idx) => {
                     return (
                       <tr 
-                        key={w.id || idx} 
+                        key={`cycle-withdrawal-${w.id ?? 'noid'}-${idx}`} 
                         className={`transition-all ${
                           w.is_repaid 
                             ? 'bg-slate-50/40 text-slate-500 hover:bg-slate-50' 
@@ -511,11 +511,11 @@ export const NotesView: React.FC<NotesViewProps> = ({
             💼 سجل التسويات ومطابقات الصندوق السابقة ({salesSettlements.length})
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {salesSettlements.map((settlement) => {
+            {salesSettlements.map((settlement, idx) => {
               const isDeficit = settlement.difference < 0;
               const isExcess = settlement.difference > 0;
               return (
-                <Card key={settlement.id} className="border border-slate-100 hover:border-violet-100 transition-all p-4 relative flex flex-col justify-between bg-white shadow-xs rounded-2xl">
+                <Card key={`settlement-card-${settlement.id ?? 'noid'}-${idx}`} className="border border-slate-100 hover:border-violet-100 transition-all p-4 relative flex flex-col justify-between bg-white shadow-xs rounded-2xl">
                   <div className="space-y-3">
                     <div className="flex justify-between items-start">
                       <div>

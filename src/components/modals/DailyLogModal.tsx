@@ -56,7 +56,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {dailySalesBreakdown.map((day, idx) => (
-                <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
+                <tr key={`daily-log-row-${day.dateStr ?? idx}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                   <td className="p-3 font-black text-slate-800 font-mono text-[13px]">{day.dateStr}</td>
                   <td className="p-3 text-center font-bold text-slate-600">{day.count}</td>
                   <td className="p-3 font-bold text-slate-650 font-mono">{formatPrice(day.cashAmount)}</td>

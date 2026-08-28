@@ -1,8 +1,8 @@
 [{
-      "relation": ["delegate_permission/common.handle_all_urls"],
-      "target": {
-        "namespace": "android_app",
-        "package_name": "app.netlify.account20.twa",
-        "sha256_cert_fingerprints": ["41:9A:EA:56:72:80:D0:A0:22:6F:2C:73:95:7A:4D:8D:6F:3F:6C:64:73:4F:76:46:4E:7B:94:1A:29:15:53:A6"]
-      }
-    }]
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "app.azamfahd.account20.twa",
+    "sha256_cert_fingerprints": ["FF:B3:6F:74:C4:87:3B:54:1A:B4:00:74:60:C5:20:D8:D0:F0:7E:A1:90:20:81:A7:08:CB:43:B4:A1:DA:81:A0"]
+  }
+}]
