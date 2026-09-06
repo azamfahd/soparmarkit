@@ -1,0 +1,15 @@
+{
+  "appId": "app.azamfahd.account20.twa",
+  "appName": "النظام المحاسبي الذكي",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorSQLite": {
+      "iosDatabaseLocation": "Library/CapacitorDatabase",
+      "androidIsEncryption": false
+    }
+  }
+}

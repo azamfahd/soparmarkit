@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Home, 
   Search, 
-  Printer, 
+  FileText, 
   Plus, 
   Package, 
   Menu, 
   RefreshCcw, 
   Edit, 
-  Trash2 
+  Trash2,
+  MinusCircle
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -29,17 +30,18 @@ interface ProductsViewProps {
   fetchProductHistory: (product: any) => void;
   formatPrice: (price: number) => string;
   setUpdatingStockProduct: (product: any) => void;
+  setWithdrawingStockProduct: (product: any) => void;
   verifyAdminPermission: (action: string, onSuccess: () => void, label: string) => void;
   setEditingProduct: (product: any) => void;
   handleDeleteProduct: (id: number) => void;
 }
 
-export const ProductsView: React.FC<ProductsViewProps> = ({
+const ProductsViewComponent: React.FC<ProductsViewProps> = ({
   setActiveTab,
   handleDownloadInventoryPDF,
   setScannerMode,
   setShowAddProduct,
-      categories,
+  categories,
   categoryCounts,
   categoryIcons,
   setIsCategorySidebarOpen,
@@ -49,11 +51,22 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   fetchProductHistory,
   formatPrice,
   setUpdatingStockProduct,
+  setWithdrawingStockProduct,
   verifyAdminPermission,
   setEditingProduct,
   handleDeleteProduct,
 }) => {
   const [inventorySearchTerm, setInventorySearchTerm] = useState('');
+
+  const filteredProducts = useMemo(() => {
+    const term = inventorySearchTerm.trim().toLowerCase();
+    return products.filter(p => {
+      const matchCat = inventoryCategory === 'الكل' || p.category === inventoryCategory;
+      if (!matchCat) return false;
+      if (!term) return true;
+      return p.name?.toLowerCase().includes(term) || (p.barcode && p.barcode.includes(term)) || String(p.sale_price).includes(term);
+    });
+  }, [products, inventoryCategory, inventorySearchTerm]);
 
   return (
     <motion.div key="products" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
@@ -64,12 +77,23 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
           </button>
           <h2 className="text-xl font-bold">إدارة الأصناف</h2>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="flex items-center gap-2" onClick={handleDownloadInventoryPDF}>
-            <Printer className="w-4 h-4" /> تقرير PDF
+        <div className="flex items-center gap-2">
+          <Button 
+            variant="primary" 
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium text-xs shadow-xs transition-all cursor-pointer whitespace-nowrap" 
+            onClick={() => { setScannerMode('manual'); setShowAddProduct(true); }}
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>إضافة منتج</span>
           </Button>
-          <Button variant="outline" className="flex items-center gap-2" onClick={() => { setScannerMode('manual'); setShowAddProduct(true); }}>
-            <Plus className="w-4 h-4" /> إضافة صنف
+
+          <Button 
+            variant="outline" 
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 text-slate-700 rounded-lg font-medium text-xs shadow-xs transition-all cursor-pointer whitespace-nowrap" 
+            onClick={handleDownloadInventoryPDF}
+          >
+            <FileText className="w-3.5 h-3.5 text-rose-500" />
+            <span>تقرير PDF</span>
           </Button>
         </div>
       </div>
@@ -132,9 +156,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {products
-          .filter(p => (inventoryCategory === 'الكل' || p.category === inventoryCategory) && p.name.includes(inventorySearchTerm))
-          .map((p, idx) => {
+        {filteredProducts.map((p, idx) => {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
             const thirtyDays = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -148,50 +170,64 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               }
             }
             return (
-              <Card key={`inv-product-${p.id ?? 'no-id'}-${idx}`} className="group hover:border-emerald-200 transition-all cursor-pointer relative overflow-hidden p-0" onClick={() => fetchProductHistory(p)}>
+              <Card key={`inv-product-${p.id ?? 'no-id'}-${idx}`} className="group hover:border-emerald-200 transition-all cursor-pointer relative overflow-hidden p-0 flex flex-col justify-between" onClick={() => fetchProductHistory(p)}>
                 <div className={`absolute top-0 right-0 w-1 h-full ${p.stock_quantity <= 5 ? 'bg-red-500' : p.stock_quantity <= 20 ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                 {expiryBadge}
-                <div className="p-3 pl-4 pr-4 flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-2">
-                      <p className="font-bold text-slate-800 text-sm group-hover:text-emerald-700 transition-colors line-clamp-1">{p.name}</p>
-                      <div className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${p.stock_quantity <= 5 ? 'bg-red-50 text-red-600' : p.stock_quantity <= 20 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                        {p.stock_quantity} {p.unit || ''}
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center bg-slate-50 p-2 rounded-xl border border-slate-100">
-                      <div className="text-center w-full border-l border-slate-200 last:border-0 pl-1">
-                        <p className="text-[9px] text-slate-400 font-bold mb-0.5">التكلفة</p>
-                        <p className="text-[11px] font-bold text-slate-700">{p.cost_price}</p>
-                      </div>
-                      <div className="text-center w-full border-l border-slate-200 last:border-0 px-1">
-                        <p className="text-[9px] text-slate-500 font-bold mb-0.5">إج.التكلفة</p>
-                        <p className="text-[11px] font-bold text-slate-800">{formatPrice(p.cost_price * p.stock_quantity)}</p>
-                      </div>
-                      <div className="text-center w-full border-l border-slate-200 last:border-0 px-1">
-                        <p className="text-[9px] text-emerald-600 font-bold mb-0.5">البيع</p>
-                        <p className="text-[11px] font-bold text-emerald-700">{p.sale_price}</p>
-                      </div>
-                      <div className="text-center w-full pr-1">
-                        <p className="text-[9px] text-indigo-400 font-bold mb-0.5">تصنيف</p>
-                        <p className="text-[10px] font-bold text-indigo-700 truncate w-12 mx-auto" title={p.category}>{p.category}</p>
-                      </div>
+                <div className="p-3.5 space-y-2.5 flex-1">
+                  <div className="flex justify-between items-start gap-2">
+                    <p className="font-bold text-slate-800 text-sm group-hover:text-emerald-700 transition-colors line-clamp-1">{p.name}</p>
+                    <div className={`px-2 py-0.5 rounded-lg text-[10px] font-bold shrink-0 ${p.stock_quantity <= 5 ? 'bg-red-50 text-red-600' : p.stock_quantity <= 20 ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                      {p.stock_quantity} {p.unit || ''}
                     </div>
                   </div>
-                  <div className="flex flex-col items-center gap-1 transition-opacity mr-2 pr-2 border-r border-slate-100">
+                  <div className="grid grid-cols-4 gap-1 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                    <div className="text-center border-l border-slate-200 last:border-0 pl-1">
+                      <p className="text-[9px] text-slate-400 font-bold mb-0.5">التكلفة</p>
+                      <p className="text-[11px] font-bold text-slate-700 truncate">{p.cost_price}</p>
+                    </div>
+                    <div className="text-center border-l border-slate-200 last:border-0 px-1">
+                      <p className="text-[9px] text-slate-500 font-bold mb-0.5">إج.التكلفة</p>
+                      <p className="text-[11px] font-bold text-slate-800 truncate">{formatPrice(p.cost_price * p.stock_quantity)}</p>
+                    </div>
+                    <div className="text-center border-l border-slate-200 last:border-0 px-1">
+                      <p className="text-[9px] text-emerald-600 font-bold mb-0.5">البيع</p>
+                      <p className="text-[11px] font-bold text-emerald-700 truncate">{p.sale_price}</p>
+                    </div>
+                    <div className="text-center pr-1">
+                      <p className="text-[9px] text-indigo-400 font-bold mb-0.5">تصنيف</p>
+                      <p className="text-[10px] font-bold text-indigo-700 truncate" title={p.category}>{p.category}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-3.5 py-2 bg-slate-50/90 border-t border-slate-100 flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-bold text-slate-400">إجراءات صريحة</span>
+                  <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                     <button 
                       onClick={(e) => { 
                         e.stopPropagation(); 
                         setUpdatingStockProduct(p);
                       }} 
                       title="تحديث المخزون"
-                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
-                        p.stock_quantity <= 5 ? 'text-red-600 hover:bg-red-50' : 
-                        p.stock_quantity <= 20 ? 'text-amber-600 hover:bg-amber-50' : 
-                        'text-emerald-600 hover:bg-emerald-50'
+                      className={`px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                        p.stock_quantity <= 5 ? 'bg-red-50 text-red-600 hover:bg-red-100' : 
+                        p.stock_quantity <= 20 ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 
+                        'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
                       }`}
                     >
-                      <RefreshCcw className="w-4 h-4" />
+                      <RefreshCcw className="w-3.5 h-3.5" />
+                      <span className="text-[10px]">تحديث</span>
+                    </button>
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        setWithdrawingStockProduct(p);
+                      }} 
+                      title="سحب من المخزن / تسوية نقصان"
+                      className="px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors cursor-pointer"
+                    >
+                      <MinusCircle className="w-3.5 h-3.5" />
+                      <span className="text-[10px]">سحب</span>
                     </button>
                     <button 
                       onClick={(e) => { 
@@ -199,9 +235,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                         verifyAdminPermission('edit_product', () => setEditingProduct(p), '✏️ صلاحية تعديل صنف');
                       }} 
                       title="تعديل الصنف"
-                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer bg-white border border-slate-200/60 shadow-xs"
                     >
-                      <Edit className="w-4 h-4" />
+                      <Edit className="w-3.5 h-3.5" />
                     </button>
                     <button 
                       onClick={(e) => { 
@@ -211,9 +247,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                         }, '🗑️ صلاحية حذف صنف');
                       }} 
                       title="حذف الصنف"
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer bg-white border border-slate-200/60 shadow-xs"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -225,4 +261,5 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   );
 };
 
+export const ProductsView = memo(ProductsViewComponent);
 export default ProductsView;

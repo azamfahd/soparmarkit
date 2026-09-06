@@ -68,6 +68,18 @@ export default function BarcodeScanner({
     onScanRef.current = onScan;
   }, [onScan]);
 
+  // Handle hardware back button to close customer search first if open
+  useEffect(() => {
+    const handleBack = (e: Event) => {
+      if (isCustomerSearchOpen) {
+        setIsCustomerSearchOpen(false);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('smartpos:backpress', handleBack);
+    return () => window.removeEventListener('smartpos:backpress', handleBack);
+  }, [isCustomerSearchOpen]);
+
   // Custom states for continuous autofocus, motion stabilization, and tap-to-focus feedback
   const [focusRing, setFocusRing] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false });
   const focusIntervalRef = useRef<any>(null);
@@ -308,27 +320,19 @@ export default function BarcodeScanner({
       const scanner = new Html5Qrcode(scanContainerId);
       html5QrcodeRef.current = scanner;
 
-      // Hardware level video constraints to minimize blur from movement, force focus
+      // Hardware level video constraints to minimize blur from movement
       const optimizedConstraints = {
-        facingMode: { ideal: "environment" },
-        // High frame rate (30fps) reduces exposure duration per frame, substantially reducing motion blur
-        frameRate: { ideal: 30 },
-        // Optimal HD resolution strikes the perfect balance between crisp details and decoding speed (reducing lag)
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        // @ts-ignore
-        focusMode: "continuous"
+        facingMode: "environment"
       };
 
       const config = {
-        fps: 30, // Optimized 30 frames per second decoding scanrate for lightning speed
+        fps: 10, // Moderate fps for stability
         qrbox: (viewFinderWidth: number, viewFinderHeight: number) => {
           const scannerWidth = Math.max(Math.min(viewFinderWidth * 0.9, 440), 220);
           const scannerHeight = Math.max(Math.min(viewFinderHeight * 0.55, 200), 90);
           return { width: scannerWidth, height: scannerHeight };
         },
-        aspectRatio: 1.333333,
-        // Integrate focus and stabilization constraints into camera configuration
+        // Removed aspectRatio to prevent video stretching which breaks recognition
         videoConstraints: {
           ...optimizedConstraints,
           deviceId: typeof cameraIdOrConfig === 'string' ? { ideal: cameraIdOrConfig } : undefined

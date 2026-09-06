@@ -1,13 +1,34 @@
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Cairo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-cairo: "Cairo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-amiri: "Amiri", serif;
+  --font-kufi: "Reem Kufi", sans-serif;
+  --font-ruqaa: "Aref Ruqaa", serif;
 }
 
 body {
   direction: rtl;
+  font-family: "Cairo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   @apply bg-slate-50 text-slate-900;
+}
+
+/* فئات الخطوط المحلية المستقلة عن الإنترنت */
+.font-cairo {
+  font-family: "Cairo", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+.font-amiri {
+  font-family: "Amiri", serif !important;
+}
+
+.font-kufi {
+  font-family: "Reem Kufi", sans-serif !important;
+}
+
+.font-ruqaa {
+  font-family: "Aref Ruqaa", serif !important;
 }
 
 .glass-card {

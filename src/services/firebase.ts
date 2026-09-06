@@ -1,6 +1,7 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
-  getFirestore, 
+  getFirestore,
+  initializeFirestore,
   doc, 
   setDoc, 
   getDoc, 
@@ -9,15 +10,33 @@ import {
   onSnapshot, 
   collection, 
   query, 
-  orderBy 
+  orderBy,
+  setLogLevel
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+// Suppress non-critical connection retry warnings in offline/sandbox environments
+try {
+  setLogLevel('error');
+} catch {
+  // Ignore if log level setting fails in some environments
+}
 
-// Initialize Firestore with custom database ID from config if present
-export const cloudDb = getFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
+// Initialize Firebase App safely
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+
+// Initialize Firestore with custom database ID from config and resilient transport
+let cloudDbInstance;
+try {
+  cloudDbInstance = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+    ignoreUndefinedProperties: true
+  }, firebaseConfig.firestoreDatabaseId || "(default)");
+} catch {
+  cloudDbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId || "(default)");
+}
+
+export const cloudDb = cloudDbInstance;
 
 export interface ActivationRequest {
   id: string; // same as deviceId

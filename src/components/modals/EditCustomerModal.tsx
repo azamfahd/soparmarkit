@@ -60,7 +60,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
 
   return (
     <div
-      key="modal-edit-customer"
       className="fixed inset-0 bg-black/60 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-xs"
       dir="rtl"
     >

@@ -61,7 +61,7 @@ export const PermissionsConfigModal: React.FC<PermissionsConfigModalProps> = ({
   };
 
   return (
-    <div key="modal-permissions-config" className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-md overflow-y-auto">
+    <div className="fixed inset-0 bg-black/60 z-[90] flex items-center justify-center p-4 backdrop-blur-md overflow-y-auto">
       <motion.div 
         initial={{ scale: 0.92, opacity: 0, y: 30 }} 
         animate={{ scale: 1, opacity: 1, y: 0 }} 

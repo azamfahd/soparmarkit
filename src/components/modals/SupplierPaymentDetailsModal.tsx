@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { FileText, X } from 'lucide-react';
+import { FileText, X, Printer } from 'lucide-react';
 import { Button } from '../ui/Button';
 
 export interface SupplierPaymentDetailsModalProps {
@@ -8,6 +8,7 @@ export interface SupplierPaymentDetailsModalProps {
   setSelectedSupplierPayment: (val: any) => void;
   formatPrice: (amount: number) => string;
   formatDateTimeWithDay: (dateStr: string) => string;
+  onPrintVoucher?: (payment: any) => void;
 }
 
 export const SupplierPaymentDetailsModal: React.FC<SupplierPaymentDetailsModalProps> = ({
@@ -15,11 +16,12 @@ export const SupplierPaymentDetailsModal: React.FC<SupplierPaymentDetailsModalPr
   setSelectedSupplierPayment,
   formatPrice,
   formatDateTimeWithDay,
+  onPrintVoucher,
 }) => {
   if (!selectedSupplierPayment) return null;
 
   return (
-    <div key="modal-selected-supplier-payment" className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
       <motion.div 
         initial={{ scale: 0.95, opacity: 0 }} 
         animate={{ scale: 1, opacity: 1 }}
@@ -77,10 +79,25 @@ export const SupplierPaymentDetailsModal: React.FC<SupplierPaymentDetailsModalPr
           </div>
         </div>
 
-        {/* Footer close button */}
-        <Button className="w-full py-3.5 rounded-2xl text-sm font-extrabold bg-slate-900 text-white hover:bg-slate-800 transition-colors shadow-md" onClick={() => setSelectedSupplierPayment(null)}>
-          إغلاق التفاصيل
-        </Button>
+        {/* Action Buttons */}
+        <div className="flex gap-2">
+          {onPrintVoucher && (
+            <Button 
+              className="flex-1 py-3 rounded-2xl text-xs font-black bg-amber-600 hover:bg-amber-700 text-white shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+              onClick={() => onPrintVoucher(selectedSupplierPayment)}
+            >
+              <Printer className="w-4 h-4" />
+              <span>طباعة سند صرف</span>
+            </Button>
+          )}
+          <Button 
+            variant="secondary"
+            className="flex-1 py-3 rounded-2xl text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors" 
+            onClick={() => setSelectedSupplierPayment(null)}
+          >
+            إغلاق
+          </Button>
+        </div>
       </motion.div>
     </div>
   );

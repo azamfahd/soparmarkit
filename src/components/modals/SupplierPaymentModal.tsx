@@ -33,7 +33,7 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({
   if (!showSupplierPaymentModal) return null;
 
   return (
-    <div key="modal-supplier-payment" className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }} 
         animate={{ scale: 1, opacity: 1 }}

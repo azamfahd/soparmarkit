@@ -24,6 +24,7 @@ export default defineConfig(({mode}) => {
           'screenshot-narrow.png'
         ],
         manifest: {
+          id: '/',
           name: 'النظام المحاسبي الذكي',
           short_name: 'المحاسبي الذكي',
           description: 'نظام محاسبة ومبيعات متكامل يعمل بالكامل محلياً وأوفلاين مع مستشار مالي ذكي ودعم قارئ الباركود والطباعة وإدارة الديون.',
@@ -134,13 +135,19 @@ export default defineConfig(({mode}) => {
               src: '/icons/icon-192.png',
               sizes: '192x192',
               type: 'image/png',
-              purpose: 'any maskable'
+              purpose: 'any'
             },
             {
               src: '/icons/icon-512.png',
               sizes: '512x512',
               type: 'image/png',
-              purpose: 'any maskable'
+              purpose: 'any'
+            },
+            {
+              src: '/icons/icon-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable'
             },
             {
               src: '/icons/apple-touch-icon.png',
@@ -169,6 +176,10 @@ export default defineConfig(({mode}) => {
         workbox: {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB limit
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}']
+        },
+        devOptions: {
+          enabled: true,
+          type: 'module'
         }
       })
     ],

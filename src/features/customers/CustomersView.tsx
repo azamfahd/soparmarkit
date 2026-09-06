@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, memo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Home, 
@@ -28,7 +28,7 @@ interface CustomersViewProps {
   setEditingCustomer?: (customer: any) => void;
 }
 
-export const CustomersView: React.FC<CustomersViewProps> = ({
+const CustomersViewComponent: React.FC<CustomersViewProps> = ({
   setActiveTab,
   setShowAddCustomer,
   customers,
@@ -41,7 +41,22 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [sortType, setSortType] = useState<
     'last_sale_desc' | 'last_sale_asc' | 'newest' | 'oldest' | 'debt_desc' | 'debt_asc' | 'name_asc'
-  >('newest');
+  >(() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('customer_view_sort_type');
+      const validSorts = ['last_sale_desc', 'last_sale_asc', 'newest', 'oldest', 'debt_desc', 'debt_asc', 'name_asc'];
+      if (saved && validSorts.includes(saved)) {
+        return saved as any;
+      }
+    }
+    return 'newest';
+  });
+
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('customer_view_sort_type', sortType);
+    }
+  }, [sortType]);
 
   // Fetch all sales that have customer_id to calculate last sale per customer
   const customerSales = useLiveQuery(async () => {
@@ -287,4 +302,5 @@ export const CustomersView: React.FC<CustomersViewProps> = ({
   );
 };
 
+export const CustomersView = memo(CustomersViewComponent);
 export default CustomersView;

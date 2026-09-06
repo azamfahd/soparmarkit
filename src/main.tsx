@@ -3,6 +3,12 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './ErrorBoundary';
 import './index.css';
+import { initializeSQLiteSync } from './services/sqliteSync';
+
+// Initialize SQLite real-time database sync for native platforms (standalone APK)
+initializeSQLiteSync().catch((err) => {
+  console.error('Failed to initialize SQLite sync:', err);
+});
 
 // Catch and ignore benign HMR websocket connection failures
 if (typeof window !== 'undefined') {

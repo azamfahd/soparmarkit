@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Home, 
@@ -27,10 +27,10 @@ export interface HistoryViewProps {
   formatPrice: (amount: number) => string;
 }
 
-export const HistoryView: React.FC<HistoryViewProps> = ({
+const HistoryViewComponent: React.FC<HistoryViewProps> = ({
   setActiveTab,
   enrichedSales,
-      historyFilter,
+  historyFilter,
   setHistoryFilter,
   expandedSaleId,
   handleExpandSale,
@@ -42,6 +42,18 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   formatPrice,
 }) => {
   const [historySearchTerm, setHistorySearchTerm] = useState('');
+
+  const filteredSales = useMemo(() => {
+    const term = historySearchTerm.trim().toLowerCase();
+    return enrichedSales.filter(s => {
+      const matchesSearch = !term || 
+        (s.customer_name && s.customer_name.toLowerCase().includes(term)) || 
+        (s.notes && s.notes.toLowerCase().includes(term)) || 
+        String(s.id).includes(term);
+      const matchesFilter = historyFilter === 'all' || s.payment_type === historyFilter;
+      return matchesSearch && matchesFilter;
+    });
+  }, [enrichedSales, historySearchTerm, historyFilter]);
 
   return (
     <motion.div key="history" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
@@ -76,15 +88,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       </div>
 
       <div className="space-y-3">
-        {enrichedSales
-          .filter(s => {
-            const matchesSearch = s.customer_name?.includes(historySearchTerm) || 
-                                  s.notes?.includes(historySearchTerm) || 
-                                  String(s.id).includes(historySearchTerm);
-            const matchesFilter = historyFilter === 'all' || s.payment_type === historyFilter;
-            return matchesSearch && matchesFilter;
-          })
-          .map((s, idx) => (
+        {filteredSales.map((s, idx) => (
           <div key={`sale-card-${s.id ?? 'no-id'}-${idx}`} className={`relative group ${expandedSaleId === s.id ? 'z-30' : 'z-10'} transition-all duration-200`}>
             <div className="absolute left-6 top-6 bottom-[-1.5rem] w-0.5 bg-slate-100 -z-10 group-last:hidden" />
             <Card className={`overflow-hidden border transition-all duration-300 ${expandedSaleId === s.id ? 'border-emerald-400 bg-white shadow-xl scale-[1.01]' : 'border-slate-100/60 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] hover:border-emerald-200 bg-white'}`}>
@@ -192,4 +196,5 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   );
 };
 
+export const HistoryView = memo(HistoryViewComponent);
 export default HistoryView;

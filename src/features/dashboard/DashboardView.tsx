@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { motion } from 'motion/react';
 import { 
   ShoppingCart, 
@@ -12,6 +12,8 @@ import {
   Download, 
   Sparkles, 
   TrendingUp, 
+  TrendingDown,
+  FileSpreadsheet,
   PieChart, 
   Database, 
   AlertCircle, 
@@ -31,12 +33,15 @@ interface DashboardViewProps {
     totalDebts: number;
     lowStock: number;
     expiringStock: number;
+    totalExpenses?: number;
+    netProfit?: number;
   };
   formatPrice: (price: number) => string;
   setActiveTab: (tab: string) => void;
   setScannerMode: (mode: any) => void;
   setIsScannerOpen: (open: boolean) => void;
   exportData: () => void;
+  onOpenBackupOptions?: () => void;
   isBackupOverdue?: boolean;
   verifyAdminPermission: (action: string, callback: () => void, title: string) => void;
   setSalesDetailsTab: (tab: 'days' | 'weeks' | 'months') => void;
@@ -45,6 +50,8 @@ interface DashboardViewProps {
   setShowProfitSummaryModal: (show: boolean) => void;
   setShowInventoryDetailsModal: (show: boolean) => void;
   setShowSupplierSummaryModal: (show: boolean) => void;
+  setShowExpensesModal?: (show: boolean) => void;
+  setShowExcelSyncModal?: (show: boolean) => void;
   trendMode: 'daily' | 'monthly' | 'yearly';
   setTrendMode: (mode: 'daily' | 'monthly' | 'yearly') => void;
   dailySales: any[];
@@ -53,13 +60,14 @@ interface DashboardViewProps {
   topProducts: any[];
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({
+const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   summary,
   formatPrice,
   setActiveTab,
   setScannerMode,
   setIsScannerOpen,
   exportData,
+  onOpenBackupOptions,
   isBackupOverdue,
   verifyAdminPermission,
   setSalesDetailsTab,
@@ -68,6 +76,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   setShowProfitSummaryModal,
   setShowInventoryDetailsModal,
   setShowSupplierSummaryModal,
+  setShowExpensesModal,
+  setShowExcelSyncModal,
   trendMode,
   setTrendMode,
   dailySales,
@@ -84,140 +94,194 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       className="space-y-6"
     >
       <div className="space-y-3">
-        <h2 className="text-lg font-bold text-slate-800">الوصول السريع</h2>
-        <div className="grid grid-cols-5 sm:grid-cols-5 md:grid-cols-10 gap-2 w-full">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base sm:text-lg font-black text-slate-800 flex items-center gap-2">
+            <span>الوصول السريع</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+              اختصارات سريعة
+            </span>
+          </h2>
+        </div>
+
+        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-11 gap-2 w-full">
+          {/* 1. المبيعات - زمردي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setActiveTab('pos')} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-emerald-200 hover:shadow-md transition-all group"
+            className="p-1.5 sm:p-2 rounded-xl bg-emerald-50/80 hover:bg-emerald-100/90 border border-emerald-200/80 border-b-[3px] border-b-emerald-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-emerald-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="نقطة البيع وتسجيل فاتورة جديدة"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-emerald-50 rounded-lg flex items-center justify-center group-hover:bg-emerald-500 transition-colors">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-emerald-500/10 rounded-lg flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
               <ShoppingCart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">بيع جديد</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-emerald-800 group-hover:text-emerald-900 transition-colors">المبيعات</span>
           </motion.button>
 
+          {/* 2. الماسح الضوئي - بنفسجي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => {
               setActiveTab('pos');
               setScannerMode('pos');
               setIsScannerOpen(true);
             }} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-violet-200 hover:shadow-md transition-all group"
+            className="p-1.5 sm:p-2 rounded-xl bg-purple-50/80 hover:bg-purple-100/90 border border-purple-200/80 border-b-[3px] border-b-purple-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-purple-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="ماسح الباركود بالكاميرا"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-violet-50 rounded-lg flex items-center justify-center group-hover:bg-violet-500 transition-colors">
-              <Scan className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-violet-600 group-hover:text-white transition-colors" />
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-purple-500/10 rounded-lg flex items-center justify-center group-hover:bg-purple-500 group-hover:text-white transition-colors">
+              <Scan className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">الماسح</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-purple-800 group-hover:text-purple-900 transition-colors">الماسح الضوئي</span>
           </motion.button>
           
+          {/* 3. المخزون - أزرق هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setActiveTab('products')} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-blue-200 hover:shadow-md transition-all group"
+            className="p-1.5 sm:p-2 rounded-xl bg-blue-50/80 hover:bg-blue-100/90 border border-blue-200/80 border-b-[3px] border-b-blue-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-blue-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="إدارة المنتجات والأصناف والمخزون"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-blue-50 rounded-lg flex items-center justify-center group-hover:bg-blue-500 transition-colors">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-blue-500/10 rounded-lg flex items-center justify-center group-hover:bg-blue-500 group-hover:text-white transition-colors">
               <Package className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">المخزون</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-blue-800 group-hover:text-blue-900 transition-colors">المخزون</span>
           </motion.button>
 
+          {/* 4. العملاء - نيلي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setActiveTab('customers')} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-indigo-200 hover:shadow-md transition-all group"
+            className="p-1.5 sm:p-2 rounded-xl bg-indigo-50/80 hover:bg-indigo-100/90 border border-indigo-200/80 border-b-[3px] border-b-indigo-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-indigo-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="العملاء وحسابات الديون والآجل"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-indigo-50 rounded-lg flex items-center justify-center group-hover:bg-indigo-500 transition-colors">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-indigo-500/10 rounded-lg flex items-center justify-center group-hover:bg-indigo-500 group-hover:text-white transition-colors">
               <Users className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700 text-center">الزبائن</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-indigo-800 group-hover:text-indigo-900 transition-colors text-center">العملاء</span>
           </motion.button>
 
+          {/* 5. الموردين - برتقالي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setActiveTab('notes')} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-pink-200 hover:shadow-md transition-all group"
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setActiveTab('suppliers')} 
+            className="p-1.5 sm:p-2 rounded-xl bg-amber-50/80 hover:bg-amber-100/90 border border-amber-200/80 border-b-[3px] border-b-amber-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-amber-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="الموردين وفواتير الشراء والدفعات"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-pink-50 rounded-lg flex items-center justify-center group-hover:bg-pink-500 transition-colors">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-amber-500/10 rounded-lg flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-colors">
+              <Briefcase className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-600 group-hover:text-white transition-colors" />
+            </div>
+            <span className="font-bold text-[9px] sm:text-[10px] text-amber-800 group-hover:text-amber-900 transition-colors text-center">الموردين</span>
+          </motion.button>
+
+          {/* 6. المصروفات - وردي أحمر هادئ */}
+          <motion.button 
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setShowExpensesModal && setShowExpensesModal(true)} 
+            className="p-1.5 sm:p-2 rounded-xl bg-rose-50/80 hover:bg-rose-100/90 border border-rose-200/80 border-b-[3px] border-b-rose-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-rose-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="المصروفات التشغيلية للمحل"
+          >
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-rose-500/10 rounded-lg flex items-center justify-center group-hover:bg-rose-500 group-hover:text-white transition-colors">
+              <TrendingDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-600 group-hover:text-white transition-colors" />
+            </div>
+            <span className="font-bold text-[9px] sm:text-[10px] text-rose-800 group-hover:text-rose-900 transition-colors text-center">المصروفات</span>
+          </motion.button>
+
+          {/* 7. الصندوق - زهري هادئ */}
+          <motion.button 
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => setActiveTab('notes')} 
+            className="p-1.5 sm:p-2 rounded-xl bg-pink-50/80 hover:bg-pink-100/90 border border-pink-200/80 border-b-[3px] border-b-pink-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-pink-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="الملاحظات، مسحوبات الدرج وتصفية الصندوق"
+          >
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-pink-500/10 rounded-lg flex items-center justify-center group-hover:bg-pink-500 group-hover:text-white transition-colors">
               <BookOpen className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-pink-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700 text-center">الصندوق</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-pink-800 group-hover:text-pink-900 transition-colors text-center">الصندوق</span>
           </motion.button>
 
+          {/* 8. سجل المبيعات - رمادي/كحلي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => setActiveTab('history')} 
-            className="p-1.5 sm:p-2 rounded-xl bg-white border border-slate-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-slate-300 hover:shadow-md transition-all group"
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-100/80 hover:bg-slate-200/90 border border-slate-200 border-b-[3px] border-b-slate-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-slate-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="سجل المبيعات والفواتير السابقة"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-50 rounded-lg flex items-center justify-center group-hover:bg-slate-800 transition-colors">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-slate-500/10 rounded-lg flex items-center justify-center group-hover:bg-slate-700 group-hover:text-white transition-colors">
               <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-bold text-[9px] sm:text-[10px] text-slate-700">التقارير</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-slate-800 group-hover:text-slate-900 transition-colors">سجل المبيعات</span>
           </motion.button>
 
+          {/* 9. التحليلات - سماوي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => {
               verifyAdminPermission('analytics', () => {
                 setActiveTab('analytics');
               }, '📊 صلاحية التقارير والتحليلات');
             }} 
-            className="p-1.5 sm:p-2 rounded-xl bg-indigo-50 border border-indigo-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-indigo-300 hover:bg-indigo-100/50 hover:shadow-md transition-all group"
+            className="p-1.5 sm:p-2 rounded-xl bg-cyan-50/80 hover:bg-cyan-100/90 border border-cyan-200/80 border-b-[3px] border-b-cyan-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-cyan-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="تحليلات الأرباح والمبيعات والمؤشرات"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-700 transition-colors">
-              <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-cyan-500/10 rounded-lg flex items-center justify-center group-hover:bg-cyan-600 group-hover:text-white transition-colors">
+              <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-extrabold text-[9px] sm:text-[10px] text-indigo-700 text-center">التحليل</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-cyan-800 group-hover:text-cyan-900 transition-colors text-center">التحليلات</span>
           </motion.button>
 
+          {/* 10. استيراد ذكي - بنفسجي هادئ */}
           <motion.button 
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setActiveTab('suppliers')} 
-            className="p-1.5 sm:p-2 rounded-xl bg-amber-50 border border-amber-100 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-amber-300 hover:bg-amber-100/50 hover:shadow-md transition-all group"
-          >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-amber-500 rounded-lg flex items-center justify-center group-hover:bg-amber-600 transition-colors">
-              <Briefcase className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
-            </div>
-            <span className="font-extrabold text-[9px] sm:text-[10px] text-amber-700 text-center">الموردين</span>
-          </motion.button>
-
-          <motion.button 
-            whileTap={{ scale: 0.95 }}
-            onClick={exportData} 
-            className={`p-1.5 sm:p-2 rounded-xl flex flex-col items-center justify-center gap-1.5 transition-all group cursor-pointer ${
-              isBackupOverdue 
-                ? 'bg-gradient-to-br from-red-600 via-rose-600 to-red-700 text-white border border-red-400/90 shadow-[0_0_16px_rgba(239,68,68,0.7)] animate-pulse hover:from-red-500 hover:to-rose-500' 
-                : 'bg-white border border-slate-100 shadow-sm hover:border-amber-200 hover:shadow-md'
-            }`}
-          >
-            <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-colors ${
-              isBackupOverdue ? 'bg-white/20 text-white' : 'bg-amber-50 group-hover:bg-amber-500'
-            }`}>
-              <Download className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
-                isBackupOverdue ? 'text-white animate-bounce' : 'text-amber-600 group-hover:text-white transition-colors'
-              }`} />
-            </div>
-            <span className={`font-extrabold text-[9px] sm:text-[10px] ${
-              isBackupOverdue ? 'text-white' : 'text-slate-700'
-            }`}>
-              {isBackupOverdue ? 'احتياطية ⚠️' : 'احتياطية'}
-            </span>
-          </motion.button>
-
-          <motion.button 
-            whileTap={{ scale: 0.95 }}
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
             onClick={() => {
               verifyAdminPermission('smart_import', () => {
                 setActiveTab('smart-import');
               }, '✨ صلاحية الاستيراد الذكي (AI)');
             }} 
-            className="p-1.5 sm:p-2 rounded-xl bg-violet-50/40 border border-violet-100/60 shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-violet-300 hover:bg-violet-100/40 hover:shadow-md transition-all group cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-xl bg-violet-50/80 hover:bg-violet-100/90 border border-violet-200/80 border-b-[3px] border-b-violet-300 shadow-xs flex flex-col items-center justify-center gap-1 active:border-b-violet-200 active:translate-y-0.5 transition-all group cursor-pointer"
+            title="الاستيراد الذكي، ملفات Excel، وإدارة قاعدة البيانات"
           >
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-violet-600 rounded-lg flex items-center justify-center group-hover:bg-violet-700 transition-colors">
-              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-violet-500/10 rounded-lg flex items-center justify-center group-hover:bg-violet-600 group-hover:text-white transition-colors">
+              <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-violet-600 group-hover:text-white transition-colors" />
             </div>
-            <span className="font-extrabold text-[9px] sm:text-[10px] text-violet-705 text-center">استيراد ذكي</span>
+            <span className="font-bold text-[9px] sm:text-[10px] text-violet-800 group-hover:text-violet-900 transition-colors text-center">استيراد ذكي</span>
+          </motion.button>
+
+          {/* 11. النسخ الاحتياطي - ذهبي/أحمر هادئ */}
+          <motion.button 
+            whileHover={{ y: -2 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => {
+              if (onOpenBackupOptions) {
+                onOpenBackupOptions();
+              } else {
+                exportData();
+              }
+            }} 
+            className={`p-1.5 sm:p-2 rounded-xl border-b-[3px] shadow-xs flex flex-col items-center justify-center gap-1 active:translate-y-0.5 transition-all group cursor-pointer ${
+              isBackupOverdue 
+                ? 'bg-rose-100/90 hover:bg-rose-200 border border-rose-300 border-b-rose-400 text-rose-900 animate-pulse' 
+                : 'bg-amber-50/80 hover:bg-amber-100/90 border border-amber-200/80 border-b-amber-300 text-amber-900'
+            }`}
+            title="تصدير وحفظ نسخة احتياطية (JSON أو Excel)"
+          >
+            <div className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center group-hover:text-white transition-colors ${
+              isBackupOverdue ? 'bg-rose-500/20 text-rose-700 group-hover:bg-rose-600' : 'bg-amber-500/10 text-amber-600 group-hover:bg-amber-500'
+            }`}>
+              <Download className={`w-3.5 h-3.5 sm:w-4 sm:h-4 group-hover:text-white ${isBackupOverdue ? 'animate-bounce' : ''}`} />
+            </div>
+            <span className={`font-bold text-[9px] sm:text-[10px] ${isBackupOverdue ? 'text-rose-900' : 'text-amber-800 group-hover:text-amber-900'} tracking-tight text-center`}>
+              {isBackupOverdue ? 'احتياطية ⚠️' : 'احتياطية'}
+            </span>
           </motion.button>
         </div>
       </div>
@@ -318,6 +382,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <p className="text-[10px] text-red-400 mt-1">إجمالي الديون</p>
           <p className="text-lg font-bold text-red-700">{formatPrice(summary.totalDebts)}</p>
+        </motion.div>
+
+        <motion.div 
+          whileHover={{ scale: 1.02 }} 
+          className="p-3 rounded-2xl bg-rose-50/80 border border-rose-100 shadow-sm cursor-pointer hover:bg-rose-100/70 hover:border-rose-300 transition-all" 
+          onClick={() => setShowExpensesModal && setShowExpensesModal(true)}
+        >
+          <div className="flex justify-between items-start mb-1">
+            <TrendingDown className="w-4 h-4 text-rose-600" />
+            <span className="text-[9px] font-bold bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-md shadow-xs">المصاريف 🛈</span>
+          </div>
+          <p className="text-[10px] text-rose-600/70 mt-1">المصروفات التشغيلية</p>
+          <p className="text-lg font-bold text-rose-700">{formatPrice(summary.totalExpenses || 0)}</p>
         </motion.div>
       </div>
 
@@ -608,4 +685,5 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
 };
 
+export const DashboardView = memo(DashboardViewComponent);
 export default DashboardView;

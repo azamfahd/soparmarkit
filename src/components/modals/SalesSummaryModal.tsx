@@ -23,7 +23,7 @@ export const SalesSummaryModal: React.FC<SalesSummaryModalProps> = ({
   if (!showSalesSummaryModal) return null;
 
   return (
-    <div key="modal-sales-summary" className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
       <motion.div 
         initial={{ scale: 0.95, opacity: 0 }} 
         animate={{ scale: 1, opacity: 1 }}

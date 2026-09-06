@@ -48,7 +48,7 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
   if (!showAddNote) return null;
 
   return (
-    <div key="modal-add-note" className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
       <motion.div 
         initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
         className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl p-6 space-y-4"

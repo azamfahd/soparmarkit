@@ -32,7 +32,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
   if (!showPaymentModal) return null;
 
   return (
-    <div key="modal-payment" className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
       <motion.div 
         initial={{ scale: 0.9, opacity: 0, y: 20 }} 
         animate={{ scale: 1, opacity: 1, y: 0 }} 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Home, 
@@ -61,7 +61,7 @@ interface PosViewProps {
   db: any;
 }
 
-export const PosView: React.FC<PosViewProps> = ({
+const PosViewComponent: React.FC<PosViewProps> = ({
   setActiveTab,
       setScannerMode,
   setIsScannerOpen,
@@ -104,6 +104,18 @@ export const PosView: React.FC<PosViewProps> = ({
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [customerFilter, setCustomerFilter] = useState<'all' | 'debtors' | 'cleared'>('all');
 
+  // Handle hardware back button to close customer search sheet first
+  useEffect(() => {
+    const handleBack = (e: Event) => {
+      if (isCustomerSearchOpen) {
+        setIsCustomerSearchOpen(false);
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('smartpos:backpress', handleBack);
+    return () => window.removeEventListener('smartpos:backpress', handleBack);
+  }, [isCustomerSearchOpen]);
+
   const normalizeArabic = (text: string) => {
     if (!text) return '';
     return text
@@ -115,18 +127,30 @@ export const PosView: React.FC<PosViewProps> = ({
       .trim();
   };
 
-  const filteredCustomers = customers.filter(c => {
-    if (customerFilter === 'debtors' && !(c.balance > 0)) return false;
-    if (customerFilter === 'cleared' && c.balance > 0) return false;
-    
-    if (!customerSearchTerm.trim()) return true;
-    const q = normalizeArabic(customerSearchTerm);
-    const nameMatch = normalizeArabic(c.name || '').includes(q);
-    const phoneMatch = (c.phone || '').includes(customerSearchTerm.trim());
-    const notesMatch = normalizeArabic(c.notes || '').includes(q);
-    const addressMatch = normalizeArabic(c.address || '').includes(q);
-    return nameMatch || phoneMatch || notesMatch || addressMatch;
-  });
+  const filteredCustomers = useMemo(() => {
+    return customers.filter(c => {
+      if (customerFilter === 'debtors' && !(c.balance > 0)) return false;
+      if (customerFilter === 'cleared' && c.balance > 0) return false;
+      
+      if (!customerSearchTerm.trim()) return true;
+      const q = normalizeArabic(customerSearchTerm);
+      const nameMatch = normalizeArabic(c.name || '').includes(q);
+      const phoneMatch = (c.phone || '').includes(customerSearchTerm.trim());
+      const notesMatch = normalizeArabic(c.notes || '').includes(q);
+      const addressMatch = normalizeArabic(c.address || '').includes(q);
+      return nameMatch || phoneMatch || notesMatch || addressMatch;
+    });
+  }, [customers, customerFilter, customerSearchTerm]);
+
+  const filteredProducts = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return products.filter(p => {
+      const matchCategory = selectedCategory === 'الكل' || p.category === selectedCategory;
+      if (!matchCategory) return false;
+      if (!term) return true;
+      return p.name?.toLowerCase().includes(term) || String(p.sale_price).includes(term) || (p.barcode && p.barcode.includes(term));
+    });
+  }, [products, selectedCategory, searchTerm]);
 
   return (
     <motion.div 
@@ -279,14 +303,11 @@ export const PosView: React.FC<PosViewProps> = ({
       </div>
 
       <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto pr-1 pb-4">
-        {products
-          .filter(p => p.name.includes(searchTerm))
-          .filter(p => selectedCategory === 'الكل' || p.category === selectedCategory)
-          .map((p, idx) => (
+        {filteredProducts.map((p, idx) => (
           <motion.div
-            layout
-            initial={{ opacity: 0, scale: 0.9 }}
+            initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.15 }}
             key={`pos-product-${p.id ?? 'no-id'}-${idx}`} 
             className={`relative p-3 rounded-3xl border-2 transition-all cursor-pointer active:scale-95 ${p.stock_quantity <= 0 ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-100 hover:border-emerald-200 shadow-sm hover:shadow-md'}`}
             onClick={() => p.stock_quantity > 0 && addToCart(p)}
@@ -1057,4 +1078,5 @@ export const PosView: React.FC<PosViewProps> = ({
   );
 };
 
+export const PosView = memo(PosViewComponent);
 export default PosView;

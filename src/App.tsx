@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import BarcodeScanner from './components/BarcodeScanner';
-import SmartAnalytics from './components/SmartAnalytics';
-import SmartImport from './components/SmartImport';
+const SmartAnalytics = lazy(() => import('./components/SmartAnalytics'));
+const SmartImport = lazy(() => import('./components/SmartImport'));
+const SettingsView = lazy(() => import('./features/settings/SettingsView'));
 import { Card } from './components/ui/Card';
 import { Button } from './components/ui/Button';
 import { DashboardView } from './features/dashboard/DashboardView';
 import { PosView } from './features/pos/PosView';
-import { SettingsView } from './features/settings/SettingsView';
 import { ProductsView } from './features/products/ProductsView';
 import { CustomersView } from './features/customers/CustomersView';
 import { NotesView } from './features/notes/NotesView';
@@ -36,10 +36,15 @@ import { CustomerDetailsModal } from './components/modals/CustomerDetailsModal';
 import { PinVerificationModal } from './components/modals/PinVerificationModal';
 import { PermissionsConfigModal } from './components/modals/PermissionsConfigModal';
 import { WithdrawModal } from './components/modals/WithdrawModal';
+import { VoucherModal, type VoucherData } from './components/modals/VoucherModal';
+import { ExpensesModal } from './components/modals/ExpensesModal';
+import { ExcelSyncCenterModal } from './components/modals/ExcelSyncCenterModal';
+import { BackupOptionsModal } from './components/modals/BackupOptionsModal';
+import { checkFileModifiedAndSync } from './services/excelSync';
 import { InstallAppModal } from './components/InstallAppModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
-import { Scan, QrCode, Smartphone } from 'lucide-react';
+import { Scan, QrCode, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -97,7 +102,8 @@ import {
   Clock,
   RefreshCcw,
   Lock,
-  Key
+  Key,
+  MinusCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -159,6 +165,8 @@ interface Summary {
   totalItemsSold: number;
   totalSupplierPayments: number;
   totalOriginalSupplierCost: number;
+  totalExpenses?: number;
+  netProfit?: number;
 }
 
 // --- Components ---
@@ -179,6 +187,12 @@ export default function App() {
   const [showSalesSummaryModal, setShowSalesSummaryModal] = useState(false);
   const [showProfitSummaryModal, setShowProfitSummaryModal] = useState(false);
   const [showMonthlySalesDetailsModal, setShowMonthlySalesDetailsModal] = useState(false);
+  const [showExpensesModal, setShowExpensesModal] = useState(false);
+  const [showExcelSyncModal, setShowExcelSyncModal] = useState(false);
+  const [showBackupOptionsModal, setShowBackupOptionsModal] = useState(false);
+  
+  const excelNameSetting = useLiveQuery(() => db.settings.where('key').equals('excel_file_name').first());
+  const excelSyncLinked = !!excelNameSetting?.value;
   
   // Local DB Queries using Dexie
   const products = useLiveQuery(() => db.products.toArray()) || [];
@@ -298,6 +312,10 @@ export default function App() {
     const totalSupplierPayments = allSupplierPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
     const totalOriginalSupplierCost = totalSupplierBalances + totalSupplierPayments;
 
+    const allExpenses = await db.expenses.toArray();
+    const totalExpenses = allExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+    const netProfit = totalProfit - totalExpenses;
+
     return {
       totalSales,
       totalCostOfSales: totalSupplierBalances,
@@ -317,9 +335,11 @@ export default function App() {
       totalStockQuantity,
       totalItemsSold,
       totalSupplierPayments,
-      totalOriginalSupplierCost
+      totalOriginalSupplierCost,
+      totalExpenses,
+      netProfit
     };
-  }, [activeTab, showSalesSummaryModal, showProfitSummaryModal, showInventoryDetailsModal, showMonthlySalesDetailsModal, showSupplierSummaryModal]);
+  }, [activeTab, showSalesSummaryModal, showProfitSummaryModal, showInventoryDetailsModal, showMonthlySalesDetailsModal, showSupplierSummaryModal, showExpensesModal]);
 
   // Live Query for charts and trends
   const liveTrends = useLiveQuery(async () => {
@@ -415,6 +435,9 @@ export default function App() {
   }, [activeTab, showSalesSummaryModal, showProfitSummaryModal, showInventoryDetailsModal, showMonthlySalesDetailsModal, showSupplierSummaryModal]);
   
   const salesDetailsStats = React.useMemo(() => {
+    if (!showMonthlySalesDetailsModal && !showSalesSummaryModal && !showProfitSummaryModal && !showInventoryDetailsModal) {
+      return { days: [], weeks: [], months: [], productStats: [] };
+    }
     if (!allSalesForDetails.length) {
       return { days: [], weeks: [], months: [], productStats: [] };
     }
@@ -605,43 +628,53 @@ export default function App() {
   const [expandedSaleItems, setExpandedSaleItems] = useState<any[]>([]);
 
   const costDetailsList = React.useMemo(() => {
-    const soldStatsMap = new Map<number, { soldQty: number; revenue: number }>();
-    salesDetailsStats.productStats.forEach(stat => {
-      if (stat.id !== undefined) {
-        soldStatsMap.set(stat.id, { soldQty: stat.soldQty, revenue: stat.revenue });
+    if (!showInventoryDetailsModal && !showProfitSummaryModal && !showSalesSummaryModal) {
+      return [];
+    }
+    const soldStatsMap = new Map<string, { soldQty: number; revenue: number }>();
+    (allSaleItemsForDetails || []).forEach(item => {
+      if (item.product_id !== undefined && item.product_id !== null) {
+        const key = String(item.product_id);
+        const existing = soldStatsMap.get(key) || { soldQty: 0, revenue: 0 };
+        existing.soldQty += (item.quantity || 0);
+        existing.revenue += (item.quantity || 0) * (item.price_at_sale || 0);
+        soldStatsMap.set(key, existing);
       }
     });
 
     return products.map(p => {
-      const soldInfo = p.id !== undefined ? soldStatsMap.get(p.id) : undefined;
+      const pKey = String(p.id);
+      const soldInfo = p.id !== undefined ? soldStatsMap.get(pKey) : undefined;
       const soldQty = soldInfo?.soldQty || 0;
       const soldRevenue = soldInfo?.revenue || 0;
-      const remainingQty = p.stock_quantity;
+      const remainingQty = p.stock_quantity || 0;
       const totalQty = remainingQty + soldQty;
 
       return {
         id: p.id,
         name: p.name,
         category: p.category || 'عام',
-        costPrice: p.cost_price,
-        salePrice: p.sale_price,
+        costPrice: p.cost_price || 0,
+        salePrice: p.sale_price || 0,
         remainingQty,
-        remainingCost: remainingQty * p.cost_price,
+        remainingCost: remainingQty * (p.cost_price || 0),
         soldQty,
-        soldCost: soldQty * p.cost_price,
+        soldCost: soldQty * (p.cost_price || 0),
         soldRevenue,
         totalQty,
-        totalCost: totalQty * p.cost_price,
+        totalCost: totalQty * (p.cost_price || 0),
       };
     });
-  }, [products, salesDetailsStats.productStats]);
+  }, [products, allSaleItemsForDetails, showInventoryDetailsModal, showProfitSummaryModal, showSalesSummaryModal]);
 
   const filteredCostDetailsList = React.useMemo(() => {
     if (!selectedCostDetailType) return [];
     
     let items = costDetailsList;
-    if (costDetailSearchTerm.trim()) {
-      const q = costDetailSearchTerm.toLowerCase();
+    const hasSearch = costDetailSearchTerm.trim().length > 0;
+    
+    if (hasSearch) {
+      const q = costDetailSearchTerm.trim().toLowerCase();
       items = items.filter(it => 
         it.name.toLowerCase().includes(q) || 
         it.category.toLowerCase().includes(q)
@@ -649,17 +682,14 @@ export default function App() {
     }
 
     if (selectedCostDetailType === 'remaining') {
-      return items
-        .filter(it => it.remainingQty > 0)
-        .sort((a, b) => b.remainingCost - a.remainingCost);
+      const filtered = hasSearch ? items : items.filter(it => it.remainingQty > 0);
+      return filtered.sort((a, b) => b.remainingCost - a.remainingCost);
     } else if (selectedCostDetailType === 'sold') {
-      return items
-        .filter(it => it.soldQty > 0)
-        .sort((a, b) => b.soldCost - a.soldCost);
+      const filtered = hasSearch ? items : items.filter(it => it.soldQty > 0);
+      return filtered.sort((a, b) => b.soldCost - a.soldCost);
     } else {
-      return items
-        .filter(it => it.totalQty > 0)
-        .sort((a, b) => b.totalCost - a.totalCost);
+      const filtered = hasSearch ? items : items.filter(it => it.totalQty > 0);
+      return filtered.sort((a, b) => b.totalCost - a.totalCost);
     }
   }, [costDetailsList, selectedCostDetailType, costDetailSearchTerm]);
 
@@ -710,6 +740,13 @@ export default function App() {
   const [updatingStockProduct, setUpdatingStockProduct] = useState<Product | null>(null);
   const [updatingStockAmount, setUpdatingStockAmount] = useState<string>('');
   const [updatingStockNotes, setUpdatingStockNotes] = useState<string>('');
+  const [withdrawingStockProduct, setWithdrawingStockProduct] = useState<Product | null>(null);
+  const [withdrawingStockAmount, setWithdrawingStockAmount] = useState<string>('');
+  const [withdrawingStockNotes, setWithdrawingStockNotes] = useState<string>('');
+
+  // --- Printing & Vouchers States ---
+  const [voucherModalOpen, setVoucherModalOpen] = useState<boolean>(false);
+  const [activeVoucherData, setActiveVoucherData] = useState<VoucherData | null>(null);
 
   // --- Licensing & Subscription States ---
   const [isAutoBackupEnabled, setIsAutoBackupEnabled] = useState<boolean>(() => {
@@ -1439,20 +1476,9 @@ export default function App() {
     };
     window.addEventListener('online', handleOnline);
 
-    // 4. Handle deep-linking and browser popstate for shortcuts (?tab=pos, etc.)
-    const handlePopState = () => {
-      const params = new URLSearchParams(window.location.search);
-      const tabParam = params.get('tab');
-      if (tabParam && ['dashboard', 'pos', 'products', 'customers', 'suppliers', 'notes', 'history', 'analytics', 'smart-import', 'settings'].includes(tabParam)) {
-        setActiveTab(tabParam);
-      }
-    };
-    window.addEventListener('popstate', handlePopState);
-
     return () => {
       window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
       window.removeEventListener('online', handleOnline);
-      window.removeEventListener('popstate', handlePopState);
     };
   }, []);
 
@@ -1486,14 +1512,36 @@ export default function App() {
     });
   }, []);
 
-  // Sync current tab to URL query without triggering page reload
+  const isPopStateRef = useRef<boolean>(false);
+
+  // Sync current tab to URL query and browser history state correctly
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
-      const currentUrl = new URL(window.location.href);
-      if (currentUrl.searchParams.get('tab') !== activeTab) {
+    if (typeof window === 'undefined' || !window.history) return;
+
+    const currentUrl = new URL(window.location.href);
+    const urlTab = currentUrl.searchParams.get('tab');
+
+    if (isPopStateRef.current) {
+      // Navigation was triggered by popstate (browser back/forward button)
+      // The browser's history state is already updated, so we do NOT push a new entry.
+      isPopStateRef.current = false;
+      
+      // Sync URL to match the current tab if needed
+      if (urlTab !== activeTab) {
         currentUrl.searchParams.set('tab', activeTab);
-        window.history.replaceState({}, '', currentUrl.toString());
+        try {
+          window.history.replaceState({ isApp: true, tab: activeTab }, '', currentUrl.toString());
+        } catch {}
       }
+      return;
+    }
+
+    // UI-driven tab navigation
+    if (urlTab !== activeTab) {
+      currentUrl.searchParams.set('tab', activeTab);
+      try {
+        window.history.pushState({ isApp: true, tab: activeTab }, '', currentUrl.toString());
+      } catch {}
     }
   }, [activeTab]);
 
@@ -1562,6 +1610,432 @@ export default function App() {
       setNotification(null);
     }, duration);
   };
+
+  // Periodic background file watcher and auto-sync with linked local Excel file
+  useEffect(() => {
+    if (!excelSyncLinked) return;
+
+    let isChecking = false;
+    const performPeriodicCheck = async () => {
+      if (isChecking) return;
+      try {
+        isChecking = true;
+        const autoSyncRec = await db.settings.where('key').equals('excel_auto_sync_enabled').first();
+        if (autoSyncRec?.value === false) return;
+
+        const check = await checkFileModifiedAndSync();
+        if (check.hasChanged && check.result) {
+          const total = 
+            check.result.addedProducts + check.result.updatedProducts + 
+            check.result.addedCustomers + check.result.updatedCustomers + 
+            check.result.addedSuppliers + check.result.updatedSuppliers + 
+            check.result.addedExpenses;
+          if (total > 0) {
+            showNotification(`تم رصد تعديلات في ملف الإكسل ومزامنتها بنجاح! (${total} تعديل)`, 'success');
+          }
+        }
+      } catch (e) {
+        console.warn('Excel auto-sync check error:', e);
+      } finally {
+        isChecking = false;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        performPeriodicCheck();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    // Periodic check every 30 seconds
+    const intervalId = setInterval(performPeriodicCheck, 30000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+      clearInterval(intervalId);
+    };
+  }, [excelSyncLinked]);
+
+  // --- Smart Android Hardware Back Button & Navigation Manager ---
+  const lastBackHandledTimeRef = useRef<number>(0);
+  const lastExitAttemptTimeRef = useRef<number>(0);
+  const activeTabRef = useRef<string>(activeTab);
+  activeTabRef.current = activeTab;
+  const closeTopModalRef = useRef<() => boolean>(() => false);
+
+  // Keep modal closer logic synchronized on every render
+  useEffect(() => {
+    closeTopModalRef.current = () => {
+      // 1. Dispatch custom event for child components (e.g. quick customer search dropdown in POS / Scanner)
+      const customBackEvent = new CustomEvent('smartpos:backpress', { cancelable: true });
+      window.dispatchEvent(customBackEvent);
+      if (customBackEvent.defaultPrevented) {
+        return true;
+      }
+
+      // 2. High-priority Confirmation dialogs
+      if (confirmAction) {
+        if (confirmAction.onCancel) {
+          try { confirmAction.onCancel(); } catch {}
+        }
+        setConfirmAction(null);
+        return true;
+      }
+
+      // 3. Security, PIN, License & Admin Modals
+      if (pinModal.isOpen) {
+        setPinModal(prev => ({ ...prev, isOpen: false }));
+        return true;
+      }
+      if (rejectingDevice) {
+        setRejectingDevice(null);
+        setRejectReasonText('');
+        return true;
+      }
+      if (showAdminLogin) {
+        setShowAdminLogin(false);
+        return true;
+      }
+      if (showPinChangeModal) {
+        setShowPinChangeModal(false);
+        return true;
+      }
+      if (showPermissionsConfigModal) {
+        setShowPermissionsConfigModal(false);
+        return true;
+      }
+      if (activationModalOpen) {
+        setActivationModalOpen(false);
+        return true;
+      }
+      if (showModalEditDetails) {
+        setShowModalEditDetails(false);
+        return true;
+      }
+      if (showHiddenAdminInput) {
+        setShowHiddenAdminInput(false);
+        return true;
+      }
+
+      // 4. Install App & Excel Sync Modals
+      if (showExcelSyncModal) {
+        setShowExcelSyncModal(false);
+        return true;
+      }
+      if (showInstallModal) {
+        setShowInstallModal(false);
+        return true;
+      }
+
+      // 5. Receipt / Invoice Modal
+      if (showReceipt) {
+        setShowReceipt(null);
+        return true;
+      }
+
+      // 6. Barcode Scanner
+      if (isScannerOpen) {
+        setIsScannerOpen(false);
+        return true;
+      }
+
+      // 7. Sub-modals & Secondary Modals
+      if (selectedSupplierPayment) {
+        setSelectedSupplierPayment(null);
+        return true;
+      }
+      if (showSupplierPaymentModal) {
+        setShowSupplierPaymentModal(null);
+        return true;
+      }
+      if (showCustomerAdjustmentModal) {
+        setShowCustomerAdjustmentModal(null);
+        return true;
+      }
+      if (showPaymentModal) {
+        setShowPaymentModal(null);
+        return true;
+      }
+      if (selectedNote) {
+        setSelectedNote(null);
+        return true;
+      }
+      if (editingProduct) {
+        setEditingProduct(null);
+        return true;
+      }
+      if (editingCustomer) {
+        setEditingCustomer(null);
+        return true;
+      }
+
+      // 8. Main Feature Modals
+      if (showAddProduct) {
+        setShowAddProduct(false);
+        setPendingBarcode('');
+        return true;
+      }
+      if (showAddCustomer) {
+        setShowAddCustomer(false);
+        return true;
+      }
+      if (showAddSupplier) {
+        setShowAddSupplier(false);
+        return true;
+      }
+      if (showAddNote) {
+        setShowAddNote(false);
+        return true;
+      }
+      if (showSettleModal) {
+        setShowSettleModal(false);
+        return true;
+      }
+      if (showWithdrawModal) {
+        setShowWithdrawModal(false);
+        return true;
+      }
+
+      // 9. Details & Analytics Modals
+      if (showProductDetails) {
+        setShowProductDetails(null);
+        return true;
+      }
+      if (showCustomerDetails) {
+        setShowCustomerDetails(null);
+        return true;
+      }
+      if (showSupplierDetails) {
+        setShowSupplierDetails(null);
+        return true;
+      }
+      if (showSupplierSummaryModal) {
+        setShowSupplierSummaryModal(false);
+        return true;
+      }
+      if (showInventoryDetailsModal) {
+        setShowInventoryDetailsModal(false);
+        return true;
+      }
+      if (showSalesSummaryModal) {
+        setShowSalesSummaryModal(false);
+        return true;
+      }
+      if (showProfitSummaryModal) {
+        setShowProfitSummaryModal(false);
+        return true;
+      }
+      if (showMonthlySalesDetailsModal) {
+        setShowMonthlySalesDetailsModal(false);
+        return true;
+      }
+
+      // 10. Slide-out Drawers & Sidebars
+      if (isCategorySidebarOpen) {
+        setIsCategorySidebarOpen(false);
+        return true;
+      }
+      if (isSidebarOpen) {
+        setIsSidebarOpen(false);
+        return true;
+      }
+
+      return false;
+    };
+  });
+
+  // Minimize app to Android background smoothly
+  const minimizeAppToBackground = () => {
+    // 1. Capacitor Native App Plugin (Standard in Capacitor APK)
+    const cap = (window as any).Capacitor;
+    if (cap?.Plugins?.App) {
+      try {
+        if (typeof cap.Plugins.App.minimizeApp === 'function') {
+          cap.Plugins.App.minimizeApp();
+          return;
+        }
+        if (typeof cap.Plugins.App.exitApp === 'function') {
+          cap.Plugins.App.exitApp();
+          return;
+        }
+      } catch (err) {
+        console.warn('Capacitor minimize error:', err);
+      }
+    }
+
+    // 2. Android Native WebView interface (Custom APK / Java Bridge)
+    const androidBridge = (window as any).Android || (window as any).android || (window as any).JSBridge;
+    if (androidBridge) {
+      try {
+        if (typeof androidBridge.minimizeApp === 'function') {
+          androidBridge.minimizeApp();
+          return;
+        }
+        if (typeof androidBridge.moveToBackground === 'function') {
+          androidBridge.moveToBackground();
+          return;
+        }
+        if (typeof androidBridge.moveTaskToBack === 'function') {
+          androidBridge.moveTaskToBack(true);
+          return;
+        }
+        if (typeof androidBridge.closeApp === 'function') {
+          androidBridge.closeApp();
+          return;
+        }
+      } catch (err) {
+        console.warn('Android bridge minimize error:', err);
+      }
+    }
+
+    // 3. Cordova / Phonegap
+    const nav = navigator as any;
+    if (nav?.app) {
+      try {
+        if ((window as any).plugins?.appMinimize?.minimize) {
+          (window as any).plugins.appMinimize.minimize();
+          return;
+        }
+        if (typeof nav.app.exitApp === 'function') {
+          nav.app.exitApp();
+          return;
+        }
+      } catch (err) {
+        console.warn('Cordova minimize error:', err);
+      }
+    }
+
+    // 4. Desktop Python wrapper (pywebview)
+    if ((window as any).pywebview?.api?.minimize) {
+      try {
+        (window as any).pywebview.api.minimize();
+        return;
+      } catch {}
+    }
+
+    // 5. Browser / PWA environment:
+    // When running directly in mobile browser or PWA where direct OS task minimization
+    // is prevented by browser sandbox, show a gentle confirmation prompt and require
+    // a second tap within 2.5 seconds to minimize/leave.
+    const now = Date.now();
+    if (now - lastExitAttemptTimeRef.current < 2500) {
+      showNotification('جاري تصغير التطبيق وإبقاؤه في الخلفية... 📱', 'success');
+      setTimeout(() => {
+        window.history.go(-1);
+      }, 150);
+    } else {
+      lastExitAttemptTimeRef.current = now;
+      showNotification('اضغط زر الرجوع مرة أخرى لتصغير التطبيق إلى الخلفية 📱', 'success');
+      try {
+        window.history.pushState({ isApp: true, tab: 'dashboard' }, '', '?tab=dashboard');
+      } catch {}
+    }
+  };
+
+  // Central hardware back button handler
+  const handleHardwareBack = () => {
+    const now = Date.now();
+    // Debounce rapid duplicate events (e.g. popstate + backbutton firing within 200ms)
+    if (now - lastBackHandledTimeRef.current < 200) {
+      return;
+    }
+    lastBackHandledTimeRef.current = now;
+
+    // Step 1: If any modal or overlay is open, close only that modal and stay in app!
+    const modalClosed = closeTopModalRef.current();
+    if (modalClosed) {
+      return; // Handled natively without popping history (since backbutton event stopped propagation)
+    }
+
+    // Step 2: Navigate back natively in browser history
+    if (typeof window !== 'undefined' && window.history) {
+      window.history.back();
+    }
+  };
+
+  // Register hardware back button listeners (Capacitor, Cordova, Android WebView, Browser PopState)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // Initial history state seeding so the first page load has a valid state object
+    try {
+      const currentUrl = new URL(window.location.href);
+      const urlTab = currentUrl.searchParams.get('tab') || 'dashboard';
+      window.history.replaceState({ isApp: true, tab: urlTab }, '', currentUrl.toString());
+    } catch {}
+
+    const onPopState = (e: PopStateEvent) => {
+      // Step 1: If any modal or overlay is open, close only that modal and counteract history pop!
+      const modalClosed = closeTopModalRef.current();
+      if (modalClosed) {
+        try {
+          window.history.pushState({ isApp: true, tab: activeTabRef.current }, '', `?tab=${activeTabRef.current}`);
+        } catch {}
+        return;
+      }
+
+      // Step 2: Handle back/forward navigation of tabs
+      const state = e.state;
+      if (state && state.isApp && state.tab) {
+        if (state.tab !== activeTabRef.current) {
+          isPopStateRef.current = true;
+          setActiveTab(state.tab);
+        }
+      } else {
+        // Pop state has no app state, or we went back past the app's first state
+        if (activeTabRef.current !== 'dashboard') {
+          isPopStateRef.current = true;
+          setActiveTab('dashboard');
+          try {
+            window.history.pushState({ isApp: true, tab: 'dashboard' }, '', '?tab=dashboard');
+          } catch {}
+        } else {
+          // Already on dashboard, minimize or exit
+          minimizeAppToBackground();
+        }
+      }
+    };
+
+    const onCordovaBackButton = (e: Event) => {
+      e.preventDefault();
+      handleHardwareBack();
+    };
+
+    window.addEventListener('popstate', onPopState);
+    document.addEventListener('backbutton', onCordovaBackButton, false);
+
+    // Capacitor App backButton plugin support
+    const cap = (window as any).Capacitor;
+    let capacitorListenerRemove: (() => void) | null = null;
+    if (cap?.Plugins?.App?.addListener) {
+      try {
+        const listenerPromise = cap.Plugins.App.addListener('backButton', () => {
+          handleHardwareBack();
+        });
+        if (listenerPromise?.then) {
+          listenerPromise.then((handle: any) => {
+            if (handle?.remove) {
+              capacitorListenerRemove = () => handle.remove();
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Capacitor backButton listener registration error:', err);
+      }
+    }
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      document.removeEventListener('backbutton', onCordovaBackButton);
+      if (capacitorListenerRemove) {
+        capacitorListenerRemove();
+      }
+    };
+  }, []);
 
   // --- Licensing & Activation Handlers ---
   const performSilentDeactivation = async () => {
@@ -2115,22 +2589,32 @@ export default function App() {
     
     try {
       let updatedCustomer: Customer | undefined;
+      let prevBal = 0;
+      let newBal = 0;
+
       // Update local DB
       await db.transaction('rw', [db.customers, db.debts], async () => {
         const targetCustomer = await db.customers.get(showPaymentModal.id!);
         if (targetCustomer) {
-          const newBalance = targetCustomer.balance - amount;
+          prevBal = Number(targetCustomer.balance || 0);
+          newBal = applyCurrencyRounding(prevBal - amount);
           await db.customers.update(showPaymentModal.id!, {
-            balance: newBalance
+            balance: newBal
           });
-          updatedCustomer = { ...targetCustomer, balance: newBalance };
+          updatedCustomer = { ...targetCustomer, balance: newBal };
         }
+
+        const paymentAutoNote = `[سداد وتخفيض مديونية]: الدين السابق: ${formatPrice(prevBal)} | المبلغ المسدد: ${formatPrice(amount)} -> إجمالي الدين المتبقي الجديد: ${formatPrice(newBal)}`;
+        const fullPaymentNotes = paymentNotes.trim() ? `${paymentAutoNote} | ملاحظة: ${paymentNotes.trim()}` : paymentAutoNote;
+
         await db.debts.add({
           customer_id: showPaymentModal.id!,
           amount: amount,
           type: 'payment',
           created_at: new Date().toISOString(),
-          notes: paymentNotes.trim() || undefined
+          previous_balance: prevBal,
+          new_balance: newBal,
+          notes: fullPaymentNotes
         });
       });
       
@@ -2156,6 +2640,21 @@ export default function App() {
         if (showCustomerDetails && showCustomerDetails.id === updatedCustomer.id) {
           await fetchCustomerHistory(updatedCustomer);
         }
+
+        // إتاحة طباعة سند قبض رسمي فوري
+        setActiveVoucherData({
+          type: 'receipt',
+          voucherNumber: `REC-${Date.now().toString().slice(-6)}`,
+          date: new Date().toISOString(),
+          partyName: showPaymentModal.name,
+          partyPhone: showPaymentModal.phone || '',
+          amount: amount,
+          previousBalance: oldBalance,
+          newBalance: updatedCustomer.balance,
+          notes: paymentNotes?.trim() || 'سداد دفعة نقدية لحساب الزبون',
+          paymentMethod: 'cash'
+        });
+        setVoucherModalOpen(true);
       }
     } catch (err) {
       console.error("Failed to process payment:", err);
@@ -2163,7 +2662,7 @@ export default function App() {
     }
 
     setShowPaymentModal(null);
-          };
+  };
 
   const handleCustomerAdjustmentSubmit = async (data: any, resetForm: () => void) => {
     const { adjustmentType, adjustmentAmount, adjustmentNotes } = data;
@@ -2172,27 +2671,43 @@ export default function App() {
     
     try {
       let updatedCustomer: Customer | undefined;
+      let prevBal = 0;
+      let newBal = 0;
+
       // Update local DB
       await db.transaction('rw', [db.customers, db.debts], async () => {
         const targetCustomer = await db.customers.get(showCustomerAdjustmentModal.id!);
         if (targetCustomer) {
-          let newBalance = targetCustomer.balance;
+          prevBal = Number(targetCustomer.balance || 0);
+          newBal = prevBal;
           if (adjustmentType === 'add_debt') {
-             newBalance += amount;
+             newBal = applyCurrencyRounding(prevBal + amount);
           } else if (adjustmentType === 'add_credit') {
-             newBalance -= amount;
+             newBal = applyCurrencyRounding(prevBal - amount);
           }
           await db.customers.update(showCustomerAdjustmentModal.id!, {
-            balance: newBalance
+            balance: newBal
           });
-          updatedCustomer = { ...targetCustomer, balance: newBalance };
+          updatedCustomer = { ...targetCustomer, balance: newBal };
         }
+
+        const adjActionStr = adjustmentType === 'add_debt'
+          ? `زيادة دين +${formatPrice(amount)}`
+          : adjustmentType === 'add_credit'
+          ? `تخفيض/إيداع -${formatPrice(amount)}`
+          : 'ملاحظة إدارية فقط';
+
+        const adjAutoNote = `[تسوية حساب العميل]: الدين السابق: ${formatPrice(prevBal)} | البيان: ${adjActionStr} -> إجمالي الدين الجديد: ${formatPrice(newBal)}`;
+        const fullAdjNotes = adjustmentNotes.trim() ? `${adjAutoNote} | ملاحظات: ${adjustmentNotes.trim()}` : adjAutoNote;
+
         await db.debts.add({
           customer_id: showCustomerAdjustmentModal.id!,
           amount: adjustmentType === 'note' ? 0 : amount,
           type: adjustmentType === 'add_debt' ? 'purchase' : 'payment',
           created_at: new Date().toISOString(),
-          notes: adjustmentNotes.trim() || undefined
+          previous_balance: prevBal,
+          new_balance: newBal,
+          notes: fullAdjNotes
         });
       });
       
@@ -2209,7 +2724,7 @@ export default function App() {
     }
 
     setShowCustomerAdjustmentModal(null);
-              };
+  };
 
   const handleSaveSettlement = async (data: any, resetForm: () => void) => {
     const { deliveredSettleAmount, settleNotes } = data;
@@ -2445,8 +2960,12 @@ export default function App() {
         // Add inventory log
         await db.inventoryLogs.add({
           product_id: dbProduct.id!,
+          product_name: dbProduct.name,
+          old_quantity: dbProduct.stock_quantity,
+          new_quantity: newStock,
           change_amount: changeAmount,
           reason: 'manual_update',
+          type: 'إضافة مخزون',
           notes: updatingStockNotes || 'إضافة مخزون يدوية',
           created_at: new Date().toISOString()
         });
@@ -2459,6 +2978,53 @@ export default function App() {
     } catch (e) {
       console.error(e);
       showNotification('حدث خطأ أثناء تحديث المخزون', 'error');
+    }
+  };
+
+  const handleWithdrawStock = async () => {
+    if (!withdrawingStockProduct || !withdrawingStockProduct.id || !withdrawingStockAmount || isNaN(Number(withdrawingStockAmount))) return;
+    
+    const amount = Number(withdrawingStockAmount);
+    if (amount <= 0) {
+      showNotification('يجب إدخال كمية صحيحة أكبر من الصفر', 'error');
+      return;
+    }
+
+    if (amount > withdrawingStockProduct.stock_quantity) {
+      showNotification('الكمية المراد سحبها أكبر من المخزون الحالي!', 'error');
+      return;
+    }
+
+    try {
+      const dbProduct = await db.products.get(withdrawingStockProduct.id);
+      if (!dbProduct) return;
+
+      const changeAmount = -amount;
+      const newStock = dbProduct.stock_quantity + changeAmount;
+
+      await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
+        await db.products.update(dbProduct.id!, { stock_quantity: newStock });
+
+        await db.inventoryLogs.add({
+          product_id: dbProduct.id!,
+          product_name: dbProduct.name,
+          old_quantity: dbProduct.stock_quantity,
+          new_quantity: newStock,
+          change_amount: changeAmount,
+          reason: 'manual_withdraw',
+          type: 'سحب / تسوية نقصان',
+          notes: withdrawingStockNotes || 'سحب أو تسوية نقصان',
+          created_at: new Date().toISOString()
+        });
+      });
+      
+      showNotification('تم سحب المخزن وتسجيل النقصان بنجاح', 'success');
+      setWithdrawingStockProduct(null);
+      setWithdrawingStockAmount('');
+      setWithdrawingStockNotes('');
+    } catch (e) {
+      console.error(e);
+      showNotification('حدث خطأ أثناء سحب المخزن', 'error');
     }
   };
 
@@ -2495,8 +3061,12 @@ export default function App() {
         // Add to inventory log
         await db.inventoryLogs.add({
           product_id: productId as number,
+          product_name: product.name.trim(),
+          old_quantity: 0,
+          new_quantity: stock_quantity,
           change_amount: stock_quantity,
           reason: 'new_product',
+          type: 'إضافة صنف',
           notes: 'إدخال صنف جديد لأول مرة في النظام',
           created_at: new Date().toISOString()
         });
@@ -2552,13 +3122,26 @@ export default function App() {
         const oldProduct = await db.products.get(editingProduct.id!);
         if (oldProduct) {
           const diff = editingProduct.stock_quantity - oldProduct.stock_quantity;
+          const nameChanged = oldProduct.name !== editingProduct.name;
+          const priceChanged = oldProduct.sale_price !== editingProduct.sale_price || oldProduct.cost_price !== editingProduct.cost_price;
+          
           await db.products.update(editingProduct.id!, editingProduct);
           
-          if (diff !== 0) {
+          let noteParts = [];
+          if (nameChanged) noteParts.push(`تغيير الاسم من "${oldProduct.name}" إلى "${editingProduct.name}"`);
+          if (priceChanged) noteParts.push(`تحديث الأسعار (تكلفة: ${oldProduct.cost_price} -> ${editingProduct.cost_price}, بيع: ${oldProduct.sale_price} -> ${editingProduct.sale_price})`);
+          if (diff !== 0) noteParts.push(`تغيير الكمية بمقدار ${diff > 0 ? `+${diff}` : diff}`);
+
+          if (diff !== 0 || nameChanged || priceChanged) {
             await db.inventoryLogs.add({
               product_id: editingProduct.id!,
+              product_name: editingProduct.name,
+              old_quantity: oldProduct.stock_quantity,
+              new_quantity: editingProduct.stock_quantity,
               change_amount: diff,
-              reason: 'manual_update',
+              reason: nameChanged || priceChanged ? 'edit_product' : 'manual_update',
+              type: nameChanged || priceChanged ? 'تعديل صنف' : 'تحديث كمية',
+              notes: noteParts.join(' | ') || 'تعديل بيانات المنتج',
               created_at: new Date().toISOString()
             });
           }
@@ -2575,15 +3158,31 @@ export default function App() {
   };
 
   const handleDeleteProduct = async (id: number) => {
+    const productToDelete = await db.products.get(id);
     setConfirmAction({
       title: 'حذف منتج',
-      message: 'هل أنت متأكد من حذف هذا المنتج؟',
+      message: `هل أنت متأكد من حذف المنتج "${productToDelete?.name || ''}"؟`,
       onConfirm: async () => {
         try {
-          // Delete from local DB
-          await db.products.delete(id);
+          await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
+            if (productToDelete) {
+              await db.inventoryLogs.add({
+                product_id: id,
+                product_name: productToDelete.name,
+                old_quantity: productToDelete.stock_quantity,
+                new_quantity: 0,
+                change_amount: -productToDelete.stock_quantity,
+                reason: 'delete_product',
+                type: 'حذف صنف',
+                notes: `حذف الصنف نهائياً من المخزن (كان يحتوي على ${productToDelete.stock_quantity} ${productToDelete.unit || 'حبة'})`,
+                created_at: new Date().toISOString()
+              });
+            }
+            // Delete from local DB
+            await db.products.delete(id);
+          });
           
-          showNotification('تم حذف المنتج');
+          showNotification('تم حذف المنتج وتسجيل الحركة');
         } catch (err) {
           console.error("Failed to delete product:", err);
           showNotification('خطأ في حذف المنتج', 'error');
@@ -3058,11 +3657,12 @@ export default function App() {
       <html dir="rtl">
         <head>
           <title>فاتورة بيع</title>
+          <link rel="stylesheet" href="/fonts/fonts.css">
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+            body { font-family: 'Cairo', Arial, sans-serif; padding: 20px; text-align: center; }
             .header { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: right; }
+            th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: right; font-family: 'Cairo', Arial, sans-serif; }
             .total { font-size: 1.2em; font-weight: bold; margin-top: 20px; }
             .footer { margin-top: 40px; font-size: 0.8em; color: #666; }
           </style>
@@ -3108,7 +3708,7 @@ export default function App() {
   const handleDownloadPDF = (customer: Customer) => {
     const element = document.createElement('div');
     element.innerHTML = `
-      <div dir="rtl" style="font-family: Arial, sans-serif; padding: 30px;">
+      <div dir="rtl" style="font-family: 'Cairo', Arial, sans-serif; padding: 30px;">
         <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
           <h1>${storeName} - كشف حساب</h1>
           <p>تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
@@ -3274,12 +3874,13 @@ export default function App() {
       <html dir="rtl">
         <head>
           <title>كشف حساب زبون</title>
+          <link rel="stylesheet" href="/fonts/fonts.css">
           <style>
-            body { font-family: Arial, sans-serif; padding: 30px; }
+            body { font-family: 'Cairo', Arial, sans-serif; padding: 30px; }
             .header { text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px; }
             .info { display: flex; justify-content: space-between; margin-bottom: 20px; }
             table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #000; padding: 8px; text-align: right; }
+            th, td { border: 1px solid #000; padding: 8px; text-align: right; font-family: 'Cairo', Arial, sans-serif; }
             th { background: #f2f2f2; }
             .summary { margin-top: 30px; float: left; width: 250px; }
             .summary-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee; }
@@ -3494,10 +4095,30 @@ export default function App() {
       });
       
       showNotification('تم تسجيل الدفعة بنجاح');
+      const prevBal = showSupplierPaymentModal.balance;
+      const newBal = prevBal - amount;
+      const supplierName = showSupplierPaymentModal.name;
+      const supplierPhone = showSupplierPaymentModal.phone || '';
+
       setShowSupplierPaymentModal(null);
-                  if (showSupplierDetails && showSupplierDetails.id === showSupplierPaymentModal.id) {
+      if (showSupplierDetails && showSupplierDetails.id === showSupplierPaymentModal.id) {
         fetchSupplierHistory(showSupplierPaymentModal);
       }
+
+      // فتح سند الصرف الرسمي للمورد للطباعة أو المشاركة
+      setActiveVoucherData({
+        type: 'payment',
+        voucherNumber: `PAY-${Date.now().toString().slice(-6)}`,
+        date: new Date().toISOString(),
+        partyName: supplierName,
+        partyPhone: supplierPhone,
+        amount: amount,
+        previousBalance: prevBal,
+        newBalance: newBal,
+        notes: supplierPaymentNotes?.trim() || 'سداد دفعة نقدية للمورد',
+        paymentMethod: 'cash'
+      });
+      setVoucherModalOpen(true);
     } catch (err) {
       console.error("Failed to record supplier payment:", err);
       showNotification('خطأ في تسجيل الدفعة', 'error');
@@ -3758,7 +4379,7 @@ export default function App() {
     }
 
     return `
-      <div dir="rtl" style="font-family: Arial, sans-serif; padding: 20px; color: #000; width: 100%; max-width: 400px; margin: 0 auto; background: #fff;">
+      <div dir="rtl" style="font-family: 'Cairo', Arial, sans-serif; padding: 20px; color: #000; width: 100%; max-width: 400px; margin: 0 auto; background: #fff;">
         <div style="text-align: center; border-bottom: 2px dashed #000; margin-bottom: 15px; padding-bottom: 10px;">
           <h2 style="margin: 0 0 5px 0;">${storeName}</h2>
           <div style="font-size: 12px; margin-bottom: 5px; font-weight: bold;">فاتورة مبدئية / سلة مشتريات</div>
@@ -3855,16 +4476,47 @@ export default function App() {
       paymentStatus = 'overpaid';
     }
 
+    let previousBalance = 0;
+    let newCustomerBalance = 0;
+    let customerObj: any = null;
+
+    if (selectedCustomer) {
+      customerObj = await db.customers.get(selectedCustomer);
+      if (customerObj) {
+        previousBalance = Number(customerObj.balance || 0);
+        newCustomerBalance = applyCurrencyRounding(previousBalance + remaining);
+      }
+    }
+
     // Auto-generated detailed note/explanation
     let autoExplanation = '';
-    if (paymentStatus === 'unpaid') {
-      autoExplanation = `فاتورة آجل بالكامل: إجمالي الفاتورة ${formatPrice(total)} - لم يُدفع منها شيء وقُيدت بالكامل كدَيْنٌ على العميل.`;
-    } else if (paymentStatus === 'partial') {
-      autoExplanation = `دفع جزئي: إجمالي الفاتورة ${formatPrice(total)} - سدد العميل منها ${formatPrice(actualPaid)} نقداً - المتبقي دَيْنٌ مستحق على العميل ${formatPrice(remaining)}.`;
-    } else if (paymentStatus === 'paid') {
-      autoExplanation = `دفع مكتمل: إجمالي الفاتورة ${formatPrice(total)} - تم تسديد المبلغ بالكامل نقداً.`;
+    if (selectedCustomer && customerObj) {
+      const prevDebtStr = previousBalance > 0
+        ? `الدين السابق: ${formatPrice(previousBalance)}`
+        : previousBalance < 0
+        ? `الرصيد الدائن السابق: ${formatPrice(Math.abs(previousBalance))}`
+        : `الدين السابق: لا يوجد (0)`;
+
+      let debtImpactStr = '';
+      if (remaining > 0) {
+        debtImpactStr = `زيادة مديونية بقيمة (+${formatPrice(remaining)}) -> إجمالي الدين الجديد: ${formatPrice(newCustomerBalance)}`;
+      } else if (remaining < 0) {
+        debtImpactStr = `فائض دفع (${formatPrice(Math.abs(remaining))}) تخفيض دين -> الرصيد الجديد: ${formatPrice(newCustomerBalance)}`;
+      } else {
+        debtImpactStr = `سداد نقدي كامل (بدون زيادة دين) -> إجمالي الدين المتبقي: ${formatPrice(newCustomerBalance)}`;
+      }
+
+      autoExplanation = `[تتبع ومقارنة المديونية]: ${prevDebtStr} | الفاتورة الحالية: ${formatPrice(total)} (مدفوع: ${formatPrice(actualPaid)}) | ${debtImpactStr}`;
     } else {
-      autoExplanation = `دفع زائد (فائض): إجمالي الفاتورة ${formatPrice(total)} - سدد العميل ${formatPrice(actualPaid)} (فائض ${formatPrice(Math.abs(remaining))}) - تم إيداع الفائض كرصيد دائن لصالح العميل.`;
+      if (paymentStatus === 'unpaid') {
+        autoExplanation = `فاتورة آجل بالكامل: إجمالي الفاتورة ${formatPrice(total)} - لم يُدفع منها شيء وقُيدت بالكامل كدَيْنٌ.`;
+      } else if (paymentStatus === 'partial') {
+        autoExplanation = `دفع جزئي: إجمالي الفاتورة ${formatPrice(total)} - سدد منها ${formatPrice(actualPaid)} نقداً - المتبقي دَيْنٌ مستحق ${formatPrice(remaining)}.`;
+      } else if (paymentStatus === 'paid') {
+        autoExplanation = `دفع مكتمل: إجمالي الفاتورة ${formatPrice(total)} - تم تسديد المبلغ بالكامل نقداً.`;
+      } else {
+        autoExplanation = `دفع زائد (فائض): إجمالي الفاتورة ${formatPrice(total)} - سدد ${formatPrice(actualPaid)} (فائض ${formatPrice(Math.abs(remaining))}).`;
+      }
     }
 
     const fullNotes = saleNotes.trim() ? `${autoExplanation} | ملاحظة: ${saleNotes.trim()}` : autoExplanation;
@@ -3878,6 +4530,8 @@ export default function App() {
           remaining_amount: remaining,
           payment_status: paymentStatus,
           payment_type: paymentType,
+          previous_balance: previousBalance,
+          new_balance: newCustomerBalance,
           created_at: new Date().toISOString(),
           notes: fullNotes
         });
@@ -3915,33 +4569,33 @@ export default function App() {
         }
 
         // Customer ledger and balance update
-        if (selectedCustomer) {
-          const customer = await db.customers.get(selectedCustomer);
-          if (customer) {
-            const newCustomerBalance = applyCurrencyRounding(customer.balance + remaining);
-            await db.customers.update(selectedCustomer, {
-              balance: newCustomerBalance
-            });
+        if (selectedCustomer && customerObj) {
+          await db.customers.update(selectedCustomer, {
+            balance: newCustomerBalance
+          });
 
-            if (remaining > 0) {
-              await db.debts.add({
-                customer_id: selectedCustomer,
-                sale_id: saleId as number,
-                amount: remaining,
-                type: 'purchase',
-                created_at: new Date().toISOString(),
-                notes: fullNotes
-              });
-            } else if (remaining < 0) {
-              await db.debts.add({
-                customer_id: selectedCustomer,
-                sale_id: saleId as number,
-                amount: Math.abs(remaining),
-                type: 'payment',
-                created_at: new Date().toISOString(),
-                notes: `فائض دفع الفاتورة #${saleId}: تم قيد ${formatPrice(Math.abs(remaining))} كرصيد دائن لصالح العميل`
-              });
-            }
+          if (remaining > 0) {
+            await db.debts.add({
+              customer_id: selectedCustomer,
+              sale_id: saleId as number,
+              amount: remaining,
+              type: 'purchase',
+              created_at: new Date().toISOString(),
+              previous_balance: previousBalance,
+              new_balance: newCustomerBalance,
+              notes: fullNotes
+            });
+          } else if (remaining < 0) {
+            await db.debts.add({
+              customer_id: selectedCustomer,
+              sale_id: saleId as number,
+              amount: Math.abs(remaining),
+              type: 'payment',
+              created_at: new Date().toISOString(),
+              previous_balance: previousBalance,
+              new_balance: newCustomerBalance,
+              notes: `فائض دفع الفاتورة #${saleId}: تم قيد ${formatPrice(Math.abs(remaining))} كرصيد دائن لصالح العميل | ${fullNotes}`
+            });
           }
         }
       });
@@ -4409,6 +5063,22 @@ export default function App() {
               badgeColor="amber"
             />
             <SidebarButton 
+              active={showExpensesModal} 
+              onClick={() => { setShowExpensesModal(true); setIsSidebarOpen(false); }} 
+              icon={<TrendingDown className="text-rose-500" />} 
+              label="المصروفات التشغيلية" 
+              badge={summary.totalExpenses && summary.totalExpenses > 0 ? formatPrice(summary.totalExpenses) : undefined}
+              badgeColor="red"
+            />
+            <SidebarButton 
+              active={showExcelSyncModal} 
+              onClick={() => { setShowExcelSyncModal(true); setIsSidebarOpen(false); }} 
+              icon={<FileSpreadsheet className="text-emerald-500" />} 
+              label="مركز المزامنة مع Excel 📊" 
+              badge={excelSyncLinked ? "متصل" : undefined}
+              badgeColor="emerald"
+            />
+            <SidebarButton 
               active={activeTab === 'smart-import'} 
               onClick={() => {
                 verifyAdminPermission('smart_import', () => {
@@ -4457,7 +5127,10 @@ export default function App() {
 
             {/* زر نسخة احتياطية */}
             <button 
-              onClick={exportData} 
+              onClick={() => {
+                setShowBackupOptionsModal(true);
+                setIsSidebarOpen(false);
+              }} 
               className={`flex items-center gap-2 p-2 rounded-xl transition-all text-right cursor-pointer group ${
                 isBackupOverdue 
                   ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white border border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.6)] animate-pulse hover:from-red-500 hover:to-rose-500' 
@@ -4659,7 +5332,7 @@ export default function App() {
                 initial={{ scale: 0.9, opacity: 0 }}
                 animate={{ scale: [1, 1.05, 1], opacity: 1 }}
                 transition={{ repeat: Infinity, duration: 2 }}
-                onClick={exportData}
+                onClick={() => setShowBackupOptionsModal(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-red-600 to-rose-600 text-white text-[11px] font-black rounded-xl shadow-[0_0_15px_rgba(239,68,68,0.65)] border border-red-400/80 cursor-pointer hover:from-red-500 hover:to-rose-500 active:scale-95 transition-all"
                 title="مطلوب أخذ نسخة احتياطية للبيانات فوراً"
               >
@@ -4747,12 +5420,7 @@ export default function App() {
           </motion.div>
         )}
         <div className="relative">
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'dashboard' ? 1 : 0, y: activeTab === 'dashboard' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'dashboard' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'dashboard' && (
             <DashboardView
               summary={summary}
               formatPrice={formatPrice}
@@ -4760,6 +5428,7 @@ export default function App() {
               setScannerMode={setScannerMode}
               setIsScannerOpen={setIsScannerOpen}
               exportData={exportData}
+              onOpenBackupOptions={() => setShowBackupOptionsModal(true)}
               isBackupOverdue={isBackupOverdue}
               verifyAdminPermission={verifyAdminPermission}
               setSalesDetailsTab={setSalesDetailsTab}
@@ -4768,6 +5437,8 @@ export default function App() {
               setShowProfitSummaryModal={setShowProfitSummaryModal}
               setShowInventoryDetailsModal={setShowInventoryDetailsModal}
               setShowSupplierSummaryModal={setShowSupplierSummaryModal}
+              setShowExpensesModal={setShowExpensesModal}
+              setShowExcelSyncModal={setShowExcelSyncModal}
               trendMode={trendMode}
               setTrendMode={setTrendMode}
               dailySales={dailySales}
@@ -4775,14 +5446,9 @@ export default function App() {
               yearlySalesTrend={yearlySalesTrend}
               topProducts={topProducts}
             />
-          </motion.div>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'pos' ? 1 : 0, y: activeTab === 'pos' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'pos' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'pos' && (
             <PosView
               setActiveTab={setActiveTab}
               setScannerMode={setScannerMode}
@@ -4821,14 +5487,9 @@ export default function App() {
               handleCheckout={handleCheckout}
               db={db}
             />
-          </motion.div>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'products' ? 1 : 0, y: activeTab === 'products' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'products' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'products' && (
             <ProductsView
               setActiveTab={setActiveTab}
               handleDownloadInventoryPDF={handleDownloadInventoryPDF}
@@ -4844,18 +5505,14 @@ export default function App() {
               fetchProductHistory={fetchProductHistory}
               formatPrice={formatPrice}
               setUpdatingStockProduct={setUpdatingStockProduct}
+              setWithdrawingStockProduct={setWithdrawingStockProduct}
               verifyAdminPermission={verifyAdminPermission}
               setEditingProduct={setEditingProduct}
               handleDeleteProduct={handleDeleteProduct}
             />
-          </motion.div>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'customers' ? 1 : 0, y: activeTab === 'customers' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'customers' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'customers' && (
             <CustomersView
               setActiveTab={setActiveTab}
               setShowAddCustomer={setShowAddCustomer}
@@ -4866,14 +5523,9 @@ export default function App() {
               handleDeleteCustomer={handleDeleteCustomer}
               setEditingCustomer={setEditingCustomer}
             />
-          </motion.div>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'notes' ? 1 : 0, y: activeTab === 'notes' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'notes' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'notes' && (
             <NotesView
               setActiveTab={setActiveTab}
               setEditingNoteId={setEditingNoteId}
@@ -4907,14 +5559,9 @@ export default function App() {
               salesSettlements={salesSettlements}
               handleDeleteSettlement={handleDeleteSettlement}
             />
-          </motion.div>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'suppliers' ? 1 : 0, y: activeTab === 'suppliers' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'suppliers' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'suppliers' && (
             <SuppliersView
               setActiveTab={setActiveTab}
               setShowAddSupplier={setShowAddSupplier}
@@ -4922,133 +5569,142 @@ export default function App() {
               fetchSupplierHistory={fetchSupplierHistory}
               formatPrice={formatPrice}
             />
-          </motion.div>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'smart-import' ? 1 : 0, y: activeTab === 'smart-import' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'smart-import' ? 'block' : 'hidden'}
-          >
-            <div className="space-y-6">
-              <SmartImport 
+          {activeTab === 'smart-import' && (
+            <Suspense fallback={<div className="p-12 text-center text-slate-400 font-bold">جاري تحميل الاستيراد الذكي...</div>}>
+              <div className="space-y-6">
+                <SmartImport 
+                  storeName={storeName}
+                  onGoBack={() => setActiveTab('dashboard')}
+                  onImported={() => {
+                    setTimeout(() => {
+                      exportData();
+                    }, 800);
+                  }}
+                  exportData={exportData}
+                  importData={importData}
+                  handleImportPython={handleImportPython}
+                  isBackupOverdue={isBackupOverdue}
+                  lastBackupDate={lastBackupDate}
+                  backupAlertInterval={backupAlertInterval}
+                  updateBackupAlertInterval={updateBackupAlertInterval}
+                  isBackupSyncing={isBackupSyncing}
+                  isAutoBackupEnabled={isAutoBackupEnabled}
+                  setIsAutoBackupEnabled={setIsAutoBackupEnabled}
+                  autoBackupFileStatus={autoBackupFileStatus}
+                  forceLocalDiskBackup={forceLocalDiskBackup}
+                  resetDatabase={resetDatabase}
+                  showNotification={showNotification}
+                  onOpenExcelSyncCenter={() => setShowExcelSyncModal(true)}
+                  deviceID={deviceID}
+                  isActivated={isActivated}
+                  trialDaysLeft={trialDaysLeft}
+                  activationDetails={activationDetails}
+                  handleRequestCloudActivation={handleRequestCloudActivation}
+                  isSubmittingRequest={isSubmittingRequest}
+                  setActiveTab={setActiveTab}
+                />
+              </div>
+            </Suspense>
+          )}
+
+          {activeTab === 'settings' && (
+            <Suspense fallback={<div className="p-12 text-center text-slate-400 font-bold">جاري تحميل الإعدادات...</div>}>
+              <SettingsView
+                isAutoBackupEnabled={isAutoBackupEnabled}
+                setIsAutoBackupEnabled={setIsAutoBackupEnabled}
+                setActiveTab={setActiveTab}
                 storeName={storeName}
-                onGoBack={() => setActiveTab('dashboard')}
-                onImported={() => {
-                  setTimeout(() => {
-                    exportData();
-                  }, 800);
-                }}
+                setStoreName={setStoreName}
+                storePhone={storePhone}
+                setStorePhone={setStorePhone}
+                updateStoreName={updateStoreName}
+                currency={currency}
+                updateCurrency={updateCurrency}
+                roundingFactor={roundingFactor}
+                updateRoundingFactor={updateRoundingFactor}
+                permissionsEnabled={permissionsEnabled}
+                verifyAdminPermission={verifyAdminPermission}
+                setShowPermissionsConfigModal={setShowPermissionsConfigModal}
+                exportData={exportData}
+                isBackupOverdue={isBackupOverdue}
+                lastBackupDate={lastBackupDate}
+                backupAlertInterval={backupAlertInterval}
+                updateBackupAlertInterval={updateBackupAlertInterval}
+                handleImportPython={handleImportPython}
+                importData={importData}
+                isBackupSyncing={isBackupSyncing}
+                autoBackupFileStatus={autoBackupFileStatus}
+                forceLocalDiskBackup={forceLocalDiskBackup}
+                resetDatabase={resetDatabase}
+                deferredPrompt={deferredPrompt}
+                handleInstall={handleInstall}
+                requestGlobalCameraPermission={requestGlobalCameraPermission}
+                setDevClickCount={setDevClickCount}
+                setShowHiddenAdminInput={setShowHiddenAdminInput}
+                showNotification={showNotification}
+                deviceID={deviceID}
+                isActivated={isActivated}
+                trialDaysLeft={trialDaysLeft}
+                activationDetails={activationDetails}
+                activationKeyInput={activationKeyInput}
+                setActivationKeyInput={setActivationKeyInput}
+                activationError={activationError}
+                setActivationError={setActivationError}
+                handleActivateApp={handleActivateApp}
+                cloudRequest={cloudRequest}
+                handleDeleteCloudRequest={handleDeleteCloudRequest}
+                isSubmittingRequest={isSubmittingRequest}
+                handleRequestCloudActivation={handleRequestCloudActivation}
+                handleDeactivateApp={handleDeactivateApp}
+                showHiddenAdminInput={showHiddenAdminInput}
+                isDeveloperMode={isDeveloperMode}
+                setIsDeveloperMode={setIsDeveloperMode}
+                developerPinInput={developerPinInput}
+                setDeveloperPinInput={setDeveloperPinInput}
+                developerPinError={developerPinError}
+                setDeveloperPinError={setDeveloperPinError}
+                handleVerifyDeveloperPIN={handleVerifyDeveloperPIN}
+                activeDevTab={activeDevTab}
+                setActiveDevTab={setActiveDevTab}
+                allCloudRequests={allCloudRequests}
+                requestDurations={requestDurations}
+                setRequestDurations={setRequestDurations}
+                handleRejectCloudRequest={handleRejectCloudRequest}
+                handleApproveCloudRequest={handleApproveCloudRequest}
+                generatedKeyResult={generatedKeyResult}
+                generatorDeviceIDInput={generatorDeviceIDInput}
+                setGeneratorDeviceIDInput={setGeneratorDeviceIDInput}
+                generatorDuration={generatorDuration}
+                setGeneratorDuration={setGeneratorDuration}
+                handleGenerateLicense={handleGenerateLicense}
+                showPinChangeModal={showPinChangeModal}
+                setShowPinChangeModal={setShowPinChangeModal}
+                newPinInput={newPinInput}
+                setNewPinInput={setNewPinInput}
+                confirmNewPinInput={confirmNewPinInput}
+                setConfirmNewPinInput={setConfirmNewPinInput}
+                pinChangeError={pinChangeError}
+                setPinChangeError={setPinChangeError}
+                handleChangeDeveloperPIN={handleChangeDeveloperPIN}
+                handleResetDeveloperPIN={handleResetDeveloperPIN}
+                onOpenExcelSyncCenter={() => setShowExcelSyncModal(true)}
               />
-            </div>
-          </motion.div>
+            </Suspense>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'settings' ? 1 : 0, y: activeTab === 'settings' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'settings' ? 'block' : 'hidden'}
-          >
-            <SettingsView
-              isAutoBackupEnabled={isAutoBackupEnabled}
-              setIsAutoBackupEnabled={setIsAutoBackupEnabled}
-              setActiveTab={setActiveTab}
-              storeName={storeName}
-              setStoreName={setStoreName}
-              storePhone={storePhone}
-              setStorePhone={setStorePhone}
-              updateStoreName={updateStoreName}
-              currency={currency}
-              updateCurrency={updateCurrency}
-              roundingFactor={roundingFactor}
-              updateRoundingFactor={updateRoundingFactor}
-              permissionsEnabled={permissionsEnabled}
-              verifyAdminPermission={verifyAdminPermission}
-              setShowPermissionsConfigModal={setShowPermissionsConfigModal}
-              exportData={exportData}
-              isBackupOverdue={isBackupOverdue}
-              lastBackupDate={lastBackupDate}
-              backupAlertInterval={backupAlertInterval}
-              updateBackupAlertInterval={updateBackupAlertInterval}
-              handleImportPython={handleImportPython}
-              importData={importData}
-              isBackupSyncing={isBackupSyncing}
-              autoBackupFileStatus={autoBackupFileStatus}
-              forceLocalDiskBackup={forceLocalDiskBackup}
-              resetDatabase={resetDatabase}
-              deferredPrompt={deferredPrompt}
-              handleInstall={handleInstall}
-              requestGlobalCameraPermission={requestGlobalCameraPermission}
-              setDevClickCount={setDevClickCount}
-              setShowHiddenAdminInput={setShowHiddenAdminInput}
-              showNotification={showNotification}
-              deviceID={deviceID}
-              isActivated={isActivated}
-              trialDaysLeft={trialDaysLeft}
-              activationDetails={activationDetails}
-              activationKeyInput={activationKeyInput}
-              setActivationKeyInput={setActivationKeyInput}
-              activationError={activationError}
-              setActivationError={setActivationError}
-              handleActivateApp={handleActivateApp}
-              cloudRequest={cloudRequest}
-              handleDeleteCloudRequest={handleDeleteCloudRequest}
-              isSubmittingRequest={isSubmittingRequest}
-              handleRequestCloudActivation={handleRequestCloudActivation}
-              handleDeactivateApp={handleDeactivateApp}
-              showHiddenAdminInput={showHiddenAdminInput}
-              isDeveloperMode={isDeveloperMode}
-              setIsDeveloperMode={setIsDeveloperMode}
-              developerPinInput={developerPinInput}
-              setDeveloperPinInput={setDeveloperPinInput}
-              developerPinError={developerPinError}
-              setDeveloperPinError={setDeveloperPinError}
-              handleVerifyDeveloperPIN={handleVerifyDeveloperPIN}
-              activeDevTab={activeDevTab}
-              setActiveDevTab={setActiveDevTab}
-              allCloudRequests={allCloudRequests}
-              requestDurations={requestDurations}
-              setRequestDurations={setRequestDurations}
-              handleRejectCloudRequest={handleRejectCloudRequest}
-              handleApproveCloudRequest={handleApproveCloudRequest}
-              generatedKeyResult={generatedKeyResult}
-              generatorDeviceIDInput={generatorDeviceIDInput}
-              setGeneratorDeviceIDInput={setGeneratorDeviceIDInput}
-              generatorDuration={generatorDuration}
-              setGeneratorDuration={setGeneratorDuration}
-              handleGenerateLicense={handleGenerateLicense}
-              showPinChangeModal={showPinChangeModal}
-              setShowPinChangeModal={setShowPinChangeModal}
-              newPinInput={newPinInput}
-              setNewPinInput={setNewPinInput}
-              confirmNewPinInput={confirmNewPinInput}
-              setConfirmNewPinInput={setConfirmNewPinInput}
-              pinChangeError={pinChangeError}
-              setPinChangeError={setPinChangeError}
-              handleChangeDeveloperPIN={handleChangeDeveloperPIN}
-              handleResetDeveloperPIN={handleResetDeveloperPIN}
-            />
-          </motion.div>
+          {activeTab === 'analytics' && (
+            <Suspense fallback={<div className="p-12 text-center text-slate-400 font-bold">جاري تحميل التحليلات...</div>}>
+              <SmartAnalytics 
+                currency={currency} 
+                formatPrice={formatPrice} 
+                onGoBack={() => setActiveTab('dashboard')} 
+              />
+            </Suspense>
+          )}
 
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'analytics' ? 1 : 0, y: activeTab === 'analytics' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'analytics' ? 'block' : 'hidden'}
-          >
-            <SmartAnalytics 
-              currency={currency} 
-              formatPrice={formatPrice} 
-              onGoBack={() => setActiveTab('dashboard')} 
-            />
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: activeTab === 'history' ? 1 : 0, y: activeTab === 'history' ? 0 : 6 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className={activeTab === 'history' ? 'block' : 'hidden'}
-          >
+          {activeTab === 'history' && (
             <HistoryView
               setActiveTab={setActiveTab}
               enrichedSales={enrichedSales}
@@ -5063,7 +5719,7 @@ export default function App() {
               formatDateTimeWithDay={formatDateTimeWithDay}
               formatPrice={formatPrice}
             />
-          </motion.div>
+          )}
         </div>
 
         {/* Modals */}
@@ -5480,6 +6136,74 @@ export default function App() {
             </div>
           )}
 
+          {withdrawingStockProduct && (
+            <div key="modal-withdrawing-stock" className="fixed inset-0 bg-black/60 z-[80] flex items-center justify-center p-4 backdrop-blur-sm">
+              <motion.div 
+                initial={{ scale: 0.95, opacity: 0 }} 
+                animate={{ scale: 1, opacity: 1 }} 
+                className="bg-white w-full max-w-sm rounded-[2rem] p-6 space-y-6 shadow-2xl relative"
+                dir="rtl"
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                      <MinusCircle className="w-5 h-5 text-amber-600" />
+                      سحب من المخزن / تسوية نقصان
+                    </h3>
+                    <p className="text-xs text-slate-500 font-bold mt-1 line-clamp-1">{withdrawingStockProduct.name}</p>
+                  </div>
+                  <button onClick={() => setWithdrawingStockProduct(null)} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full text-slate-400">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <div className="text-center">
+                    <p className="text-[10px] text-slate-400 font-bold mb-1">المخزون الحالي</p>
+                    <p className="text-2xl font-black text-slate-700 font-mono">{withdrawingStockProduct.stock_quantity}</p>
+                  </div>
+                  <div className="w-px h-10 bg-slate-200"></div>
+                  <div className="text-center">
+                    <p className="text-[10px] text-amber-500 font-bold mb-1">بعد السحب</p>
+                    <p className="text-2xl font-black font-mono text-amber-600">
+                      {withdrawingStockAmount ? Math.max(0, withdrawingStockProduct.stock_quantity - Number(withdrawingStockAmount)) : withdrawingStockProduct.stock_quantity}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">الكمية المراد سحبها</label>
+                    <input 
+                      type="number" 
+                      className="w-full p-4 rounded-xl border-2 bg-slate-50 text-xl font-black font-mono text-center focus:outline-none transition-all border-amber-200 focus:border-amber-500 text-amber-700"
+                      value={withdrawingStockAmount}
+                      onChange={e => setWithdrawingStockAmount(e.target.value)}
+                      placeholder="0"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-2">ملاحظات / سبب السحب (مثل: تسوية نقصان، تلف...)</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 outline-none"
+                      value={withdrawingStockNotes}
+                      onChange={e => setWithdrawingStockNotes(e.target.value)}
+                      placeholder="مثال: تسوية نقصان، تلف، عينة..."
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button className="flex-1 py-4 text-sm shadow-md bg-amber-600 hover:bg-amber-700 text-white" onClick={handleWithdrawStock}>حفظ السحب</Button>
+                  <Button variant="secondary" className="py-4 px-6 text-sm" onClick={() => setWithdrawingStockProduct(null)}>إلغاء</Button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+
           {editingProduct && (
             <EditProductModal
               key="modal-edit-product"
@@ -5527,6 +6251,8 @@ export default function App() {
               setShowSupplierSummaryModal={setShowSupplierSummaryModal}
               summary={summary}
               suppliers={suppliers}
+              products={products}
+              saleItems={allSaleItemsForDetails}
               enrichedSupplierPayments={enrichedSupplierPayments}
               formatPrice={formatPrice}
               formatDateWithDay={formatDateWithDay}
@@ -5565,8 +6291,33 @@ export default function App() {
               key="modal-profit-summary"
               showProfitSummaryModal={showProfitSummaryModal}
               setShowProfitSummaryModal={setShowProfitSummaryModal}
-              summary={summary}
+              summary={{
+                ...summary,
+                expensesTotal: summary.totalExpenses,
+                totalSalesRevenue: summary.totalSales
+              }}
               formatPrice={formatPrice}
+              onOpenExpensesModal={() => setShowExpensesModal(true)}
+            />
+          )}
+
+          {showExpensesModal && (
+            <ExpensesModal
+              key="modal-expenses-manager"
+              isOpen={showExpensesModal}
+              onClose={() => setShowExpensesModal(false)}
+              formatPrice={formatPrice}
+              currency={currency}
+              storeName={storeName}
+              onExpenseChanged={async () => {
+                const allExpenses = await db.expenses.toArray();
+                const totalExpenses = allExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+                setSummary(prev => ({
+                  ...prev,
+                  totalExpenses,
+                  netProfit: prev.totalProfit - totalExpenses
+                }));
+              }}
             />
           )}
 
@@ -5599,6 +6350,21 @@ export default function App() {
               setSelectedSupplierPayment={setSelectedSupplierPayment}
               formatPrice={formatPrice}
               formatDateTimeWithDay={formatDateTimeWithDay}
+              onPrintVoucher={(payment) => {
+                setActiveVoucherData({
+                  type: 'payment',
+                  voucherNumber: `PAY-${String(payment.id || Date.now()).slice(-6)}`,
+                  date: payment.payment_date || new Date().toISOString(),
+                  partyName: payment.supplier_name || showSupplierDetails?.name || 'المورد',
+                  partyPhone: showSupplierDetails?.phone || '',
+                  amount: payment.amount,
+                  previousBalance: payment.previous_balance || 0,
+                  newBalance: payment.new_balance !== undefined ? payment.new_balance : 0,
+                  notes: payment.notes || 'سداد دفعة للمورد',
+                  paymentMethod: 'cash'
+                });
+                setVoucherModalOpen(true);
+              }}
             />
           )}
 
@@ -5712,6 +6478,10 @@ export default function App() {
               storeName={storeName}
               storePhone={storePhone}
               currency={currency}
+              onPrintVoucher={(voucher) => {
+                setActiveVoucherData(voucher);
+                setVoucherModalOpen(true);
+              }}
             />
           )}
 
@@ -5778,6 +6548,46 @@ export default function App() {
               selectedCustomer={selectedCustomer}
               setSelectedCustomer={setSelectedCustomer}
               customers={customers}
+            />
+          )}
+
+          {voucherModalOpen && (
+            <VoucherModal
+              key="modal-voucher-print"
+              isOpen={voucherModalOpen}
+              onClose={() => {
+                setVoucherModalOpen(false);
+                setActiveVoucherData(null);
+              }}
+              voucher={activeVoucherData}
+              storeName={storeName}
+              formatPrice={formatPrice}
+            />
+          )}
+
+          {showExcelSyncModal && (
+            <ExcelSyncCenterModal
+              key="modal-excel-sync-center"
+              isOpen={showExcelSyncModal}
+              onClose={() => setShowExcelSyncModal(false)}
+              showNotification={showNotification}
+            />
+          )}
+
+          {showBackupOptionsModal && (
+            <BackupOptionsModal
+              key="modal-backup-options"
+              isOpen={showBackupOptionsModal}
+              onClose={() => setShowBackupOptionsModal(false)}
+              exportData={exportData}
+              importData={importData}
+              handleImportPython={handleImportPython}
+              lastBackupDate={lastBackupDate}
+              isBackupOverdue={isBackupOverdue}
+              onOpenSmartImportHub={() => {
+                setActiveTab('smart-import');
+                setIsSidebarOpen(false);
+              }}
             />
           )}
         </AnimatePresence>

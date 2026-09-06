@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { db } from '../db';
 import { 
   Sparkles, 
@@ -19,19 +20,49 @@ import {
   PlusCircle,
   HelpCircle,
   CheckCircle2,
-  ArrowRight
+  ArrowRight,
+  Cloud,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
-interface SmartImportProps {
-  onImported: () => void;
-  storeName: string;
-  onGoBack?: () => void;
-}
+import { ExcelHubSection } from '../features/smart-import/ExcelHubSection';
+import { DatabaseHubSection } from '../features/smart-import/DatabaseHubSection';
+import { CloudSyncSection } from '../features/smart-import/CloudSyncSection';
+import { SmartImportGroup, SmartImportHubProps } from '../features/smart-import/types';
 
 type DataType = 'products' | 'customers' | 'suppliers' | 'mixed';
 
-export default function SmartImport({ onImported, storeName, onGoBack }: SmartImportProps) {
+export default function SmartImport(props: SmartImportHubProps) {
+  const {
+    storeName,
+    onImported = () => {},
+    onGoBack,
+    exportData,
+    importData,
+    handleImportPython,
+    isBackupOverdue,
+    lastBackupDate,
+    backupAlertInterval,
+    updateBackupAlertInterval,
+    isBackupSyncing,
+    isAutoBackupEnabled,
+    setIsAutoBackupEnabled,
+    autoBackupFileStatus,
+    forceLocalDiskBackup,
+    resetDatabase,
+    showNotification,
+    onOpenExcelSyncCenter,
+    deviceID,
+    isActivated,
+    trialDaysLeft,
+    activationDetails,
+    handleRequestCloudActivation,
+    isSubmittingRequest,
+    setActiveTab
+  } = props;
+
+  const [activeGroup, setActiveGroup] = useState<SmartImportGroup>('excel');
+
   const [dataType, setDataType] = useState<DataType>('mixed'); // default to 'mixed' for an all-in-one awesome experience!
   const [parseMethod, setParseMethod] = useState<'classic' | 'classic'>('classic');
   const [pastedText, setPastedText] = useState<string>('');
@@ -412,6 +443,32 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
         setErrorMessage('فشل في قراءة ملف الصورة.');
       };
       reader.readAsDataURL(file);
+    } else if (
+      file.name.endsWith('.xlsx') || 
+      file.name.endsWith('.xls') || 
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || 
+      file.type === 'application/vnd.ms-excel'
+    ) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target?.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const csvContent = XLSX.utils.sheet_to_csv(worksheet);
+          setPastedText(csvContent);
+          setBase64File(null);
+          setSuccessInfo(`📥 تم قراءة ملف إكسل [${file.name}] بنجاح واستخراج جدول البيانات محلياً! يمكنك الآن مراجعة النص في الأسفل أو البدء في المعالجة والتحليل.`);
+        } catch (err) {
+          console.error(err);
+          setErrorMessage('فشل في معالجة وقراءة ملف إكسل. تأكد من أن الملف غير تالف وصيغته صحيحة.');
+        }
+      };
+      reader.onerror = () => {
+        setErrorMessage('فشل في قراءة ملف الإكسل.');
+      };
+      reader.readAsArrayBuffer(file);
     } else {
       // Treat as Text/CSV
       const reader = new FileReader();
@@ -457,6 +514,7 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
     setIsLoading(true);
 
     try {
+      const customApiKey = typeof localStorage !== 'undefined' ? (localStorage.getItem('user_gemini_api_key') || '') : '';
       const response = await fetch('/api/gemini/smart-import', {
         method: 'POST',
         headers: {
@@ -465,7 +523,8 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
         body: JSON.stringify({
           dataType,
           text: pastedText,
-          fileData: base64File
+          fileData: base64File,
+          customApiKey
         })
       });
 
@@ -791,12 +850,12 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
     : itemsList.length > 0;
 
   return (
-    <div className="space-y-4" id="smart-import-container">
+    <div className="space-y-6" id="smart-import-container">
       {onGoBack && (
         <div className="flex justify-start">
           <button 
             onClick={onGoBack}
-            className="flex items-center gap-2 text-xs font-black text-slate-600 hover:text-emerald-600 bg-white hover:bg-slate-50 px-4 py-2.5 rounded-2xl transition-all cursor-pointer border border-slate-200 shadow-sm"
+            className="flex items-center gap-2 text-xs font-black text-slate-600 hover:text-emerald-600 bg-white hover:bg-slate-50 px-4 py-2.5 rounded-2xl transition-all cursor-pointer border border-slate-200 shadow-2xs"
             title="الرجوع للوحة المتابعة الرئيسية"
           >
             <ArrowRight className="w-4 h-4 text-emerald-600 animate-pulse" />
@@ -805,51 +864,173 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
         </div>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="bg-violet-100 text-violet-700 font-extrabold text-[10px] px-2.5 py-1 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-sm">
-              <Sparkles className="w-3 h-3 text-violet-500 animate-pulse" /> ميزة ذكية فائقة
+      {/* Primary Hub Header */}
+      <div className="bg-white p-5 sm:p-6 rounded-3xl border border-slate-200/80 shadow-2xs space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-100 pb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="bg-emerald-100 text-emerald-800 font-black text-[10px] px-2.5 py-0.5 rounded-full flex items-center gap-1 border border-emerald-200">
+                <ShieldCheck className="w-3 h-3 text-emerald-600" /> مركز البيانات والاستيراد الشامل
+              </span>
+              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                متجر: {storeName}
+              </span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-800">مركز البيانات والاستيراد الشامل 📊</h1>
+            <p className="text-slate-500 text-xs mt-0.5 font-medium">
+              بوابتك المركزية الموحدة لإدارة ملفات Excel، المزامنة الحية، النسخ الاحتياطي، قاعدة البيانات، واستيراد الفواتير.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-black text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1.5 shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>محلي 100% أوفلاين (بدون إنترنت)</span>
             </span>
           </div>
-          <h1 className="text-2xl font-black text-slate-800">أداة الاستيراد الذكي بالذكاء الاصطناعي ✨</h1>
-          <p className="text-slate-500 text-xs sm:text-sm mt-1">
-            التقط صورة لدفتر الديون، أو فاتورة مخزن، أو ارفع ملف إكسل، أو اكتب نصاً يدوياً؛ وسيقوم عقل Gemini بتحليل الأرقام والأسماء وحفظها بدقة وتنسيق رائع.
-          </p>
         </div>
-        
-        <div className="flex flex-wrap bg-slate-100 p-1.5 rounded-2xl border border-slate-200/50 gap-1 sm:gap-0">
-          <button 
-            onClick={() => { setDataType('mixed'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'mixed' ? 'bg-white shadow-sm text-indigo-750 border border-slate-200/60' : 'text-slate-500 hover:text-slate-800'}`}
+
+        {/* Group Selector Tabs */}
+        <div className="flex items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 overflow-x-auto scrollbar-none shadow-2xs">
+          <button
+            onClick={() => setActiveGroup('excel')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+              activeGroup === 'excel'
+                ? 'bg-white text-emerald-700 shadow-sm border border-emerald-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+            }`}
           >
-            <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
-            <span>الكل (استيراد شامل متكامل) 👑</span>
+            <FileSpreadsheet className={`w-4 h-4 ${activeGroup === 'excel' ? 'text-emerald-600' : 'text-slate-400'}`} />
+            <span>إدارة ومزامنة Excel الشاملة 📊</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              محلي 100%
+            </span>
           </button>
-          <button 
-            onClick={() => { setDataType('products'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'products' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+
+          <button
+            onClick={() => setActiveGroup('database')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+              activeGroup === 'database'
+                ? 'bg-white text-violet-700 shadow-sm border border-violet-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+            }`}
           >
-            <Package className="w-4 h-4 text-emerald-600" />
-            <span>منتجات ومخزون 📦</span>
+            <Database className={`w-4 h-4 ${activeGroup === 'database' ? 'text-violet-600' : 'text-slate-400'}`} />
+            <span>قاعدة البيانات والنسخ الاحتياطي 💾</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-violet-50 text-violet-700 border border-violet-200">
+              JSON & قرص
+            </span>
           </button>
-          <button 
-            onClick={() => { setDataType('customers'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'customers' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+
+          <button
+            onClick={() => setActiveGroup('ocr_ai')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+              activeGroup === 'ocr_ai'
+                ? 'bg-white text-amber-700 shadow-sm border border-amber-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+            }`}
           >
-            <Users className="w-4 h-4 text-violet-600" />
-            <span>زبائن وديون 👥</span>
+            <Sparkles className={`w-4 h-4 ${activeGroup === 'ocr_ai' ? 'text-amber-500 animate-pulse' : 'text-slate-400'}`} />
+            <span>استيراد الفواتير والمستندات الذكي 📷</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-amber-50 text-amber-700 border border-amber-200">
+              AI & كلاسيك
+            </span>
           </button>
-          <button 
-            onClick={() => { setDataType('suppliers'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
-            className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'suppliers' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+
+          <button
+            onClick={() => setActiveGroup('cloud_sync')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
+              activeGroup === 'cloud_sync'
+                ? 'bg-white text-blue-700 shadow-sm border border-blue-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+            }`}
           >
-            <Briefcase className="w-4 h-4 text-amber-600" />
-            <span>موردين وأرصدة 💼</span>
+            <Cloud className={`w-4 h-4 ${activeGroup === 'cloud_sync' ? 'text-blue-600' : 'text-slate-400'}`} />
+            <span>المزامنة والربط السحابي 🌐</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-blue-50 text-blue-700 border border-blue-200">
+              اختياري
+            </span>
           </button>
         </div>
       </div>
+
+      {/* Group 1: Excel Hub Section */}
+      {activeGroup === 'excel' && (
+        <ExcelHubSection
+          showNotification={showNotification}
+          onOpenExcelSyncCenter={onOpenExcelSyncCenter}
+          onImportSuccess={onImported}
+        />
+      )}
+
+      {/* Group 2: Database and Backup Management Section */}
+      {activeGroup === 'database' && (
+        <DatabaseHubSection
+          exportData={exportData}
+          importData={importData}
+          handleImportPython={handleImportPython}
+          isBackupOverdue={isBackupOverdue}
+          lastBackupDate={lastBackupDate}
+          backupAlertInterval={backupAlertInterval}
+          updateBackupAlertInterval={updateBackupAlertInterval}
+          isBackupSyncing={isBackupSyncing}
+          isAutoBackupEnabled={isAutoBackupEnabled}
+          setIsAutoBackupEnabled={setIsAutoBackupEnabled}
+          autoBackupFileStatus={autoBackupFileStatus}
+          forceLocalDiskBackup={forceLocalDiskBackup}
+          resetDatabase={resetDatabase}
+          showNotification={showNotification}
+        />
+      )}
+
+      {/* Group 3: Document & Invoice OCR Smart Parser */}
+      {activeGroup === 'ocr_ai' && (
+        <div className="space-y-4">
+          {/* Subheader for OCR */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-3xl border border-slate-100 shadow-2xs">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="bg-amber-100 text-amber-800 font-extrabold text-[10px] px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                  <Sparkles className="w-3 h-3 text-amber-600 animate-pulse" /> استيراد الوثائق الذكي
+                </span>
+              </div>
+              <h2 className="text-lg font-black text-slate-800">استيراد الفواتير الورقية ودفاتر الديون والنصوص 📷</h2>
+              <p className="text-slate-500 text-xs mt-1">
+                التقط صورة لدفتر الديون، أو فاتورة مخزن، أو اكتب نصاً محاسبياً يدوياً؛ وسيقوم النظام بتحليل الأرقام والأسماء وحفظها بدقة وتنسيق رائع.
+              </p>
+            </div>
+            
+            <div className="flex flex-wrap bg-slate-100 p-1.5 rounded-2xl border border-slate-200/50 gap-1 sm:gap-0">
+              <button 
+                onClick={() => { setDataType('mixed'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'mixed' ? 'bg-white shadow-sm text-indigo-750 border border-slate-200/60' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                <Sparkles className="w-4 h-4 text-indigo-600 animate-pulse" />
+                <span>الكل (استيراد شامل متكامل) 👑</span>
+              </button>
+              <button 
+                onClick={() => { setDataType('products'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'products' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                <Package className="w-4 h-4 text-emerald-600" />
+                <span>منتجات ومخزون 📦</span>
+              </button>
+              <button 
+                onClick={() => { setDataType('customers'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'customers' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                <Users className="w-4 h-4 text-violet-600" />
+                <span>زبائن وديون 👥</span>
+              </button>
+              <button 
+                onClick={() => { setDataType('suppliers'); setItemsList([]); setMixedProducts([]); setMixedCustomers([]); setMixedSuppliers([]); }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-black rounded-xl transition-all ${dataType === 'suppliers' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                <Briefcase className="w-4 h-4 text-amber-600" />
+                <span>موردين وأرصدة 💼</span>
+              </button>
+            </div>
+          </div>
 
       {/* Main workspace */}
       {!hasResults ? (
@@ -868,7 +1049,7 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
                 type="file" 
                 ref={fileInputRef} 
                 onChange={handleFileChange} 
-                accept="image/*,text/*,.csv,.txt"
+                accept="image/*,text/*,.csv,.txt,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                 className="hidden" 
               />
               
@@ -1541,6 +1722,21 @@ export default function SmartImport({ onImported, storeName, onGoBack }: SmartIm
             </button>
           </div>
         </motion.div>
+      )}
+      </div>
+      )}
+
+      {/* Group 4: Optional Cloud Sync */}
+      {activeGroup === 'cloud_sync' && (
+        <CloudSyncSection
+          deviceID={deviceID}
+          isActivated={isActivated}
+          trialDaysLeft={trialDaysLeft}
+          activationDetails={activationDetails}
+          handleRequestCloudActivation={handleRequestCloudActivation}
+          isSubmittingRequest={isSubmittingRequest}
+          setActiveTab={setActiveTab}
+        />
       )}
 
       {/* Dynamic Notifications */}

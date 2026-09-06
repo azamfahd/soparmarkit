@@ -19,6 +19,7 @@ export interface Supplier {
   name: string;
   phone: string;
   balance: number;
+  notes?: string;
 }
 
 export interface SupplierPayment {
@@ -34,6 +35,7 @@ export interface Customer {
   name: string;
   phone: string;
   balance: number;
+  notes?: string;
 }
 
 export interface Sale {
@@ -46,6 +48,8 @@ export interface Sale {
   payment_type: 'cash' | 'debt';
   created_at: string;
   notes?: string;
+  previous_balance?: number;
+  new_balance?: number;
 }
 
 export interface SaleItem {
@@ -64,13 +68,19 @@ export interface Debt {
   type: 'purchase' | 'payment';
   created_at: string;
   notes?: string;
+  previous_balance?: number;
+  new_balance?: number;
 }
 
 export interface InventoryLog {
   id?: number;
   product_id: number;
+  product_name?: string;
+  old_quantity?: number;
+  new_quantity?: number;
   change_amount: number;
   reason: string;
+  type?: string;
   notes?: string;
   created_at: string;
 }
@@ -117,6 +127,17 @@ export interface CashWithdrawal {
   created_at: string;
   is_repaid: boolean; // false if still due to be repaid by cashier, true if repaid
   repay_date?: string;
+}
+
+export interface Expense {
+  id?: number;
+  title: string;
+  category: string; // e.g. rent, electricity, salaries, maintenance, supplies, transport, other
+  amount: number;
+  date: string;
+  payment_method?: 'cash' | 'bank' | 'other';
+  notes?: string;
+  created_at: string;
 }
 
 export interface AIConversationRecord {
@@ -205,6 +226,7 @@ export class GroceryDatabase extends Dexie {
   documentChunks!: Table<DocumentChunkRecord>;
   aiFeedback!: Table<AIFeedbackRecord>;
   aiTrainingData!: Table<AITrainingRecord>;
+  expenses!: Table<Expense>;
 
   constructor() {
     super('GroceryDB');
@@ -368,6 +390,49 @@ export class GroceryDatabase extends Dexie {
       documentChunks: '++id, documentId, chunkIndex, *tags, createdAt',
       aiFeedback: '++id, messageId, rating, timestamp',
       aiTrainingData: '++id, query, expectedIntent, expectedEntities'
+    });
+    this.version(16).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at, payment_type',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at, type',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date',
+      aiConversations: 'id, createdAt, updatedAt',
+      aiMessages: 'id, conversationId, timestamp, role',
+      knowledgeDocuments: '++id, title, category, *tags, createdAt',
+      documentChunks: '++id, documentId, chunkIndex, *tags, createdAt',
+      aiFeedback: '++id, messageId, rating, timestamp',
+      aiTrainingData: '++id, query, expectedIntent, expectedEntities'
+    });
+    this.version(17).stores({
+      products: '++id, name, category, stock_quantity, barcode, supplier_id, expiration_date',
+      customers: '++id, name, phone',
+      sales: '++id, customer_id, created_at, payment_type',
+      saleItems: '++id, sale_id, product_id',
+      debts: '++id, customer_id, sale_id, created_at, type',
+      inventoryLogs: '++id, product_id, created_at',
+      settings: '++id, key',
+      sync_queue: '++id, table, timestamp',
+      notes: '++id, created_at, reminder_date, is_completed',
+      salesSettlements: '++id, created_at',
+      cashWithdrawals: '++id, created_at, is_repaid',
+      suppliers: '++id, name, phone',
+      supplierPayments: '++id, supplier_id, payment_date',
+      aiConversations: 'id, createdAt, updatedAt',
+      aiMessages: 'id, conversationId, timestamp, role',
+      knowledgeDocuments: '++id, title, category, *tags, createdAt',
+      documentChunks: '++id, documentId, chunkIndex, *tags, createdAt',
+      aiFeedback: '++id, messageId, rating, timestamp',
+      aiTrainingData: '++id, query, expectedIntent, expectedEntities',
+      expenses: '++id, category, date, created_at'
     });
   }
 }

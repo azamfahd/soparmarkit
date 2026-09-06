@@ -54,17 +54,17 @@ interface NotesViewProps {
 export const NotesView: React.FC<NotesViewProps> = ({
   setActiveTab,
   setEditingNoteId,
-    setShowAddNote,
+  setShowAddNote,
   notes,
   noteFilter,
   setNoteFilter,
-      setSelectedNote,
+  setSelectedNote,
   handleToggleNoteCompletion,
   handleEditNoteAction,
   handleDeleteNote,
   formatDateWithDay,
   verifyAdminPermission,
-        setShowWithdrawModal,
+  setShowWithdrawModal,
   currentCycleWithdrawalsTotal,
   currentCycleUnpaidWithdrawalsTotal,
   currentCycleWithdrawals,
@@ -73,7 +73,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
   handleRepayWithdrawal,
   handleDeleteWithdrawal,
   lastSettleDate,
-      setShowSettleModal,
+  setShowSettleModal,
   activeOutstandingCash,
   currentCycleCashTotal,
   currentCycleCashSales,
@@ -85,18 +85,61 @@ export const NotesView: React.FC<NotesViewProps> = ({
   handleDeleteSettlement,
 }) => {
   const [noteSearchQuery, setNoteSearchQuery] = useState('');
+  const [viewSection, setViewSection] = useState<'all' | 'notes' | 'withdrawals' | 'settlement'>('all');
 
   return (
     <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
       {/* عنوان الصفحة مع زر الرجوع للواجهة الرئيسية */}
-      <div className="flex items-center gap-2 pb-2">
-        <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-2 rounded-full transition-colors flex items-center justify-center cursor-pointer" title="الرجوع للواجهة الرئيسية">
-          <Home className="w-6 h-6" />
-        </button>
-        <h3 className="text-xl font-extrabold text-slate-800">الملاحظات وتصفية مبيعات الصندوق</h3>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-150/60">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-2 rounded-full transition-colors flex items-center justify-center cursor-pointer" title="الرجوع للواجهة الرئيسية">
+            <Home className="w-6 h-6" />
+          </button>
+          <div>
+            <h3 className="text-xl font-extrabold text-slate-800">الملاحظات، المسحوبات وتصفية الصندوق</h3>
+            <p className="text-[10px] text-slate-400 font-bold">إدارة منظمة ومفصولة للملاحظات اليومية ومسحوبات وسُلفيات الدرج المؤقتة</p>
+          </div>
+        </div>
+
+        {/* أزرار التنقل السريع بين الأقسام */}
+        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200/60 self-start sm:self-auto">
+          <button
+            onClick={() => setViewSection('all')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              viewSection === 'all' ? 'bg-white text-emerald-800 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            عرض الكل
+          </button>
+          <button
+            onClick={() => setViewSection('notes')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              viewSection === 'notes' ? 'bg-white text-emerald-800 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            الملاحظات ({notes.filter(n => !n.is_completed).length})
+          </button>
+          <button
+            onClick={() => setViewSection('withdrawals')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              viewSection === 'withdrawals' ? 'bg-white text-indigo-800 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            مسحوبات الدرج ({currentCycleWithdrawals.length})
+          </button>
+          <button
+            onClick={() => setViewSection('settlement')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              viewSection === 'settlement' ? 'bg-white text-violet-800 shadow-2xs font-extrabold' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            تسوية الصندوق
+          </button>
+        </div>
       </div>
 
       {/* قسم الملاحظات والمهام اليومية */}
+      {(viewSection === 'all' || viewSection === 'notes') && (
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50/80 p-4 rounded-3xl border border-slate-150/60">
           <div className="flex items-center gap-2">
@@ -304,19 +347,23 @@ export const NotesView: React.FC<NotesViewProps> = ({
           })()
         )}
       </div>
+      )}
 
-      {/* خط فاصل أنيق ومميز */}
-      <div className="border-t border-slate-200/80 my-2"></div>
-
-      {/* قسم مسحوبات الصندوق */}
+      {/* قسم مسحوبات الصندوق والسلف النقدية المؤقتة */}
+      {(viewSection === 'all' || viewSection === 'withdrawals') && (
       <div className="bg-white rounded-2xl p-4 border border-slate-150/65 shadow-xs space-y-3.5">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
           <div>
-            <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
-              💸 مسحوبات وسُلفيات الصندوق الكاش (الدورة الحالية)
-            </h3>
-            <p className="text-[10px] text-slate-400">
-              تسجيل أي مبالغ يسحبها ماسك الصندوق/الموظف للتسديد لاحقاً أو كأتعاب قبل إغلاق الفترة
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-black text-slate-800 flex items-center gap-1.5">
+                💸 مسحوبات وسُلفيات الصندوق الكاش (الدورة الحالية)
+              </h3>
+              <span className="text-[9px] font-bold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">
+                سلفيات مؤقتة تسدد للدرج
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              مبالغ يسحبها ماسك الصندوق/الموظف للتسديد لاحقاً أو كأتعاب قبل إغلاق الفترة (تختلف عن المصروفات التشغيلية للمحل)
             </p>
           </div>
           <Button 
@@ -440,8 +487,11 @@ export const NotesView: React.FC<NotesViewProps> = ({
           </div>
         )}
       </div>
+      )}
 
       {/* تصفية مبيعات المتجر ومطابقة الصندوق */}
+      {(viewSection === 'all' || viewSection === 'settlement') && (
+      <>
       <div className="bg-gradient-to-l from-violet-600 to-indigo-600 text-white rounded-3xl p-5 shadow-md space-y-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div className="space-y-1">
@@ -583,6 +633,8 @@ export const NotesView: React.FC<NotesViewProps> = ({
             })}
           </div>
         </div>
+      )}
+      </>
       )}
     </motion.div>
   );

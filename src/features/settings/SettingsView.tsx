@@ -10,6 +10,16 @@ import {
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { embeddingManager, reindexAllKnowledgeDocuments } from '../../services/ai/rag';
+import { FileSpreadsheet } from 'lucide-react';
+import {
+  isFileSystemAccessSupported,
+  linkLocalExcelFile,
+  unlinkExcelFile,
+  getLinkedExcelHandle,
+  syncBidirectionalExcel,
+  downloadExcelBackupManual,
+  importExcelBackupManual
+} from '../../services/excelSync';
 
 export interface SettingsViewProps {
   isAutoBackupEnabled: boolean;
@@ -89,6 +99,7 @@ export interface SettingsViewProps {
   setPinChangeError?: (err: string) => void;
   handleChangeDeveloperPIN?: (currentPin: string, newPin: string, confirmPin: string) => Promise<boolean>;
   handleResetDeveloperPIN?: (currentPin: string) => void;
+  onOpenExcelSyncCenter?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -113,6 +124,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   handleImportPython,
   importData,
   isBackupSyncing,
+  onOpenExcelSyncCenter,
   autoBackupFileStatus,
   forceLocalDiskBackup,
   resetDatabase,
@@ -279,6 +291,114 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       showNotification('🔐 تم فتح نافذة تعديل رمز قفل المالك وشفرة المعايرة', 'success');
     }
   };
+
+  // Excel Live-Sync States & Operations
+  const [excelStatus, setExcelStatus] = React.useState<{
+    isLinked: boolean;
+    fileName: string | null;
+    lastSync: string | null;
+    isSyncing: boolean;
+  }>({
+    isLinked: false,
+    fileName: null,
+    lastSync: null,
+    isSyncing: false
+  });
+
+  React.useEffect(() => {
+    const checkExcelLink = async () => {
+      try {
+        const handle = await getLinkedExcelHandle();
+        const storedName = await db.settings.where('key').equals('excel_file_name').first();
+        const storedLastSync = await db.settings.where('key').equals('excel_last_sync').first();
+        setExcelStatus({
+          isLinked: !!handle,
+          fileName: handle ? handle.name : (storedName?.value || null),
+          lastSync: storedLastSync?.value || null,
+          isSyncing: false
+        });
+      } catch (e) {
+        console.error('Error reading Excel link settings:', e);
+      }
+    };
+    checkExcelLink();
+  }, []);
+
+  const handleLinkExcel = async () => {
+    try {
+      const result = await linkLocalExcelFile();
+      if (result) {
+        setExcelStatus(prev => ({
+          ...prev,
+          isLinked: true,
+          fileName: result.name,
+          lastSync: new Date().toISOString()
+        }));
+        showNotification(`✅ تم ربط ملف الإكسل [${result.name}] بنجاح وجاري المزامنة الأولى...`, 'success');
+        
+        // Trigger first sync
+        setExcelStatus(prev => ({ ...prev, isSyncing: true }));
+        const stats = await syncBidirectionalExcel();
+        const lastSyncTime = new Date().toISOString();
+        setExcelStatus(prev => ({
+          ...prev,
+          isSyncing: false,
+          lastSync: lastSyncTime
+        }));
+        showNotification(`🔄 تمت المزامنة الثنائية الأولى! تم استيراد ${stats.addedProducts} صنف و ${stats.addedCustomers} عميل و تحديث ${stats.updatedProducts} منتج.`, 'success');
+      }
+    } catch (err: any) {
+      showNotification(err.message || 'فشل ربط ملف الإكسل', 'error');
+    }
+  };
+
+  const handleUnlinkExcel = async () => {
+    try {
+      await unlinkExcelFile();
+      setExcelStatus({
+        isLinked: false,
+        fileName: null,
+        lastSync: null,
+        isSyncing: false
+      });
+      showNotification('🚫 تم فك ارتباط ملف الإكسل بنجاح.', 'success');
+    } catch (err: any) {
+      showNotification('فشل إلغاء ربط ملف الإكسل', 'error');
+    }
+  };
+
+  const handleSyncExcel = async () => {
+    setExcelStatus(prev => ({ ...prev, isSyncing: true }));
+    try {
+      const stats = await syncBidirectionalExcel();
+      const lastSyncTime = new Date().toISOString();
+      setExcelStatus(prev => ({
+        ...prev,
+        isSyncing: false,
+        lastSync: lastSyncTime
+      }));
+      showNotification(`🔄 تمت المزامنة بنجاح! تم استيراد: ${stats.addedProducts} أصناف جديدة، وتحديث: ${stats.updatedProducts} صنف، وإضافة: ${stats.addedCustomers} عملاء.`, 'success');
+    } catch (err: any) {
+      setExcelStatus(prev => ({ ...prev, isSyncing: false }));
+      showNotification(err.message || 'خطأ أثناء المزامنة مع ملف الإكسل', 'error');
+    }
+  };
+
+  const handleImportExcelManual = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setExcelStatus(prev => ({ ...prev, isSyncing: true }));
+    try {
+      const stats = await importExcelBackupManual(file);
+      setExcelStatus(prev => ({ ...prev, isSyncing: false }));
+      showNotification(`📥 تم استيراد البيانات يدوياً بنجاح! تم إضافة ${stats.addedProducts} صنف و ${stats.addedCustomers} عميل.`, 'success');
+      e.target.value = '';
+    } catch (err: any) {
+      setExcelStatus(prev => ({ ...prev, isSyncing: false }));
+      showNotification(err.message || 'خطأ أثناء الاستيراد اليدوي', 'error');
+    }
+  };
+
   const [customApiKeyInput, setCustomApiKeyInput] = React.useState<string>(() => {
     return typeof localStorage !== 'undefined' ? (localStorage.getItem('user_gemini_api_key') || '') : '';
   });
@@ -472,194 +592,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </Button>
         </Card>
 
-        {/* Card 3: Data Export & Import */}
-        <Card className={`p-4 sm:p-5 border rounded-2xl bg-white transition-all space-y-3 flex flex-col justify-between ${
+        {/* Card 3: Unified Data & Import Hub Banner */}
+        <Card className={`p-4 sm:p-5 border rounded-2xl bg-gradient-to-br from-white via-indigo-50/25 to-teal-50/20 transition-all space-y-3 flex flex-col justify-between ${
           isBackupOverdue 
-            ? 'border-red-300 shadow-[0_0_20px_rgba(239,68,68,0.15)] bg-gradient-to-br from-red-50/30 via-white to-white' 
-            : 'border-slate-200/80 shadow-2xs hover:shadow-xs'
+            ? 'border-red-300 shadow-[0_0_20px_rgba(239,68,68,0.15)]' 
+            : 'border-indigo-100/80 shadow-2xs hover:shadow-xs'
         }`}>
           <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-              <div className="flex items-center gap-2 text-slate-800">
+            <div className="flex items-center justify-between border-b border-indigo-100/60 pb-2.5">
+              <div className="flex items-center gap-2 text-indigo-900">
                 <div className={`p-1.5 rounded-xl border ${
-                  isBackupOverdue ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                  isBackupOverdue ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' : 'bg-indigo-50 text-indigo-600 border-indigo-100'
                 }`}>
-                  <Database className={`w-4 h-4 ${isBackupOverdue ? 'text-red-600' : 'text-emerald-600'}`} />
+                  <Database className={`w-4 h-4 ${isBackupOverdue ? 'text-red-600' : 'text-indigo-600'}`} />
                 </div>
-                <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">تصدير واستيراد البيانات (JSON)</h3>
+                <div>
+                  <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">مركز إدارة البيانات والاستيراد الذكي</h3>
+                  <p className="text-[10px] text-slate-400 font-bold">النسخ الاحتياطي (JSON)، ملفات Excel، وقاعدة البيانات</p>
+                </div>
               </div>
-              {isBackupOverdue && (
+              {isBackupOverdue ? (
                 <span className="text-[10px] font-black text-red-600 bg-red-100/90 px-2 py-0.5 rounded-full border border-red-300 animate-pulse">
-                  نسخة احتياطية مطلوبة ⚠️
+                  نسخة مطلوبة ⚠️
+                </span>
+              ) : (
+                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  محلي 100% ⚡
                 </span>
               )}
             </div>
+
             <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-              تصدير نسخة احتياطية لكافة المبيعات والمنتجات والديون للحفظ أو نقل البيانات لجهاز آخر.
+              تم تجميع وتنظيم كافة عمليات استيراد وتصدير البيانات (JSON)، مزامنة ملفات Excel الحية، الاستيراد الذكي (AI/OCR)، والنسخ الاحتياطي التلقائي داخل <span className="font-bold text-indigo-600">قسم الاستيراد وقاعدة البيانات</span> لتسهيل إدارتها دون تشتت.
             </p>
+
             {lastBackupDate && (
               <p className="text-[10px] font-bold text-slate-400">
                 آخر نسخة احتياطية: <span className="text-slate-600 font-mono">{new Date(lastBackupDate).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
               </p>
             )}
 
-            {/* Backup Alert Frequency Selector */}
-            <div className="pt-2.5 border-t border-slate-100 space-y-2">
-              <div className="flex justify-between items-center text-xs">
-                <span className="font-bold text-slate-700 flex items-center gap-1.5 text-[11px]">
-                  <Bell className="w-3.5 h-3.5 text-amber-500" />
-                  <span>تكرار تنبيه النسخ الاحتياطي:</span>
-                </span>
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-md ${
-                  backupAlertInterval === 'off' ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                }`}>
-                  {backupAlertInterval === '7' ? 'أسبوعياً (7 أيام)' :
-                   backupAlertInterval === '30' ? 'شهرياً (30 يوماً)' :
-                   backupAlertInterval === '60' ? 'كل شهرين (60 يوماً)' : 'التنبيه معطل'}
-                </span>
-              </div>
-              <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100/80 rounded-xl text-[10px]">
-                <button
-                  type="button"
-                  onClick={() => updateBackupAlertInterval?.('7')}
-                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
-                    backupAlertInterval === '7' ? 'bg-white text-emerald-700 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  أسبوع
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateBackupAlertInterval?.('30')}
-                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
-                    backupAlertInterval === '30' ? 'bg-white text-emerald-700 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  شهر
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateBackupAlertInterval?.('60')}
-                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
-                    backupAlertInterval === '60' ? 'bg-white text-emerald-700 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  شهرين
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateBackupAlertInterval?.('off')}
-                  className={`py-1.5 px-1 rounded-lg font-bold transition-all cursor-pointer text-center ${
-                    backupAlertInterval === 'off' ? 'bg-white text-rose-600 shadow-2xs font-black' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  عدم تفعيل
-                </button>
-              </div>
+            {/* Quick backup alert config */}
+            <div className="pt-2 border-t border-indigo-100/50 flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-600 flex items-center gap-1 text-[10px]">
+                <Bell className="w-3 h-3 text-amber-500" />
+                تنبيه النسخ الدوري:
+              </span>
+              <span className="text-[10px] font-black text-indigo-700 bg-white px-2 py-0.5 rounded-md border border-indigo-100 shadow-2xs">
+                {backupAlertInterval === '7' ? 'أسبوعياً' : backupAlertInterval === '30' ? 'شهرياً' : backupAlertInterval === '60' ? 'كل شهرين' : 'معطل'}
+              </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            <Button 
+              onClick={() => setActiveTab('smart-import')}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center justify-center gap-1.5 rounded-xl transition-all text-xs py-2.5 cursor-pointer shadow-xs"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>فتح مركز الاستيراد والبيانات</span>
+            </Button>
             <Button 
               variant={isBackupOverdue ? "danger" : "outline"} 
               className={`flex items-center justify-center gap-1.5 text-xs py-2.5 cursor-pointer ${
                 isBackupOverdue 
-                  ? 'bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white font-extrabold shadow-[0_0_16px_rgba(239,68,68,0.65)] border-red-400 animate-pulse' 
-                  : ''
+                  ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-extrabold shadow-[0_0_16px_rgba(239,68,68,0.65)] border-red-400 animate-pulse' 
+                  : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'
               }`} 
               onClick={exportData}
             >
-              <Download className={`w-3.5 h-3.5 ${isBackupOverdue ? 'text-white animate-bounce' : 'text-emerald-600'}`} />
-              <span>{isBackupOverdue ? 'تصدير نسخة احتياطية ⚠️' : 'تصدير (JSON)'}</span>
+              <Download className={`w-3.5 h-3.5 ${isBackupOverdue ? 'text-white animate-bounce' : 'text-indigo-600'}`} />
+              <span>{isBackupOverdue ? 'تصدير نسخة فورية ⚠️' : 'تصدير نسخة سريعة'}</span>
             </Button>
-            {window.pywebview && window.pywebview.api ? (
-              <Button variant="secondary" className="w-full flex items-center justify-center gap-1.5 text-xs py-2.5" onClick={handleImportPython}>
-                <Upload className="w-3.5 h-3.5" />
-                <span>استيراد ملف</span>
-              </Button>
-            ) : (
-              <div className="relative">
-                <input 
-                  type="file" 
-                  accept=".json" 
-                  onChange={importData}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-                <Button variant="secondary" className="w-full flex items-center justify-center gap-1.5 text-xs py-2.5">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>استيراد ملف</span>
-                </Button>
-              </div>
-            )}
           </div>
-        </Card>
-
-        {/* Card 4: Smart Import */}
-        <Card className="p-4 sm:p-5 border border-violet-100/80 rounded-2xl bg-gradient-to-br from-white to-violet-50/20 shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2 text-violet-800 border-b border-violet-100 pb-2.5">
-              <div className="p-1.5 bg-violet-50 text-violet-600 rounded-xl border border-violet-100">
-                <Sparkles className="w-4 h-4 text-violet-600 animate-pulse" />
-              </div>
-              <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">الاستيراد الذكي بالـ AI والملفات 🎯</h3>
-            </div>
-            <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-              استيراد قوائم البضائع، المبيعات أو الديون فوراً عبر التقاط صورة للدفتر أو رفع ملف Excel.
-            </p>
-          </div>
-
-          <Button 
-            className="w-full bg-violet-600 hover:bg-violet-700 text-white font-bold flex items-center justify-center gap-2 rounded-xl transition-all text-xs py-2.5"
-            onClick={() => setActiveTab('smart-import')}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-            <span>تحميل واستيراد البيانات الآن</span>
-          </Button>
-        </Card>
-
-        {/* Card 5: Auto Backup */}
-        <Card className="p-4 sm:p-5 border border-violet-100/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b border-violet-100 pb-2.5">
-              <div className="flex items-center gap-2 text-slate-800">
-                <div className="p-1.5 bg-violet-50 text-violet-600 rounded-xl border border-violet-100">
-                  <Database className="w-4 h-4 text-violet-600" />
-                </div>
-                <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">النسخ الاحتياطي التلقائي</h3>
-              </div>
-              <span className={`flex items-center gap-1 px-2.5 py-0.5 text-[10px] font-black rounded-full ${
-                isBackupSyncing ? 'bg-violet-50 text-violet-600 animate-pulse' : 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-              }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${isBackupSyncing ? 'bg-violet-500 animate-ping' : 'bg-emerald-500'}`} />
-                {isBackupSyncing ? 'جاري الحفظ...' : 'نشط وآمن'}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between p-2.5 bg-violet-50/40 rounded-xl border border-violet-100/50">
-              <div className="space-y-0.5 text-right">
-                <label className="text-xs font-bold text-slate-800 block">التحديث والنسخ المستمر</label>
-                <p className="text-[10px] text-slate-400">حفظ العمليات تلقائياً في الخلفية</p>
-              </div>
-              <button
-                onClick={() => setIsAutoBackupEnabled(!isAutoBackupEnabled)}
-                className={`w-9 h-5 rounded-full p-0.5 transition-colors duration-250 cursor-pointer ${
-                  isAutoBackupEnabled ? 'bg-emerald-500' : 'bg-slate-300'
-                } flex items-center ${isAutoBackupEnabled ? 'justify-end' : 'justify-start'}`}
-              >
-                <motion.div layout className="w-4 h-4 bg-white rounded-full shadow-xs" />
-              </button>
-            </div>
-          </div>
-
-          <Button 
-            variant="outline" 
-            className="w-full flex items-center justify-center gap-1.5 text-violet-600 border-violet-200 hover:bg-violet-50 text-xs py-2.5" 
-            onClick={forceLocalDiskBackup}
-            disabled={isBackupSyncing}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isBackupSyncing ? 'animate-spin' : ''}`} />
-            <span>تحديث وحفظ فوري لقاعدة البيانات</span>
-          </Button>
         </Card>
 
         {/* Card 6: Neural RAG & Gemini API Key */}

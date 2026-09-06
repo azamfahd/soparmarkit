@@ -33,7 +33,7 @@ export const PinVerificationModal: React.FC<PinVerificationModalProps> = ({
   if (!pinModal.isOpen) return null;
 
   return (
-    <div key="modal-pin" className="fixed inset-0 bg-black/75 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-black/75 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
       <motion.div 
         initial={{ scale: 0.95, opacity: 0 }} 
         animate={{ scale: 1, opacity: 1 }} 

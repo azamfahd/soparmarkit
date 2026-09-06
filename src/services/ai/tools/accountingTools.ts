@@ -400,13 +400,20 @@ export async function getCreditSalesSummaryTool(
  * 2. Profit Summary Tool
  */
 export async function getProfitSummaryTool(dateRange?: string, rawQuery?: string): Promise<Evidence> {
-  const allSales = await db.sales.toArray();
-  const allSaleItems = await db.saleItems.toArray();
-  const products = await db.products.toArray();
+  const [allSales, allSaleItems, products, expenses, withdrawals] = await Promise.all([
+    db.sales.toArray(),
+    db.saleItems.toArray(),
+    db.products.toArray(),
+    db.expenses.toArray(),
+    db.cashWithdrawals.toArray()
+  ]);
   const productMap = new Map(products.map(p => [p.id, p]));
 
   // 1. Period Metrics
   const filteredSales = filterSalesByDateRange(allSales, dateRange);
+  const filteredExpenses = filterSalesByDateRange(expenses, dateRange, 'date');
+  const filteredWithdrawals = filterSalesByDateRange(withdrawals.filter(w => !w.is_repaid), dateRange);
+
   const periodSaleIds = new Set(filteredSales.map(s => s.id));
   const filteredSaleItems = allSaleItems.filter(si => periodSaleIds.has(si.sale_id));
 
@@ -423,7 +430,11 @@ export async function getProfitSummaryTool(dateRange?: string, rawQuery?: string
     totalCost += cost;
   });
 
-  const netProfit = totalRevenue - totalCost;
+  const grossProfit = totalRevenue - totalCost;
+  const operationalExpenses = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  const cashWithdrawalsTotal = filteredWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+  const totalExpenses = operationalExpenses + cashWithdrawalsTotal;
+  const netProfit = grossProfit - totalExpenses;
   const marginPercent = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100) : 0;
 
   // 2. All-Time Cumulative Metrics
@@ -440,7 +451,11 @@ export async function getProfitSummaryTool(dateRange?: string, rawQuery?: string
     allTimeTotalCost += cost;
   });
 
-  const allTimeNetProfit = allTimeTotalRevenue - allTimeTotalCost;
+  const allTimeGrossProfit = allTimeTotalRevenue - allTimeTotalCost;
+  const allTimeOperationalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  const allTimeWithdrawals = withdrawals.filter(w => !w.is_repaid).reduce((sum, w) => sum + (w.amount || 0), 0);
+  const allTimeTotalExpenses = allTimeOperationalExpenses + allTimeWithdrawals;
+  const allTimeNetProfit = allTimeGrossProfit - allTimeTotalExpenses;
   const allTimeMarginPercent = allTimeTotalRevenue > 0 ? Math.round((allTimeNetProfit / allTimeTotalRevenue) * 100) : 0;
 
   const isCumulativeQuery = rawQuery ? /المحققة|التراكمية|المحل|الكلية|إجمالي|كلي|في النظام/i.test(rawQuery) : false;
@@ -451,11 +466,18 @@ export async function getProfitSummaryTool(dateRange?: string, rawQuery?: string
       dateRange: dateRange || 'ALL',
       totalRevenue,
       totalCost,
+      grossProfit,
+      operationalExpenses,
+      cashWithdrawalsTotal,
+      totalExpenses,
       netProfit,
       marginPercent,
       salesCount: filteredSales.length,
       allTimeTotalRevenue,
       allTimeTotalCost,
+      allTimeGrossProfit,
+      allTimeOperationalExpenses,
+      allTimeTotalExpenses,
       allTimeNetProfit,
       allTimeMarginPercent,
       allTimeSalesCount: allSales.length,
@@ -1454,10 +1476,10 @@ export async function getAnomalyDetectionTool(dateRange?: string, isVerification
 }
 
 /**
- * 13b. Sales Prediction and Product Cross-Selling Association Rule Forecast Tool
+ * 13b. Sales Prediction, Multi-Horizon Projections and Product Association Rules Forecast Tool
  */
-export async function getForecastTool(): Promise<Evidence> {
-  const forecast = await forecastSales();
+export async function getForecastTool(horizonDays: number = 30): Promise<Evidence> {
+  const forecast = await forecastSales(horizonDays);
   const basketRules = await getMarketBasketRules();
 
   return {
@@ -2290,13 +2312,14 @@ export async function getInventoryValuationTool(): Promise<Evidence> {
  * 29. 360-Degree Store Health Diagnostic Tool (تشخيص صحة المحل الشامل)
  */
 export async function getStoreHealthDiagnosticTool(): Promise<Evidence> {
-  const [sales, saleItems, products, customers, suppliers, withdrawals] = await Promise.all([
+  const [sales, saleItems, products, customers, suppliers, withdrawals, expenses] = await Promise.all([
     db.sales.toArray(),
     db.saleItems.toArray(),
     db.products.toArray(),
     db.customers.toArray(),
     db.suppliers.toArray(),
     db.cashWithdrawals.toArray(),
+    db.expenses.toArray(),
   ]);
 
   // Product price/cost lookup
@@ -2330,8 +2353,11 @@ export async function getStoreHealthDiagnosticTool(): Promise<Evidence> {
   const grossMarginPercent = totalGrossRevenue > 0 ? Math.round((grossProfit / totalGrossRevenue) * 100) : 0;
 
   // Operational expenses / withdrawals this month
+  const thisMonthExpenses = filterSalesByDateRange(expenses, 'THIS_MONTH', 'date');
   const thisMonthWithdrawals = filterSalesByDateRange(withdrawals, 'THIS_MONTH');
-  const totalExpenses = thisMonthWithdrawals.filter(w => !w.is_repaid).reduce((acc, w) => acc + (w.amount || 0), 0);
+  const opExpensesTotal = thisMonthExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+  const withdrawalsTotal = thisMonthWithdrawals.filter(w => !w.is_repaid).reduce((acc, w) => acc + (w.amount || 0), 0);
+  const totalExpenses = opExpensesTotal + withdrawalsTotal;
   const netProfit = grossProfit - totalExpenses;
 
   // Debts & Liquidity
@@ -2950,6 +2976,47 @@ export async function getSystemDictionaryExplanationTool(nluResult: NLUResult, _
       }
     },
     metadata: { toolName: 'getSystemDictionaryExplanation' },
+  };
+}
+
+/**
+ * Inventory Logs & Movements Tool
+ */
+export async function getInventoryLogsTool(targetName?: string): Promise<Evidence> {
+  const logs = await db.inventoryLogs.toArray();
+  const products = await db.products.toArray();
+  const productMap = new Map(products.map(p => [p.id, p]));
+
+  const effectiveTarget = targetName?.trim();
+
+  let filteredLogs = logs;
+  if (effectiveTarget) {
+    const matchedProducts = products.filter(p => p.name.includes(effectiveTarget));
+    const matchedIds = new Set(matchedProducts.map(p => p.id));
+    filteredLogs = logs.filter(l => matchedIds.has(l.product_id) || (l.product_name && l.product_name.includes(effectiveTarget)));
+  }
+
+  const sortedLogs = filteredLogs.slice().reverse().slice(0, 25).map(l => {
+    const p = productMap.get(l.product_id);
+    return {
+      productId: l.product_id,
+      productName: p ? p.name : (l.product_name || `منتج #${l.product_id}`),
+      type: l.type || l.reason,
+      oldQuantity: l.old_quantity,
+      newQuantity: l.new_quantity,
+      changeAmount: l.change_amount,
+      notes: l.notes || 'لا توجد ملاحظات',
+      date: l.created_at
+    };
+  });
+
+  return {
+    source: 'INDEXED_DB',
+    data: {
+      totalLogsCount: logs.length,
+      logs: sortedLogs,
+    },
+    metadata: { toolName: 'getInventoryLogs' },
   };
 }
 

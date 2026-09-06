@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { motion } from 'motion/react';
 import { 
   Home, 
@@ -17,14 +17,20 @@ interface SuppliersViewProps {
   formatPrice: (price: number) => string;
 }
 
-export const SuppliersView: React.FC<SuppliersViewProps> = ({
+const SuppliersViewComponent: React.FC<SuppliersViewProps> = ({
   setActiveTab,
   setShowAddSupplier,
-      suppliers,
+  suppliers,
   fetchSupplierHistory,
   formatPrice,
 }) => {
   const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
+
+  const filteredSuppliers = useMemo(() => {
+    const term = supplierSearchTerm.trim().toLowerCase();
+    if (!term) return suppliers;
+    return suppliers.filter(s => s.name && s.name.toLowerCase().includes(term));
+  }, [suppliers, supplierSearchTerm]);
 
   return (
     <motion.div 
@@ -63,9 +69,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
       </div>
 
       <div className="grid grid-cols-1 gap-3">
-        {suppliers
-          .filter(s => s.name.includes(supplierSearchTerm))
-          .map((s, idx) => (
+        {filteredSuppliers.map((s, idx) => (
           <Card 
             key={`supplier-card-list-${s.id ?? 'no-id'}-${idx}`} 
             className="hover:border-amber-200 transition-all cursor-pointer p-0 overflow-hidden bg-white border border-slate-100/60 shadow-xs" 
@@ -91,7 +95,7 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
           </Card>
         ))}
         
-        {suppliers.filter(s => s.name.includes(supplierSearchTerm)).length === 0 && (
+        {filteredSuppliers.length === 0 && (
           <div className="text-center py-20">
             <div className="bg-slate-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
               <Users className="w-8 h-8 text-slate-300" />
@@ -105,4 +109,5 @@ export const SuppliersView: React.FC<SuppliersViewProps> = ({
   );
 };
 
+export const SuppliersView = memo(SuppliersViewComponent);
 export default SuppliersView;

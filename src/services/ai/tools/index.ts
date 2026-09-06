@@ -10,6 +10,7 @@ import {
   getCustomerPaymentsTool,
   getPurchasesSummaryTool,
   getInventoryStatusTool,
+  getInventoryLogsTool,
   getLowStockReportTool,
   getExpiredAndExpiringReportTool,
   getSalesByProductTool,
@@ -174,7 +175,17 @@ export async function executeTools(nluResult: NLUResult, memoryContext?: any): P
     }
 
     case 'FORECAST': {
-      const forecastEvidence = await getForecastTool();
+      let horizon = 30;
+      if (dateRange === 'NEXT_WEEK' || dateRange === 'THIS_WEEK' || (dateRange && (dateRange.includes('WEEK') || dateRange.includes('7')))) {
+        horizon = 7;
+      } else if (dateRange === 'NEXT_MONTH' || dateRange === 'THIS_MONTH' || (dateRange && (dateRange.includes('MONTH') || dateRange.includes('30')))) {
+        horizon = 30;
+      } else if (dateRange === 'NEXT_QUARTER' || (dateRange && (dateRange.includes('QUARTER') || dateRange.includes('90')))) {
+        horizon = 90;
+      } else if (dateRange === 'NEXT_YEAR' || dateRange === 'THIS_YEAR' || (dateRange && (dateRange.includes('YEAR') || dateRange.includes('365')))) {
+        horizon = 365;
+      }
+      const forecastEvidence = await getForecastTool(horizon);
       evidences.push(forecastEvidence);
       break;
     }
@@ -252,6 +263,12 @@ export async function executeTools(nluResult: NLUResult, memoryContext?: any): P
     case 'INVENTORY_VALUATION': {
       const valuationEvidence = await getInventoryValuationTool();
       evidences.push(valuationEvidence);
+      break;
+    }
+
+    case 'INVENTORY_LOGS': {
+      const logsEvidence = await getInventoryLogsTool(targetName);
+      evidences.push(logsEvidence);
       break;
     }
 

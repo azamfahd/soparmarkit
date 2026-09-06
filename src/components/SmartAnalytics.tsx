@@ -4,6 +4,7 @@ import { db } from '../db';
 import { processUserQuery } from '../services/ai/aiRouter';
 import { preloadTrainingData } from '../services/ai/engine/trainingManager';
 import VisualModelsExtension from './VisualModelsExtension';
+import { SmartAdvisorModal } from './modals/SmartAdvisorModal';
 import { DailyLogModal } from './modals/DailyLogModal';
 import { CustomerReceivablesModal } from './modals/CustomerReceivablesModal';
 import { AnomalyReviewModal } from './modals/AnomalyReviewModal';
@@ -65,7 +66,19 @@ import {
   Copy,
   Check,
   Trash2,
-  Maximize2
+  Maximize2,
+  Package,
+  Briefcase,
+  Phone,
+  Building2,
+  Truck,
+  CreditCard,
+  ArrowUpRight,
+  Eye,
+  CheckCircle2,
+  AlertCircle,
+  DollarSign,
+  Tag
 } from 'lucide-react';
 
 interface SmartAnalyticsProps {
@@ -438,9 +451,13 @@ const MessageStagesWidget = ({ stages }: { stages: any[] }) => {
   );
 };
 
-export default function SmartAnalytics({ currency, formatPrice, onGoBack }: SmartAnalyticsProps) {
+
+
+
+export default function SmartAnalytics
+({ currency, formatPrice, onGoBack }: SmartAnalyticsProps) {
   // --- State for filter controls ---
-  const [dateFilter, setDateFilter] = useState<'today' | '7days' | '30days' | 'month' | 'all'>('30days');
+  const [dateFilter, setDateFilter] = useState<'today' | '7days' | '30days' | 'month' | 'all'>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedProductCategory, setSelectedProductCategory] = useState<string>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<string>('all');
@@ -462,6 +479,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const [isStagesModalOpen, setIsStagesModalOpen] = useState(false);
   const [isQuestionBankModalOpen, setIsQuestionBankModalOpen] = useState(false);
   const [isSmartAdvisorModalOpen, setIsSmartAdvisorModalOpen] = useState(false);
+  const [advisorInitialQuery, setAdvisorInitialQuery] = useState<string | null>(null);
+  const [learningRefreshKey, setLearningRefreshKey] = useState(0);
   const [anomalyModalType, setAnomalyModalType] = useState<'withdrawals' | 'odd_hours_sales' | 'pricing' | null>(null);
   const [resolvedAnomalies, setResolvedAnomalies] = useState<string[]>(() => {
     try {
@@ -485,8 +504,15 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   };
 
   // --- Search keys within lists ---
+  const [activeHubTab, setActiveHubTab] = useState<'all' | 'sales' | 'inventory' | 'customers' | 'cashflow' | 'suppliers'>('all');
   const [dailySearchKey, setDailySearchKey] = useState('');
   const [customerSearchKey, setCustomerSearchKey] = useState('');
+  const [supplierSearchKey, setSupplierSearchKey] = useState('');
+  const [selectedSupplierFilter, setSelectedSupplierFilter] = useState<string>('all'); // 'all' or supplier.id
+  const [supplierFilterType, setSupplierFilterType] = useState<'all' | 'due' | 'settled'>('all');
+  const [selectedSupplierForDetails, setSelectedSupplierForDetails] = useState<any | null>(null);
+  const [supplierDetailsTab, setSupplierDetailsTab] = useState<'overview' | 'products' | 'payments'>('overview');
+  const [supplierProductSearch, setSupplierProductSearch] = useState('');
 
   // --- Subscribing to live DB data ---
   const sales = useLiveQuery(() => db.sales.toArray()) || [];
@@ -494,21 +520,17 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   const products = useLiveQuery(() => db.products.toArray()) || [];
   const customers = useLiveQuery(() => db.customers.toArray()) || [];
   const debts = useLiveQuery(() => db.debts.toArray()) || [];
+  const suppliers = useLiveQuery(() => db.suppliers?.toArray() || Promise.resolve([])) || [];
+  const supplierPayments = useLiveQuery(() => db.supplierPayments?.toArray() || Promise.resolve([])) || [];
   const salesSettlements = useLiveQuery(() => db.salesSettlements?.toArray() || Promise.resolve([])) || [];
   const cashWithdrawals = useLiveQuery(() => db.cashWithdrawals?.toArray() || Promise.resolve([])) || [];
+  const inventoryLogs = useLiveQuery(() => db.inventoryLogs?.toArray() || Promise.resolve([])) || [];
   const storeNameSetting = useLiveQuery(() => db.settings.where('key').equals('storeName').first());
   
   const storeName = storeNameSetting?.value || 'المخزن الذكي';
 
   // --- AI Smart Assistant State (100% Offline Local Machine Learning Engine) ---
-  const [chatInput, setChatInput] = useState('');
-  const [chatMessages, setChatMessages] = useState<{ id: string; role: 'user' | 'assistant'; text: string; stages?: any[]; timestamp: Date }[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string>(() => 'session_' + Date.now());
-  const [isTyping, setIsTyping] = useState(false);
-  const [ratedMessages, setRatedMessages] = useState<{[key: string]: 'up' | 'down'}>({});
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+    const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
 
   useEffect(() => {
     preloadTrainingData();
@@ -522,159 +544,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, []);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, isTyping]);
-
-  const handleCopyText = (id: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedMessageId(id);
-    setTimeout(() => setCopiedMessageId(null), 2000);
-  };
-
-  const handleResetChat = async () => {
-    try {
-      const { deleteConversation, createNewConversation } = await import('../services/ai/memory');
-      if (activeConversationId) {
-        await deleteConversation(activeConversationId);
-      }
-      const newId = await createNewConversation();
-      setActiveConversationId(newId);
-    } catch (err) {
-      console.warn('Failed to clear conversation session memory:', err);
-      setActiveConversationId('session_' + Date.now());
-    }
-    setChatMessages([]);
-    setRatedMessages({});
-    setChatInput('');
-  };
-
-  const handleDeleteMessage = (id: string) => {
-    setChatMessages(prev => prev.filter(msg => msg.id !== id));
-  };
-
-  // --- Local Machine Learning state & calculations ---
-  const [learningRefreshKey, setLearningRefreshKey] = useState(0);
-
-  const mlLearningData = useMemo(() => {
-    // 1. Math Model: Linear Regression forecasting for sales
-    const dailySalesMap: { [key: string]: number } = {};
-    sales.forEach(s => {
-      if (!s.created_at) return;
-      const d = new Date(s.created_at);
-      if (isNaN(d.getTime())) return;
-      const dateStr = d.toISOString().split('T')[0];
-      dailySalesMap[dateStr] = (dailySalesMap[dateStr] || 0) + s.total_amount;
-    });
-
-    const sortedDates = Object.keys(dailySalesMap).sort();
-    const regressionPoints = sortedDates.map((date, idx) => ({
-      x: idx,
-      y: dailySalesMap[date]
-    }));
-
-    let slope = 0;
-    let intercept = 0;
-    const n = regressionPoints.length;
-    if (n >= 2) {
-      let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-      regressionPoints.forEach(p => {
-        sumX += p.x;
-        sumY += p.y;
-        sumXY += p.x * p.y;
-        sumXX += p.x * p.x;
-      });
-      const denominator = (n * sumXX) - (sumX * sumX);
-      if (denominator !== 0) {
-        slope = ((n * sumXY) - (sumX * sumY)) / denominator;
-        intercept = (sumY - (slope * sumX)) / n;
-      }
-    }
-
-    // Determine growth trend classification
-    let trendClassification: 'growing' | 'stable' | 'declining' = 'stable';
-    if (slope > 10) trendClassification = 'growing';
-    else if (slope < -10) trendClassification = 'declining';
-
-    // 2. Market Basket Association Rule Mining (Product Correlations)
-    const basketMap: { [key: string]: string[] } = {};
-    saleItems.forEach(item => {
-      if (!basketMap[item.sale_id]) {
-        basketMap[item.sale_id] = [];
-      }
-      const prod = products.find(p => p.id === item.product_id);
-      if (prod && !basketMap[item.sale_id].includes(prod.name)) {
-        basketMap[item.sale_id].push(prod.name);
-      }
-    });
-
-    const coOccurrencePairs: { [key: string]: number } = {};
-    const singleProductCounts: { [key: string]: number } = {};
-
-    Object.values(basketMap).forEach(items => {
-      items.forEach(it => {
-        singleProductCounts[it] = (singleProductCounts[it] || 0) + 1;
-      });
-      for (let i = 0; i < items.length; i++) {
-        for (let j = i + 1; j < items.length; j++) {
-          const pairKey = [items[i], items[j]].sort().join(' 🤝 ');
-          coOccurrencePairs[pairKey] = (coOccurrencePairs[pairKey] || 0) + 1;
-        }
-      }
-    });
-
-    const associatedPairs = Object.entries(coOccurrencePairs)
-      .map(([pair, count]) => {
-        const [p1, p2] = pair.split(' 🤝 ');
-        const support = count;
-        const confidenceP1ToP2 = support / (singleProductCounts[p1] || 1);
-        const confidenceP2ToP1 = support / (singleProductCounts[p2] || 1);
-        const maxConfidence = Math.max(confidenceP1ToP2, confidenceP2ToP1);
-        return { pair, count, maxConfidence };
-      })
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 3);
-
-    // 3. User feedback & learned metrics from localStorage
-    const savedStateStr = localStorage.getItem('smart_analytics_learning_v1');
-    const savedState = savedStateStr ? JSON.parse(savedStateStr) : {
-      thumbsUp: 0,
-      thumbsDown: 0,
-      queriesProcessed: 0,
-      mostQueriedCategory: 'sales',
-      categoryScores: { sales: 0, inventory: 0, debt: 0, cash: 0, advice: 0 }
-    };
-
-    // Calculate Store Health Score dynamically
-    const totalSalesSum = sales.reduce((sum, s) => sum + s.total_amount, 0);
-    const totalDebtSum = customers.reduce((sum, c) => sum + c.balance, 0);
-    const outOfStockCount = products.filter(p => p.stock_quantity <= 0).length;
-    
-    let storeHealthScore = 100;
-    if (totalSalesSum > 0) {
-      const debtRatio = totalDebtSum / totalSalesSum;
-      if (debtRatio > 0.4) storeHealthScore -= 20;
-      else if (debtRatio > 0.2) storeHealthScore -= 10;
-    }
-    if (products.length > 0) {
-      const outOfStockRatio = outOfStockCount / products.length;
-      if (outOfStockRatio > 0.3) storeHealthScore -= 20;
-      else if (outOfStockRatio > 0.1) storeHealthScore -= 10;
-    }
-    storeHealthScore = Math.max(50, storeHealthScore);
-
-    return {
-      slope,
-      trendClassification,
-      associatedPairs,
-      savedState,
-      storeHealthScore
-    };
-  }, [sales, saleItems, products, customers, learningRefreshKey]);
-
-  const recordQueryCategory = (category: 'sales' | 'inventory' | 'debt' | 'cash' | 'advice') => {
+  }, []);const recordQueryCategory = (category: 'sales' | 'inventory' | 'debt' | 'cash' | 'advice') => {
     const savedStateStr = localStorage.getItem('smart_analytics_learning_v1');
     const state = savedStateStr ? JSON.parse(savedStateStr) : {
       thumbsUp: 0,
@@ -738,195 +608,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     }
   };
 
-  const resolveSmartQuery = async (query: string): Promise<{ answer: string; stages?: any[] } | string> => {
-    try {
-      const aiResponse = await processUserQuery(query, activeConversationId);
-      if (aiResponse && aiResponse.answer && aiResponse.confidence >= 0.2) {
-        return {
-          answer: aiResponse.answer,
-          stages: aiResponse.processingStages
-        };
-      } else {
-        return { answer: 'عذراً، لم أتمكن من فهم طلبك بدقة كافية. يرجى توضيح سؤالك.' };
-      }
-    } catch (err) {
-      console.warn('AI Engine Router error:', err);
-      return { answer: 'عذراً، أواجه مشكلة في معالجة طلبك محلياً.' };
-    }
-  };
-
-  const handleSendMessage = async (textToSend?: string) => {
-    const query = (textToSend || chatInput).trim();
-    if (!query) return;
-
-    if (!textToSend) {
-      setChatInput('');
-    }
-
-    // Add user message
-    const newUserMessage = {
-      id: 'user-' + Date.now(),
-      role: 'user' as const,
-      text: query,
-      timestamp: new Date()
-    };
-    
-    setChatMessages(prev => [...prev, newUserMessage]);
-    setIsTyping(true);
-
-    // Hybrid Execution Engine (Online Gemini 2.5 Flash Cloud RAG + 100% Offline Local Engine Fallback)
-    setTimeout(async () => {
-      try {
-        const responseObj = await resolveSmartQuery(query);
-        const text = typeof responseObj === 'string' ? responseObj : responseObj.answer;
-        const defaultStages = [
-          {
-            stageNumber: 1,
-            title: 'فهم القصد وتفكيك الاستعلام (NLU)',
-            description: 'تحليل الاستعلام واستخراج القصد الرئيسي محلياً',
-            status: 'completed',
-            badge: 'NLU محلي',
-            details: `• النص المدخل: "${query}"`
-          },
-          {
-            stageNumber: 2,
-            title: 'استرجاع البيانات الحقيقية والسياق (DB)',
-            description: 'سحب السجلات والبيانات المسجلة من IndexedDB',
-            status: 'completed',
-            badge: 'IndexedDB',
-            details: '• تم استرداد كافة القوائم المالية والمبيعات.'
-          },
-          {
-            stageNumber: 3,
-            title: 'التحليل الذكي وتطابق الأرقام (Audit)',
-            description: 'حساب المؤشرات ورصد الأسباب والفوارق التشخيصية',
-            status: 'completed',
-            badge: 'تدقيق ذكي',
-            details: '• تم إجراء عملية المطابقة الحسابية بنجاح.'
-          },
-          {
-            stageNumber: 4,
-            title: 'صياغة الإجابة المباشرة الموثوقة (Synthesis)',
-            description: 'إخراج التقرير الفوري وتوصيات الحلول',
-            status: 'completed',
-            badge: 'جاهز',
-            details: 'تم إخراج الإجابة النهائية.'
-          }
-        ];
-        const stages = typeof responseObj === 'object' && responseObj.stages && responseObj.stages.length > 0
-          ? responseObj.stages
-          : defaultStages;
-
-        setChatMessages(prev => [...prev, {
-          id: 'assistant-' + Date.now(),
-          role: 'assistant' as const,
-          text,
-          stages,
-          timestamp: new Date()
-        }]);
-      } catch (error: any) {
-        setChatMessages(prev => [...prev, {
-          id: 'error-' + Date.now(),
-          role: 'assistant' as const,
-          text: `⚠️ **حدث خطأ أثناء معالجة الاستفسار:**\n${error.message || String(error)}`,
-          timestamp: new Date()
-        }]);
-      } finally {
-        setIsTyping(false);
-      }
-    }, 250);
-  };
-
-  const formatInlineStyles = (rawText: string, lineKeyPrefix: string | number = 'inline') => {
-    const parts: React.ReactNode[] = [];
-    let lastIndex = 0;
-    const boldRegex = /\*\*(.*?)\*\*/g;
-    let match;
-
-    while ((match = boldRegex.exec(rawText)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(rawText.substring(lastIndex, match.index));
-      }
-      parts.push(
-        <strong key={`${lineKeyPrefix}-bold-${match.index}`} className="font-black text-amber-300 mx-0.5">
-          {match[1]}
-        </strong>
-      );
-      lastIndex = boldRegex.lastIndex;
-    }
-    if (lastIndex < rawText.length) {
-      parts.push(rawText.substring(lastIndex));
-    }
-    return parts.length > 0 ? parts : rawText;
-  };
-
-  const formatAssistantMessage = (text: string, msgPrefix: string = 'msg') => {
-    return text.split('\n').map((line, idx) => {
-      let content = line.trim();
-      const lineKey = `${msgPrefix}-l-${idx}`;
-      if (!content) return <div key={lineKey} className="h-2" />;
-
-      // Match markdown headers like ### or ## or #
-      if (content.startsWith('###') || content.startsWith('##') || content.startsWith('#')) {
-        const titleText = content.replace(/^#+\s*/, '');
-        return (
-          <div key={lineKey} className="mt-3.5 mb-2 first:mt-0" dir="rtl">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-amber-500/20 via-indigo-500/15 to-transparent border-r-4 border-amber-400 rounded-xl text-amber-300 font-black text-xs sm:text-sm shadow-2xs">
-              <Sparkles className="w-4 h-4 text-amber-300 shrink-0 animate-pulse" />
-              <span>{titleText}</span>
-            </div>
-          </div>
-        );
-      }
-
-      // Check for prominent header lines with emojis
-      if (/^(🔒|📊|🏬|📋|✨|💡|🩺|⚠️|✅|📦|👥|💵|🧠|🔮|🛡️|🚨|📌|🎯|🏆|🏷️|🔄)\s+/.test(content)) {
-        return (
-          <div key={lineKey} className="mt-3 mb-1.5 first:mt-0 font-black text-xs sm:text-sm text-amber-300 flex items-center gap-2 border-b border-indigo-500/20 pb-1" dir="rtl">
-            <span>{formatInlineStyles(content, lineKey)}</span>
-          </div>
-        );
-      }
-
-      // Check if it is a numbered list item like "1.", "2."
-      const numberedMatch = content.match(/^(\d+)[\.\-\)]\s+(.*)/);
-      if (numberedMatch) {
-        const num = numberedMatch[1];
-        const rest = numberedMatch[2];
-        return (
-          <div key={lineKey} className="flex items-start gap-2.5 my-1.5 p-2.5 bg-slate-950/60 hover:bg-slate-950/80 border border-white/5 rounded-2xl transition-colors text-xs leading-relaxed" dir="rtl">
-            <span className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-indigo-700 text-white font-black text-[10px] flex items-center justify-center shrink-0 shadow-2xs mt-0.5 border border-indigo-400/30">
-              {num}
-            </span>
-            <div className="flex-1 text-slate-100 font-medium">
-              {formatInlineStyles(rest, lineKey)}
-            </div>
-          </div>
-        );
-      }
-
-      // Check if it is a bullet list item (- , * , •)
-      const isListItem = content.startsWith('-') || content.startsWith('*') || content.startsWith('•');
-      if (isListItem) {
-        let cleanText = content.replace(/^[-*•]\s*/, '');
-        return (
-          <div key={lineKey} className="flex items-start gap-2 my-1.5 pr-1.5 text-xs leading-relaxed text-slate-100" dir="rtl">
-            <span className="text-teal-400 select-none font-bold mt-1 shrink-0 text-[10px]">◆</span>
-            <div className="flex-1 font-medium">
-              {formatInlineStyles(cleanText, lineKey)}
-            </div>
-          </div>
-        );
-      }
-
-      // Regular paragraph
-      return (
-        <p key={lineKey} className="my-1.5 leading-relaxed text-xs text-slate-100 text-right font-medium" dir="rtl">
-          {formatInlineStyles(content, lineKey)}
-        </p>
-      );
-    });
-  };
+  
 
   // Map products of shop for easy retrieval
   const productMap = useMemo(() => {
@@ -1324,6 +1006,215 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
     return customerSalesBreakdown.filter(cust => cust.name.toLowerCase().includes(customerSearchKey.toLowerCase()));
   }, [customerSalesBreakdown, customerSearchKey]);
 
+  // --- Inventory & Stock Real-time Statistics ---
+  const inventoryStats = useMemo(() => {
+    let totalCostValuation = 0;
+    let totalRetailValuation = 0;
+    let totalStockUnits = 0;
+    let lowStockCount = 0;
+    let outOfStockCount = 0;
+    let expiringSoonCount = 0;
+
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+
+    products.forEach(p => {
+      const qty = p.stock_quantity || 0;
+      const cost = p.cost_price || 0;
+      const sale = p.sale_price || 0;
+
+      totalStockUnits += qty;
+      totalCostValuation += qty * cost;
+      totalRetailValuation += qty * sale;
+
+      if (qty <= 0) {
+        outOfStockCount++;
+      } else if (qty <= 5) {
+        lowStockCount++;
+      }
+
+      if (p.expiration_date) {
+        const expTime = new Date(p.expiration_date).getTime();
+        if (expTime > now && expTime - now <= thirtyDaysMs) {
+          expiringSoonCount++;
+        }
+      }
+    });
+
+    const potentialProfit = Math.max(0, totalRetailValuation - totalCostValuation);
+    const potentialMargin = totalRetailValuation > 0 ? (potentialProfit / totalRetailValuation) * 100 : 0;
+
+    return {
+      totalCostValuation,
+      totalRetailValuation,
+      potentialProfit,
+      potentialMargin,
+      totalStockUnits,
+      totalProductsCount: products.length,
+      lowStockCount,
+      outOfStockCount,
+      expiringSoonCount
+    };
+  }, [products]);
+
+  // --- Suppliers & Payables Comprehensive Analytics ---
+  const supplierAnalytics = useMemo(() => {
+    let totalSuppliersDebt = 0;
+    let totalSuppliersPaid = 0;
+    let suppliersWithDebtCount = 0;
+
+    suppliers.forEach(s => {
+      const bal = s.balance || 0;
+      if (bal > 0) {
+        totalSuppliersDebt += bal;
+        suppliersWithDebtCount++;
+      }
+    });
+
+    supplierPayments.forEach(p => {
+      totalSuppliersPaid += (p.amount || 0);
+    });
+
+    // Compute for every supplier
+    const supplierList = suppliers.map(s => {
+      const supplierProducts = products.filter(p => p.supplier_id === s.id);
+      const supplierProductIds = new Set(supplierProducts.map(p => p.id));
+      const supplierStock = supplierProducts.reduce((acc, p) => acc + (p.stock_quantity || 0), 0);
+      const supplierInventoryCostValue = supplierProducts.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.cost_price || 0)), 0);
+      const supplierInventoryRetailValue = supplierProducts.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.sale_price || 0)), 0);
+      
+      const payments = supplierPayments.filter(p => p.supplier_id === s.id);
+      const totalPaid = payments.reduce((acc, p) => acc + (p.amount || 0), 0);
+      
+      let totalSoldQuantity = 0;
+      let totalSoldValue = 0;
+      let totalSoldCostValue = 0;
+      saleItems.forEach(item => {
+        if (supplierProductIds.has(item.product_id)) {
+          totalSoldQuantity += item.quantity;
+          totalSoldValue += item.price_at_sale * item.quantity;
+          const prod = productMap.get(item.product_id);
+          const unitCost = prod ? prod.cost_price : (item.price_at_sale * 0.75);
+          totalSoldCostValue += unitCost * item.quantity;
+        }
+      });
+
+      // Total supplier capital entitlement = current stock at cost + sold items at cost
+      const totalInventoryAndSoldCost = supplierInventoryCostValue + totalSoldCostValue;
+      
+      // Total required before payments = Balance + Total Paid
+      const totalRequiredBeforeSettlement = (s.balance || 0) + totalPaid;
+
+      const lastPayment = payments.length > 0 
+        ? payments.slice().sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime())[0]
+        : null;
+
+      return {
+        id: s.id,
+        name: s.name,
+        phone: s.phone,
+        balance: s.balance || 0,
+        productsCount: supplierProducts.length,
+        products: supplierProducts,
+        inventoryStock: supplierStock,
+        inventoryCostValue: supplierInventoryCostValue,
+        inventoryRetailValue: supplierInventoryRetailValue,
+        totalSoldCostValue,
+        totalInventoryAndSoldCost,
+        totalRequiredBeforeSettlement,
+        payments: payments.slice().sort((a, b) => new Date(b.payment_date).getTime() - new Date(a.payment_date).getTime()),
+        totalPaid,
+        lastPaymentDate: lastPayment ? lastPayment.payment_date : null,
+        totalSoldQuantity,
+        totalSoldValue
+      };
+    }).sort((a, b) => (b.balance || 0) - (a.balance || 0));
+
+    // Global Aggregate
+    const totalInventoryCostAll = supplierList.reduce((acc, s) => acc + s.inventoryCostValue, 0);
+    const totalSoldCostAll = supplierList.reduce((acc, s) => acc + s.totalSoldCostValue, 0);
+    const totalInventoryAndSoldCostAll = totalInventoryCostAll + totalSoldCostAll;
+    const totalRequiredBeforeSettlementAll = totalSuppliersDebt + totalSuppliersPaid;
+
+    // Selected supplier view
+    const selectedSupplierObj = selectedSupplierFilter === 'all' 
+      ? null 
+      : supplierList.find(s => String(s.id) === String(selectedSupplierFilter)) || null;
+
+    const activeViewMetrics = selectedSupplierObj ? {
+      name: selectedSupplierObj.name,
+      isSpecific: true,
+      currentBalance: selectedSupplierObj.balance,
+      totalPaid: selectedSupplierObj.totalPaid,
+      totalRequiredBeforeSettlement: selectedSupplierObj.totalRequiredBeforeSettlement,
+      inventoryCostValue: selectedSupplierObj.inventoryCostValue,
+      soldCostValue: selectedSupplierObj.totalSoldCostValue,
+      totalInventoryAndSoldCost: selectedSupplierObj.totalInventoryAndSoldCost,
+      productsCount: selectedSupplierObj.productsCount,
+      paymentsCount: selectedSupplierObj.payments.length
+    } : {
+      name: 'جميع الموردين',
+      isSpecific: false,
+      currentBalance: totalSuppliersDebt,
+      totalPaid: totalSuppliersPaid,
+      totalRequiredBeforeSettlement: totalRequiredBeforeSettlementAll,
+      inventoryCostValue: totalInventoryCostAll,
+      soldCostValue: totalSoldCostAll,
+      totalInventoryAndSoldCost: totalInventoryAndSoldCostAll,
+      productsCount: products.filter(p => p.supplier_id != null).length,
+      paymentsCount: supplierPayments.length
+    };
+
+    return {
+      totalSuppliersDebt,
+      totalSuppliersPaid,
+      suppliersWithDebtCount,
+      totalSuppliersCount: suppliers.length,
+      supplierList,
+      totalInventoryCostAll,
+      totalSoldCostAll,
+      totalInventoryAndSoldCostAll,
+      totalRequiredBeforeSettlementAll,
+      activeViewMetrics,
+      selectedSupplierObj
+    };
+  }, [suppliers, products, supplierPayments, saleItems, productMap, selectedSupplierFilter]);
+
+  // Filtered Suppliers for directory search and category
+  const filteredSupplierList = useMemo(() => {
+    return supplierAnalytics.supplierList.filter(s => {
+      const matchSearch = !supplierSearchKey.trim() || 
+        s.name.toLowerCase().includes(supplierSearchKey.toLowerCase()) || 
+        (s.phone && s.phone.includes(supplierSearchKey));
+      
+      if (!matchSearch) return false;
+
+      if (supplierFilterType === 'due') return s.balance > 0;
+      if (supplierFilterType === 'settled') return s.balance <= 0;
+      return true;
+    });
+  }, [supplierAnalytics.supplierList, supplierSearchKey, supplierFilterType]);
+
+  // --- Customers & Debts Overview Analytics ---
+  const customerAnalytics = useMemo(() => {
+    let totalCustomerDebts = 0;
+    let debtorsCount = 0;
+
+    customers.forEach(c => {
+      const bal = c.balance || 0;
+      if (bal > 0) {
+        totalCustomerDebts += bal;
+        debtorsCount++;
+      }
+    });
+
+    return {
+      totalCustomerDebts,
+      debtorsCount,
+      totalCustomersCount: customers.length
+    };
+  }, [customers]);
+
   // --- Chart 1: Sales and Profits Trend (Grouped by Month uniquely to prevent duplication like 03/26, 05/26, 07/26) ---
   const salesAndProfitTrendChart = useMemo(() => {
     const monthlyMap: { [key: string]: { dateStr: string, rawDate: Date, totalAmount: number, profit: number, count: number } } = {};
@@ -1505,258 +1396,7 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
   }, [filteredSaleItemsData, productMap]);
 
   // --- Automatic AI Insights Generation ---
-  const smartAIRecommendations = useMemo(() => {
-    const list: Array<{ 
-      id: number; 
-      type: 'success' | 'warning' | 'info'; 
-      title: string; 
-      desc: string; 
-      actionLabel?: string;
-      anomalyKey?: 'withdrawals' | 'odd_hours_sales' | 'pricing';
-    }> = [];
-
-    // 1. Profit Margin alert
-    const margin = performanceKPIs.profitMarginPercent;
-    if (margin > 0) {
-      if (margin < 15) {
-        list.push({
-          id: 1,
-          type: 'warning',
-          title: 'تدني هامش الربح الإجمالي للمحل',
-          desc: `هامش الربح المسجل حالياً هو ${margin.toFixed(1)}% وهو منخفض. ينصح بمراجعة فواتير شراء السلع وتعديل أسعار بيع الفئات الأقل ربحاً لضمان تغطية التكاليف التشغيلية.`
-        });
-      } else if (margin >= 25) {
-        list.push({
-          id: 1,
-          type: 'success',
-          title: 'هامش أرباح ممتاز ومستدام',
-          desc: `متوسط جودة وتسعير بضائعك تولد هامش ربح ${margin.toFixed(1)}% وهو ممتاز ومطابق لمعايير الأسواق الناجحة.`
-        });
-      } else {
-        list.push({
-          id: 1,
-          type: 'info',
-          title: 'هامش الربح مستقر وضمن الحدود الطبيعية',
-          desc: `يسجل المحل هامش ربح يقارب ${margin.toFixed(1)}%. استمر في تحسين تسعير المبيعات الموسمية لزيادة العوائد.`
-        });
-      }
-    }
-
-    // 2. Debt versus Liquidity Warning
-    const totalSales = performanceKPIs.salesTotal;
-    const debtSales = performanceKPIs.debtSalesTotal;
-    if (totalSales > 0) {
-      const debtRatio = (debtSales / totalSales) * 100;
-      if (debtRatio > 35) {
-        list.push({
-          id: 2,
-          type: 'warning',
-          title: 'ارتفاع في مبيعات الديون والذمم (البيع الآجل)',
-          desc: `البيع الآجل يمثل ${debtRatio.toFixed(1)}% من مجمل المبيعات. قد تسبب هذه النسبة نقصاً في السيولة الكاش الصالحة للجرد الفوري. ينصح بكبح حدود الديون وطلب تسديدات للزبائن الممتنعين.`
-        });
-      } else if (debtRatio < 10) {
-        list.push({
-          id: 2,
-          type: 'success',
-          title: 'سيولة مالية فائقة الدقة بالصندوق',
-          desc: `تشكل البيوع النقدية (الكاش والبطاقات الفورية) أكثر من ${(100 - debtRatio).toFixed(1)}% من المبيعات وهو ما يحافظ على حركة الصندوق وسهولة شراء مخزون بديل بشكل مستدام.`
-        });
-      }
-    }
-
-    // 3. Low stock critical visual forecast
-    const lowStockCount = products.filter(p => p.stock_quantity <= 5).length;
-    if (lowStockCount > 0) {
-      list.push({
-        id: 3,
-        type: 'warning',
-        title: `هناك سلع ومواد موشكة على النفاد بالمستودع`,
-        desc: `يوجد حالياً عدد ${lowStockCount} منتج تقل كمية مخزونهم عن 5 قطع في الرف وممنوع انقطاعهم. يرجى المسارعة في توريد قطع بديلة لتفادي فقدان الزبائن.`
-      });
-    }
-
-    // 4. Cash Settle discrepancies alert
-    if (performanceKPIs.totalDeficitAmount > 0) {
-      list.push({
-        id: 4,
-        type: 'warning',
-        title: 'رصد فجوة وتناقضات كاش بصندوق الدرج الرئيسي',
-        desc: `سجلت المطابقات الأخيرة عجزاً تراكمياً مقداره ${formatPrice(performanceKPIs.totalDeficitAmount)}. يرجى تفعيل تتبع سلفة ومسحوبات أمناء الصناديق بدقة ومطابقة الفواتير أولاً بأول.`
-      });
-    } else {
-      list.push({
-        id: 4,
-        type: 'success',
-        title: 'امتثال وانضباط تام في صندوق النقد كاش',
-        desc: 'لم يتم رصد أي فجوات عجز نقدية ملموسة في مطابقات الفترة السابقة. جرد الدرج متطابق تماماً ويعزز ثبات أرباحك الصافية.'
-      });
-    }
-
-    // 5. Expiry Date Alerts
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const thirtyDays = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
-    let expiredStock = 0;
-    let expiringStock = 0;
-    
-    products.forEach(p => {
-      if ((p as any).expiration_date) {
-        const expDate = new Date((p as any).expiration_date);
-        if (expDate < today) expiredStock++;
-        else if (expDate <= thirtyDays) expiringStock++;
-      }
-    });
-
-    if (expiredStock > 0) {
-      list.push({
-        id: 5,
-        type: 'warning',
-        title: 'عاجل: توجد منتجات منتهية الصلاحية',
-        desc: `تحذير هام! هناك ${expiredStock} منتج في المستودع انتهت صلاحيتهم الفعّالة. يجب استبعادهم فوراً من الرفوف لمنع بيعها للزبائن بالخطأ.`
-      });
-    } else if (expiringStock > 0) {
-      list.push({
-        id: 5,
-        type: 'info',
-        title: 'منتجات قاربت على الانتهاء',
-        desc: `يوجد ${expiringStock} منتجات ستنتهي صلاحيتها خلال الـ 30 يوماً القادمة. يُنصح بعمل عروض ترويجية فورية أو خصومات (التصفية) لتسريع بيعها قبل خسارتها.`
-      });
-    }
-
-    // 6. Least selling products optimization
-    if (topProductsChart.length > 5) {
-      // Products with least revenue
-      const sortedByLeastRevenue = [...topProductsChart].sort((a, b) => a.revenue - b.revenue);
-      const leastSelling = sortedByLeastRevenue.slice(0, 3).map(p => p.name).join('، ');
-      
-      list.push({
-        id: 6,
-        type: 'info',
-        title: 'توصيات لإنعاش المنتجات الأقل مبيعاً',
-        desc: `لاحظ النظام ضعف حركة البيع للمنتجات: (${leastSelling}). كإجراء تصحيحي، اقرنها كباقات مع السلع الأكثر مبيعاً أو قدم عروض (اشتر واحد والثاني بنصف السعر) لتسريع دوران المخزون وتحريك رأس المال المعطل.`
-      });
-    }
-
-    // 7. System Tracking & Velocity
-    const velocity = performanceKPIs.salesTotal / Math.max(performanceKPIs.transactionsCount, 1);
-    if (velocity > 100) {
-       list.push({
-        id: 7,
-        type: 'success',
-        title: 'مؤشر ممتاز لمتوسط سلة المشتريات للزبائن',
-        desc: `حركة النظام توضح أن متوسط سلة المشتريات للفاتورة الواحدة يبلغ ${formatPrice(velocity)}. هذا يعكس قوة شرائية ممتازة. فكر في إرساء برنامج نقاط ولاء للاحتفاظ بهؤلاء الزبائن المميزين.`
-       });
-    } else if (velocity > 0 && velocity < 15) {
-       list.push({
-        id: 7,
-        type: 'info',
-        title: 'ضعف في حجم سلة الزبون الشرائية',
-        desc: `متوسط إنفاق الزبون في الفاتورة الواحدة هو ${formatPrice(velocity)}. لتحسين المبيعات، درب الكاشير على اقتراح منتجات مكملة (البيع المتقاطع) قبل الدفع.`
-       });
-    }
-
-    // 8. Advanced Pricing and Low Profit Margin Stock Check
-    if (!resolvedAnomalies.includes('pricing')) {
-      const lowMarginProducts = products.filter(p => {
-        const margin = p.sale_price - p.cost_price;
-        return p.cost_price > 0 && (margin <= 0 || (margin / p.sale_price) < 0.1);
-      });
-      if (lowMarginProducts.length > 0) {
-        const negativeProfit = lowMarginProducts.filter(p => p.sale_price < p.cost_price);
-        const thinMargin = lowMarginProducts.filter(p => p.sale_price >= p.cost_price);
-        
-        let descText = '';
-        if (negativeProfit.length > 0) {
-          descText += `⚠️ رصد عدد ${negativeProfit.length} منتج مسعر بالخسارة (سعر البيع أقل من التكلفة): (${negativeProfit.slice(0, 3).map(p => p.name).join('، ')}). هذا يعني خسارة مؤكدة عند كل حركة بيع! `;
-        }
-        if (thinMargin.length > 0) {
-          descText += `📉 رصد عدد ${thinMargin.length} منتج بهامش ربح ضئيل جداً أقل من 10%: (${thinMargin.slice(0, 3).map(p => p.name).join('، ')}). هذه الفئة تؤثر سلباً على متوسط ربحية المتجر ولا تغطي الأعباء التشغيلية.`;
-        }
-        list.push({
-          id: 8,
-          type: 'warning',
-          title: '⚠️ كشف ثغرة تسعيرية في المخزون المضاف حديثاً',
-          desc: descText,
-          actionLabel: 'فحص وتعديل التسعير',
-          anomalyKey: 'pricing'
-        });
-      }
-    }
-
-    // 9. Suspicious Cash Withdrawals Detection
-    if (!resolvedAnomalies.includes('withdrawals')) {
-      const suspiciousWithdrawals = cashWithdrawals.filter(w => {
-        const isLarge = w.amount > 500;
-        const reasonLower = (w.reason || '').toLowerCase();
-        const isUnrecordedReason = !w.reason || w.reason.trim() === '' || reasonLower.includes('اخرى') || reasonLower.includes('سحب') || reasonLower.includes('بدون');
-        const isAlreadyApproved = (w.reason || '').includes('تمت المطابقة والاعتماد');
-        if (isAlreadyApproved) return false;
-        return isLarge || isUnrecordedReason;
-      });
-      if (suspiciousWithdrawals.length > 0) {
-        const largeWithdrawals = suspiciousWithdrawals.filter(w => w.amount > 500);
-        const vagueWithdrawals = suspiciousWithdrawals.filter(w => !w.amount || w.amount <= 500);
-        
-        let descText = `رصد النظام عدد ${suspiciousWithdrawals.length} حركة سحب نقدي تستحق المراجعة والتدقيق: `;
-        if (largeWithdrawals.length > 0) {
-          descText += `💸 سحبيات مبالغ كبيرة تزيد عن 500 ريال بقيمة إجمالية ${formatPrice(largeWithdrawals.reduce((s, w) => s + w.amount, 0))}. `;
-        }
-        if (vagueWithdrawals.length > 0) {
-          descText += `❓ سحبيات بدون سبب واضح ومفصل أو مسجلة تحت بنود مبهمة. `;
-        }
-        descText += `يوصى بمطابقتها مع سندات الصرف المعتمدة لضمان عدم تسرب الكاش.`;
-        
-        list.push({
-          id: 9,
-          type: 'warning',
-          title: '🚨 تتبع مالي: مسحوبات نقدية (سحبيات) غير اعتيادية',
-          desc: descText,
-          actionLabel: 'تدقيق واعتماد السحبيات',
-          anomalyKey: 'withdrawals'
-        });
-      }
-    }
-
-    // 10. Unexpected System Changes & Odd-Hour Operations
-    if (!resolvedAnomalies.includes('odd_hours_sales')) {
-      const anomalousSales = sales.filter(s => {
-        const isReviewed = (s.notes || '').includes('تمت مراجعة');
-        if (isReviewed) return false;
-        const d = new Date(s.created_at);
-        const hours = d.getHours();
-        const isOddHour = hours >= 0 && hours < 5; // Midnight to 5 AM
-        const isZeroAmount = s.total_amount <= 0;
-        return isOddHour || isZeroAmount;
-      });
-      if (anomalousSales.length > 0) {
-        const oddHourSales = anomalousSales.filter(s => {
-          const h = new Date(s.created_at).getHours();
-          return h >= 0 && h < 5;
-        });
-        const zeroAmountSales = anomalousSales.filter(s => s.total_amount <= 0);
-        
-        let descText = `تم رصد حركات غير متوقعة في نظام الفواتير: `;
-        if (oddHourSales.length > 0) {
-          descText += `🌙 عدد ${oddHourSales.length} عملية بيع تمت في ساعات متأخرة جداً بين منتصف الليل و5 صباحاً. `;
-        }
-        if (zeroAmountSales.length > 0) {
-          descText += `💸 عدد ${zeroAmountSales.length} فاتورة مسجلة بقيمة صفرية أو سالبة. `;
-        }
-        descText += `يرجى مراجعة كاميرات المراقبة أو مطابقتها مع نوبات عمل الموظفين للتأكد من عدم وجود تلاعب.`;
-        
-        list.push({
-          id: 10,
-          type: 'warning',
-          title: '⚠️ رصد حركات تشغيلية غير متوقعة في النظام',
-          desc: descText,
-          actionLabel: 'مراجعة وتأكيد الفواتير',
-          anomalyKey: 'odd_hours_sales'
-        });
-      }
-    }
-
-    return list;
-  }, [performanceKPIs, products, formatPrice, topProductsChart, cashWithdrawals, sales, salesSettlements, resolvedAnomalies]);
+  
 
   // --- Dynamic Professional PDF Report Generation ---
   const handleExportPDF = () => {
@@ -2063,601 +1703,532 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
         </div>
       </div>
 
-      {/* Structured Grouped Metrics Panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* Panel A: Operational & Sales Summary */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
-          <div className="flex justify-between items-center pb-2.5 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 bg-indigo-50 text-indigo-600 rounded-xl">
-                <ShoppingBag className="w-4 h-4" />
-              </span>
-              <h3 className="text-xs font-black text-slate-800">
-                لوحة الأداء التشغيلي وأعمال البيع والربحية
-              </h3>
-            </div>
-            <span className="text-[10px] text-slate-400 font-bold">مؤشرات حية</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            {/* Total Sales Card */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">إجمالي المبيعات المحققة</span>
-              <div className="my-2 text-lg sm:text-xl font-black text-slate-800 font-mono">
-                {formatPrice(performanceKPIs.salesTotal)}
-              </div>
-              <div className="text-[9px] font-bold text-slate-500">
-                الحجم: <span className="font-extrabold text-indigo-600">{performanceKPIs.transactionsCount} عمليات</span>
-              </div>
-            </div>
-
-            {/* Total Profit Card */}
-            <div className="bg-emerald-50/30 border border-emerald-100/40 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-emerald-700">الأرباح التقريبية الصافية</span>
-              <div className="my-2 text-lg sm:text-xl font-black text-emerald-700 font-mono">
-                {formatPrice(performanceKPIs.profitTotal)}
-              </div>
-              <div className="text-[9px] font-bold text-emerald-800">
-                معدل الهامش: <span className="font-extrabold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-md">{performanceKPIs.profitMarginPercent.toFixed(1)}%</span>
-              </div>
-            </div>
-
-            {/* Goods Cost Card */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">قيمة السلع بسعر التكلفة (للمورد)</span>
-              <div className="my-2 text-base sm:text-lg font-black text-slate-700 font-mono">
-                {formatPrice(performanceKPIs.costTotal)}
-              </div>
-              <p className="text-[9px] text-slate-400 leading-none">مستحقات الشراء وتكلفة الرفوف</p>
-            </div>
-
-            {/* Average Order Value (AOV) Card */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">متوسط قيمة الفاتورة المصدرة</span>
-              <div className="my-2 text-base sm:text-lg font-black text-slate-700 font-mono">
-                {formatPrice(performanceKPIs.avgOrderValue)}
-              </div>
-              <p className="text-[9px] text-slate-400 leading-none">معدل البيع لكل زبون بالعملية</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Panel B: Drawer Cash & Liquidity Dynamics */}
-        <div className="bg-white border border-slate-100 rounded-3xl p-5 shadow-sm space-y-4">
-          <div className="flex justify-between items-center pb-2.5 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 bg-emerald-50 text-emerald-600 rounded-xl">
-                <Wallet className="w-4 h-4" />
-              </span>
-              <h3 className="text-xs font-black text-slate-800">
-                حركة كاش الصندوق وحسابات السيولة والأرصدة الفورية
-              </h3>
-            </div>
-            <span className="text-[10px] text-emerald-600 font-black">جرد وخزينة المبيعات</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            {/* Absolute Cash in Drawer */}
-            <div className="bg-indigo-50/40 border border-indigo-100/40 p-4 rounded-2xl flex flex-col justify-between col-span-2">
-              <div className="flex justify-between items-center">
-                <span className="text-[10px] font-black text-indigo-700 flex items-center gap-1">
-                  💸 نقدية صندوق الدرج الملموسة والجاهزة للجرد (Cash in Drawer)
-                </span>
-                <span className="text-[8px] bg-indigo-100 text-indigo-800 font-black rounded-sm px-1 leading-none uppercase">فعلي وحي</span>
-              </div>
-              <div className="my-2.5 text-xl sm:text-2xl font-black text-indigo-900 font-mono">
-                {formatPrice(performanceKPIs.absoluteActualCashInDrawer)}
-              </div>
-              <p className="text-[9px] text-slate-500 leading-relaxed">
-                * يمثل الكاش المسلم بالدرج فعلياً. يعادل (كاش مبيعات + مدفوعات ديون) مطروحاً منه التسويات للملك والمسحوبات الشخصية.
-              </p>
-            </div>
-
-            {/* Total Period Receipts */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">مقبوضات نقداً (كاش + تحصيلات)</span>
-              <div className="my-1 text-sm font-black text-slate-800 font-mono">
-                {formatPrice(performanceKPIs.receivedCashInPeriod)}
-              </div>
-              <p className="text-[9px] text-slate-400">إجمالي النقدية الواردة الصندوق</p>
-            </div>
-
-            {/* Settlements to owner */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">مصفى للدرج والمالك مسبقاً</span>
-              <div className="my-1 text-sm font-black text-slate-800 font-mono">
-                {formatPrice(performanceKPIs.totalSettledAmount)}
-              </div>
-              <p className="text-[9px] text-slate-400">التصفيات الفعلية المرحّلة</p>
-            </div>
-
-            {/* Personal Withdrawals */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">نفقات ومسحوبات وسلفيات</span>
-              <div className="my-1 text-sm font-black text-rose-700 font-mono">
-                -{formatPrice(performanceKPIs.totalWithdrawals)}
-              </div>
-              <p className="text-[9px] text-slate-400">الذمم والسلفيات غير المسددة</p>
-            </div>
-
-            {/* Drawer accuracy score */}
-            <div className="bg-slate-50/50 border border-slate-100/60 p-4 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] font-black text-slate-400">دقة مطابقة عجز الصندوق</span>
-              <div className="my-1 text-sm font-black text-slate-800 font-mono flex items-center gap-1">
-                <span className={performanceKPIs.boxMatchingScore >= 95 ? 'text-emerald-600' : 'text-amber-600'}>
-                  {performanceKPIs.boxMatchingScore.toFixed(0)}%
-                </span>
-                {performanceKPIs.totalDeficitAmount > 0 && (
-                  <span className="text-[9px] font-black text-rose-600">(فجوة: {formatPrice(performanceKPIs.totalDeficitAmount)})</span>
-                )}
-              </div>
-              <p className="text-[9px] text-slate-400">مدى مطابقة حساب الدرج</p>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-
-      {/* BI Analytics Visualizer - Charts Workspace */}
-      <div className="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
+      {/* Quick Jump / Domain Navigation Tab Bar */}
+      <div className="bg-slate-900 text-white rounded-2xl p-1.5 shadow-md flex items-center gap-1.5 overflow-x-auto custom-scrollbar border border-slate-800">
         <button 
-          onClick={() => setIsTrendsAndLiquidityOpen(!isTrendsAndLiquidityOpen)}
-          className="w-full flex items-center justify-between p-5 bg-slate-50/50 hover:bg-slate-50 transition-colors cursor-pointer text-right"
+          type="button"
+          onClick={() => setActiveHubTab('all')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeHubTab === 'all' 
+              ? 'bg-indigo-600 text-white shadow-sm' 
+              : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/5'
+          }`}
         >
-          <div className="flex items-center gap-2 font-black text-sm text-slate-800 animate-none">
-            <TrendingUp className="w-4.5 h-4.5 text-indigo-600" />
-            <span>📈 شاشات التحليل البصري التفاعلي وحركة التدفق المالي العميقة (BI Graphics Dashboard)</span>
-          </div>
-          {isTrendsAndLiquidityOpen ? <ChevronUp className="w-4.5 h-4.5 text-slate-500" /> : <ChevronDown className="w-4.5 h-4.5 text-slate-500" />}
+          <Layers className="w-3.5 h-3.5" />
+          <span>الكل (شبكة متناسقة)</span>
         </button>
 
-        <AnimatePresence initial={false}>
-          {isTrendsAndLiquidityOpen && (
-            <motion.div 
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden border-t border-slate-100"
-            >
-              <div className="p-5 grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Visual Trend Chart */}
-                <div className="lg:col-span-2 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 pb-3">
-                    <div>
-                      <h3 className="text-xs font-black text-slate-755 flex items-center gap-1.5">
-                        <BarChart3 className="w-4 h-4 text-indigo-500" />
-                        <span>منحنيات تتبع الأداء الحركي والمالي بالدورة</span>
-                      </h3>
-                      <p className="text-[10px] text-slate-400 mt-0.5">اختر الشهر من القائمة السريعة أدناه لتفحّص تفاصيل وأرباح ذلك الشهر تحديداً</p>
-                    </div>
+        <button 
+          type="button"
+          onClick={() => setActiveHubTab('sales')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeHubTab === 'sales' 
+              ? 'bg-indigo-600 text-white shadow-sm' 
+              : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/5'
+          }`}
+        >
+          <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />
+          <span>المبيعات والأرباح</span>
+        </button>
 
-                    {/* Chart Tab Selectors */}
-                    <div className="flex bg-slate-100 px-1 py-1 rounded-2xl text-[10px] font-black font-sans">
-                      <button
-                        onClick={() => setTrendChartType('sales_profit')}
-                        className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                          trendChartType === 'sales_profit' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        📈 المبيعات والأرباح
-                      </button>
-                      <button
-                        onClick={() => setTrendChartType('cash_flow')}
-                        className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                          trendChartType === 'cash_flow' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        💸 التدفق النقدي كاش
-                      </button>
-                    </div>
-                  </div>
+        <button 
+          type="button"
+          onClick={() => setActiveHubTab('inventory')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeHubTab === 'inventory' 
+              ? 'bg-emerald-600 text-white shadow-sm' 
+              : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/5'
+          }`}
+        >
+          <Package className="w-3.5 h-3.5 text-emerald-400" />
+          <span>المخزون والرفوف</span>
+        </button>
 
-                  {/* Quick Month Selectors Pills */}
-                  {availableMonthsList.length > 0 && (
-                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 pt-0.5 scrollbar-thin">
-                      <span className="text-[10px] font-extrabold text-slate-400 shrink-0">تحويل سريع للشهر:</span>
-                      <button
-                        onClick={() => setSelectedMonth('all')}
-                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer shrink-0 ${
-                          selectedMonth === 'all' 
-                            ? 'bg-indigo-600 text-white shadow-xs' 
-                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}
-                      >
-                        الكل ({availableMonthsList.length} أشهر)
-                      </button>
-                      {availableMonthsList.map(([mKey, mName], idx) => (
-                        <button
-                          key={`month-pill-${mKey}-${idx}`}
-                          onClick={() => setSelectedMonth(mKey)}
-                          className={`px-2.5 py-1 rounded-xl text-[10px] font-black transition-all cursor-pointer shrink-0 ${
-                            selectedMonth === mKey 
-                              ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20 ring-2 ring-indigo-400/40' 
-                              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                          }`}
-                        >
-                          {mName}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+        <button 
+          type="button"
+          onClick={() => setActiveHubTab('customers')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeHubTab === 'customers' 
+              ? 'bg-amber-600 text-white shadow-sm' 
+              : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/5'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5 text-amber-400" />
+          <span>العملاء والديون</span>
+        </button>
 
-                  {/* Render Area/Line Charts */}
-                  <div className="h-64 sm:h-72 w-full bg-slate-50/40 rounded-2xl p-2 border border-slate-100 flex flex-col justify-between">
-                    {trendChartType === 'sales_profit' ? (
-                      salesAndProfitTrendChart.length === 0 ? (
-                        <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                          لا تتوفر حركة ملموسة للتواريخ الحالية في نطاق الفئات المحددة.
-                        </div>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="95%" minWidth={0} minHeight={0}>
-                          <AreaChart data={salesAndProfitTrendChart} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                            <defs>
-                              <linearGradient id="colorSalesNew" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.20}/>
-                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
-                              </linearGradient>
-                              <linearGradient id="colorProfitNew" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.20}/>
-                                <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                            <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
-                            <Tooltip 
-                              contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
-                              formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات الشهرية' : 'أرباح الشهر الصافية']}
-                            />
-                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                            <Area type="monotone" dataKey="totalAmount" name="totalAmount" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorSalesNew)" animationDuration={250} />
-                            <Area type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorProfitNew)" animationDuration={250} />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      )
-                    ) : (
-                      unifiedCashflowTimeline.length === 0 ? (
-                        <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                          لا تتوفر حركات مالية كحصد مبيعات، سحب نقد، أو تسوية جرد بالتاريخ الحالي.
-                        </div>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="95%" minWidth={0} minHeight={0}>
-                          <AreaChart data={unifiedCashflowTimeline} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                            <defs>
-                              <linearGradient id="colorMoneyIn" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#2563eb" stopOpacity={0.16}/>
-                                <stop offset="95%" stopColor="#2563eb" stopOpacity={0.0}/>
-                              </linearGradient>
-                              <linearGradient id="colorMoneyOut" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#dc2626" stopOpacity={0.12}/>
-                                <stop offset="95%" stopColor="#dc2626" stopOpacity={0.0}/>
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                            <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} />
-                            <YAxis stroke="#94a3b8" fontSize={9} fontWeight="extrabold" tickLine={false} tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
-                            <Tooltip 
-                              contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', border: '1px solid #f1f5f9', fontSize: '11px', fontWeight: 'bold' }} 
-                              formatter={(value: any, name: any) => [
-                                formatPrice(Math.round(value)), 
-                                name === 'moneyIn' ? 'المقبوضات (كاش مبيعات + تحصيل)' : name === 'moneyOut' ? 'المدفوعات (نفقات ومسحوبات وتصفية)' : 'صافي نمو الصندوق باليوم'
-                              ]}
-                            />
-                            <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                            <Area type="monotone" dataKey="moneyIn" name="moneyIn" stroke="#2563eb" strokeWidth={2.5} fillOpacity={1} fill="url(#colorMoneyIn)" animationDuration={250} />
-                            <Area type="monotone" dataKey="moneyOut" name="moneyOut" stroke="#dc2626" strokeWidth={2} fillOpacity={1} fill="url(#colorMoneyOut)" animationDuration={250} />
-                            <Line type="monotone" dataKey="netRegisterChange" name="netRegisterChange" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4, strokeWidth: 1 }} animationDuration={250} />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      )
-                    )}
-                  </div>
+        <button 
+          type="button"
+          onClick={() => setActiveHubTab('cashflow')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeHubTab === 'cashflow' 
+              ? 'bg-sky-600 text-white shadow-sm' 
+              : 'bg-white/10 hover:bg-white/20 text-slate-200 border border-white/5'
+          }`}
+        >
+          <Wallet className="w-3.5 h-3.5 text-sky-400" />
+          <span>الصندوق والسيولة</span>
+        </button>
 
-                  {/* Featured Selected Month Detailed Highlights Card */}
-                  {selectedMonth !== 'all' && (
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.98 }} 
-                      animate={{ opacity: 1, scale: 1 }} 
-                      className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 shadow-md border border-indigo-500/30 space-y-3 mt-3"
-                    >
-                      <div className="flex justify-between items-center pb-2.5 border-b border-white/10">
-                        <div className="flex items-center gap-2">
-                          <span className="p-1.5 bg-indigo-500/20 text-indigo-300 rounded-xl border border-indigo-400/30">
-                            <Calendar className="w-4 h-4" />
-                          </span>
-                          <div>
-                            <h4 className="text-xs font-black text-white">
-                              بطاقة تفاصيل وتحليل شهر: {availableMonthsList.find(([k]) => k === selectedMonth)?.[1] || selectedMonth}
-                            </h4>
-                            <p className="text-[10px] text-indigo-200">بيانات دقيقة تم تخصيص كافة مؤشرات المنظومة بناءً عليها</p>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => setSelectedMonth('all')}
-                          className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded-xl text-[10px] font-black transition-all cursor-pointer border border-white/10 flex items-center gap-1"
-                        >
-                          <X className="w-3 h-3" />
-                          <span>إلغاء التحديد (كل الأشهر)</span>
-                        </button>
-                      </div>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-right">
-                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
-                          <span className="text-[10px] text-slate-300 font-bold block">مبيعات الشهر</span>
-                          <span className="text-sm font-black text-emerald-400 font-mono mt-0.5 block">
-                            {formatPrice(performanceKPIs.salesTotal)}
-                          </span>
-                          <span className="text-[9px] text-slate-400 font-medium">عدد الفواتير: {performanceKPIs.transactionsCount}</span>
-                        </div>
-
-                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
-                          <span className="text-[10px] text-slate-300 font-bold block">أرباح الشهر الصافية</span>
-                          <span className="text-sm font-black text-emerald-300 font-mono mt-0.5 block">
-                            {formatPrice(performanceKPIs.profitTotal)}
-                          </span>
-                          <span className="text-[9px] text-emerald-400 font-medium">الهامش: {performanceKPIs.profitMarginPercent.toFixed(1)}%</span>
-                        </div>
-
-                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
-                          <span className="text-[10px] text-slate-300 font-bold block">تكلفة شراء الموردين</span>
-                          <span className="text-sm font-black text-amber-300 font-mono mt-0.5 block">
-                            {formatPrice(performanceKPIs.costTotal)}
-                          </span>
-                          <span className="text-[9px] text-slate-400 font-medium">قيمة التأسيس</span>
-                        </div>
-
-                        <div className="bg-white/5 border border-white/10 p-2.5 rounded-xl">
-                          <span className="text-[10px] text-slate-300 font-bold block">مقبوضات كاش / ديون</span>
-                          <div className="flex items-center gap-1 text-xs font-mono font-black mt-0.5">
-                            <span className="text-emerald-400">{formatPrice(performanceKPIs.cashSalesTotal)}</span>
-                            <span className="text-slate-500">/</span>
-                            <span className="text-amber-400">{formatPrice(performanceKPIs.debtSalesTotal)}</span>
-                          </div>
-                          <span className="text-[9px] text-slate-400 font-medium">نقدي مقابل آجل</span>
-                        </div>
-                      </div>
-                    </motion.div>
-                  )}
-                </div>
-
-                {/* Donut Chart Representation for business balances */}
-                <div className="bg-slate-50/60 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between space-y-4">
-                  <div className="flex flex-col gap-2 border-b border-slate-150 pb-2">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-black text-slate-755">توازن وموجات الدفع والسيولة</h3>
-                      
-                      <select 
-                        value={liquidityDonutType}
-                        onChange={(e) => setLiquidityDonutType(e.target.value as any)}
-                        className="bg-white border border-slate-200 py-1 px-1.5 rounded-lg text-[9px] font-black focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
-                      >
-                        <option value="revenue_mix">توزيع المبيعات (كاش/ذمم)</option>
-                        <option value="liquidity_allocation">توزيع السيولة بالمنظومة</option>
-                      </select>
-                    </div>
-                    <p className="text-[10px] text-slate-400">بنية توزيع المال والسيولة لتأكيد ترابط وتوازن الصندوق</p>
-                  </div>
-
-                  {/* Render dynamic interactive Pie Charts */}
-                  <div className="h-40 w-full flex items-center justify-center relative">
-                    {performanceKPIs.salesTotal === 0 ? (
-                      <span className="text-xs text-slate-400">لا تتوفر بيانات حية</span>
-                    ) : (
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                        <RechartsPieChart>
-                          {liquidityDonutType === 'revenue_mix' ? (
-                            <Pie
-                              data={[
-                                { name: 'بيوع نقدية (كاش)', value: performanceKPIs.cashSalesTotal },
-                                { name: 'ذمم مدينة (آجل)', value: performanceKPIs.debtSalesTotal }
-                              ]}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={45}
-                              outerRadius={60}
-                              paddingAngle={4}
-                              dataKey="value"
-                              animationDuration={250}
-                            >
-                              <Cell fill="#10b981" />
-                              <Cell fill="#f59e0b" />
-                            </Pie>
-                          ) : (
-                            <Pie
-                              data={[
-                                { name: 'المتوفر كاش بالصندوق', value: performanceKPIs.absoluteActualCashInDrawer },
-                                { name: 'المسحوبات المعلقة', value: performanceKPIs.totalWithdrawals },
-                                { name: 'المستلم التصفية', value: performanceKPIs.totalSettledAmount },
-                                { name: 'غير محصل (ذمم العملاء)', value: performanceKPIs.debtSalesTotal }
-                              ]}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={45}
-                              outerRadius={60}
-                              paddingAngle={4}
-                              dataKey="value"
-                              animationDuration={250}
-                            >
-                              <Cell fill="#3b82f6" />
-                              <Cell fill="#f43f5e" />
-                              <Cell fill="#8b5cf6" />
-                              <Cell fill="#d97706" />
-                            </Pie>
-                          )}
-                          <Tooltip 
-                            contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '12px', fontSize: '10px' }}
-                            formatter={(value: any) => formatPrice(value)} 
-                          />
-                        </RechartsPieChart>
-                      </ResponsiveContainer>
-                    )}
-                    <div className="absolute flex flex-col items-center">
-                      <span className="text-[7px] text-slate-400 font-extrabold uppercase">إجمالي المحرك</span>
-                      <span className="text-[11px] font-black font-mono text-slate-700">
-                        {liquidityDonutType === 'revenue_mix' 
-                          ? formatPrice(performanceKPIs.salesTotal) 
-                          : formatPrice(performanceKPIs.absoluteActualCashInDrawer + performanceKPIs.totalWithdrawals + performanceKPIs.totalSettledAmount + performanceKPIs.debtSalesTotal)
-                        }
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Legends and breakdowns */}
-                  <div className="space-y-1.5 border-t border-slate-150 pt-2 text-[11px]">
-                    {liquidityDonutType === 'revenue_mix' ? (
-                      <>
-                        <div className="flex justify-between items-center bg-white p-2 border border-slate-100 rounded-xl leading-none">
-                          <span className="flex items-center gap-1.5 font-bold text-slate-600">
-                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 block"></span>
-                            المقبوض المباشر (كاش):
-                          </span>
-                          <span className="font-extrabold text-emerald-800 font-mono">
-                            {formatPrice(performanceKPIs.cashSalesTotal)} ({((performanceKPIs.cashSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)
-                          </span>
-                        </div>
-                        <div className="flex justify-between items-center bg-white p-2 border border-slate-100 rounded-xl leading-none">
-                          <span className="flex items-center gap-1.5 font-bold text-slate-600">
-                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 block"></span>
-                            ذمم مدينة (آجل):
-                          </span>
-                          <span className="font-extrabold text-amber-800 font-mono">
-                            {formatPrice(performanceKPIs.debtSalesTotal)} ({((performanceKPIs.debtSalesTotal / (performanceKPIs.salesTotal || 1)) * 100).toFixed(0)}%)
-                          </span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="grid grid-cols-2 gap-1.5 text-[9px] font-bold">
-                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
-                          <span className="text-blue-500">🔵 كاش الصندوق:</span>
-                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.absoluteActualCashInDrawer)}</span>
-                        </div>
-                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
-                          <span className="text-rose-500">🔴 مسحوبات ونفقات:</span>
-                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.totalWithdrawals)}</span>
-                        </div>
-                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
-                          <span className="text-purple-500">🟣 كاش مصفى مسلّم:</span>
-                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.totalSettledAmount)}</span>
-                        </div>
-                        <div className="bg-white p-1.5 border border-slate-100 rounded-lg flex flex-col">
-                          <span className="text-amber-600">🟠 ديون بالذمة:</span>
-                          <span className="font-mono text-slate-800 text-[10px] sm:text-xs">{formatPrice(performanceKPIs.debtSalesTotal)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-              
-              {/* Note on automatic feeds to provide ultimate clarity */}
-              <div className="bg-slate-50 p-4 border-t border-slate-100 text-[11px] sm:text-xs text-slate-500 flex items-center gap-2 font-medium">
-                <HelpCircle className="w-4 h-4 text-indigo-500 shrink-0" />
-                <span>
-                  <strong>مؤشرات تفاعلية شاملة:</strong> الرسوم البيانية بالأعلى مترابطة بشكل حي وتلقائي مع كشوفات حساب الذمم، صندوق سلفيات وسحبيات الموظفين، وتسويات الجرد اليومي بالدرج لتمنحك رؤية فورية دقيقة لنمو راس المال.
-                </span>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <button 
+          type="button"
+          onClick={() => setActiveHubTab('suppliers')}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 cursor-pointer ${
+            activeHubTab === 'suppliers' 
+              ? 'bg-amber-500 text-slate-950 font-black shadow-sm' 
+              : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/30'
+          }`}
+        >
+          <Building2 className="w-3.5 h-3.5 text-amber-400" />
+          <span>الموردين والمستحقات 🏬</span>
+        </button>
       </div>
 
-      {/* Accordion List 3: The Ultimate Tabbed Ledger Explorer */}
-      <div className="bg-white border border-slate-150/60 rounded-3xl overflow-hidden shadow-sm">
-        {/* Ledger Header with Tab Switcher */}
-        <div className="p-4 sm:p-5 bg-slate-50/70 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-              <Database className="w-4.5 h-4.5 text-indigo-500" />
-              <span>مركز تتبع سجلات الحركة والمحاسبة المتكامل (Ledger Explorer Dashboard)</span>
-            </h3>
-            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-              اختر التبويب بالأسفل لعرض الدفتر اليومي الصافي، حسابات وأرصدة العملاء، أو تتبع ريادة مبيعات السلع والرفوف في مكان واحد
-            </p>
-          </div>
-
-          {/* Core Tab Switches */}
-          <div className="flex gap-2 text-xs font-black w-full sm:w-auto">
-            <button
-              onClick={() => setShowDailyLogModal(true)}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700"
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              <span>📆 السجل اليومي</span>
-            </button>
-            <button
-              onClick={() => setShowCustomerReceivablesModal(true)}
-              className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700"
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>👤 ذمم العملاء</span>
-            </button>
-             <button
-               className="flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl transition-all cursor-pointer bg-white text-indigo-600 shadow-sm font-black"
-             >
-               <Layers className="w-3.5 h-3.5" />
-               <span>🏆 الرفوف والسلع</span>
-             </button>
-          </div>
-
-        </div>
-
-        {/* Tab Content Panels */}
-        <div className="p-5">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key="products_panel"
-              initial={{ opacity: 0, x: 15 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -15 }}
-              transition={{ duration: 0.15 }}
-              className="grid grid-cols-1 lg:grid-cols-2 gap-6"
-            >
-              {/* Horizontal Top Rated products bar list */}
-              <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
+      {/* Analytics Hubs Container - Responsive Grid Layout */}
+      <div className={activeHubTab === 'all' ? 'grid grid-cols-1 xl:grid-cols-2 gap-5 items-start' : 'space-y-5'}>
+        
+        {/* SECTION 1: 📈 قسم المبيعات والأرباح (Sales & Profitability Hub) */}
+        {(activeHubTab === 'all' || activeHubTab === 'sales') && (
+          <section className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100">
+                  <TrendingUp className="w-4 h-4" />
+                </div>
                 <div>
-                  <h3 className="text-xs font-black text-slate-700">ترتيب مساهمة السلع الفردية</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">المنتجات الخمسة الأولى المحققة لأعلى عائد مالي وأرباح</p>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-sm font-black text-slate-800">
+                      قسم المبيعات والأرباح
+                    </h3>
+                    <span className="text-[9.5px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-bold border border-indigo-100">
+                      Sales Hub
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">الإيرادات، الأرباح الصافية، وتكلفة بضاعة البيع</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowDailyLogModal(true)}
+                  className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border border-indigo-100"
+                >
+                  <Calendar className="w-3 h-3" />
+                  <span>السجل اليومي 📆</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Metric Cards for Sales (Compact 2x2 or 4-col) */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Card 1: Total Sales */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">إجمالي المبيعات</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-slate-800 font-mono">
+                  {formatPrice(performanceKPIs.salesTotal)}
+                </div>
+                <div className="text-[10px] font-bold text-slate-500 flex items-center justify-between">
+                  <span>العمليات: <strong className="text-indigo-600">{performanceKPIs.transactionsCount}</strong></span>
+                  <span className="text-[9px] bg-slate-200/60 px-1 py-0.2 rounded">مكتمل</span>
+                </div>
+              </div>
+
+              {/* Card 2: Net Profits */}
+              <div className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-emerald-800">الأرباح الصافية</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-emerald-700 font-mono">
+                  {formatPrice(performanceKPIs.profitTotal)}
+                </div>
+                <div className="text-[10px] font-bold text-emerald-800 flex items-center justify-between">
+                  <span>الهامش:</span>
+                  <span className="bg-emerald-100 text-emerald-900 font-extrabold px-1.5 py-0.5 rounded text-[9.5px]">
+                    {performanceKPIs.profitMarginPercent.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+
+              {/* Card 3: Goods Cost */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">تكلفة المشتريات المباعة</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-slate-700 font-mono">
+                  {formatPrice(performanceKPIs.costTotal)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">سعر التأسيس للموردين</p>
+              </div>
+
+              {/* Card 4: Average Order Value */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">متوسط الفاتورة (AOV)</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-slate-700 font-mono">
+                  {formatPrice(performanceKPIs.avgOrderValue)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">معدل البيع للعملية</p>
+              </div>
+            </div>
+
+            {/* Visual Trend Chart */}
+            <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-2.5">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-1.5">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <BarChart3 className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>منحنى نمو المبيعات وصافي الأرباح</span>
+                  </h4>
                 </div>
 
-                <div className="h-64 w-full bg-white rounded-2xl p-2 border border-slate-100">
-                  {topProductsChart.length === 0 ? (
+                {/* Quick Month Selector */}
+                {availableMonthsList.length > 0 && (
+                  <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-thin">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMonth('all')}
+                      className={`px-2 py-0.5 rounded-lg text-[9.5px] font-bold transition-all cursor-pointer shrink-0 ${
+                        selectedMonth === 'all' 
+                          ? 'bg-indigo-600 text-white shadow-xs' 
+                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      الكل
+                    </button>
+                    {availableMonthsList.map(([mKey, mName], idx) => (
+                      <button
+                        type="button"
+                        key={`sales-month-pill-${mKey}-${idx}`}
+                        onClick={() => setSelectedMonth(mKey)}
+                        className={`px-2 py-0.5 rounded-lg text-[9.5px] font-bold transition-all cursor-pointer shrink-0 ${
+                          selectedMonth === mKey 
+                            ? 'bg-indigo-600 text-white shadow-xs' 
+                            : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {mName}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="h-52 w-full bg-white rounded-xl p-2 border border-slate-100">
+                {salesAndProfitTrendChart.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                    لا تتوفر حركة مبيعات مسجلة في النطاق الزمني المحدد.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <AreaChart data={salesAndProfitTrendChart} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorSalesSection" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.20}/>
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0}/>
+                        </linearGradient>
+                        <linearGradient id="colorProfitSection" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.20}/>
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                      <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickLine={false} />
+                      <YAxis stroke="#94a3b8" fontSize={9} fontWeight="bold" tickLine={false} tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
+                      <Tooltip 
+                        contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '12px', border: '1px solid #f1f5f9', fontSize: '10px', fontWeight: 'bold' }} 
+                        formatter={(value: any, name: any) => [formatPrice(Math.round(value)), name === 'totalAmount' ? 'المبيعات' : 'صافي الأرباح']}
+                      />
+                      <Legend verticalAlign="top" height={28} iconType="circle" wrapperStyle={{ fontSize: '9.5px', fontWeight: 'bold' }} />
+                      <Area type="monotone" dataKey="totalAmount" name="totalAmount" stroke="#6366f1" strokeWidth={2} fillOpacity={1} fill="url(#colorSalesSection)" animationDuration={200} />
+                      <Area type="monotone" dataKey="profit" name="profit" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorProfitSection)" animationDuration={200} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* SECTION 4: 💵 قسم الصندوق وحركة النقدية والسيولة (Cash Flow Hub) */}
+        {(activeHubTab === 'all' || activeHubTab === 'cashflow') && (
+          <section className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-sky-50 text-sky-600 rounded-xl border border-sky-100">
+                  <Wallet className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-sm font-black text-slate-800">
+                      قسم الصندوق وحركة النقدية
+                    </h3>
+                    <span className="text-[9.5px] bg-sky-50 text-sky-700 px-2 py-0.5 rounded-full font-bold border border-sky-100">
+                      Cash Flow Hub
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">نقدية الدرج، المسحوبات، والمبالغ المصفاة للمالك</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-100">
+                <span>مطابقة الدرج:</span>
+                <span className={`font-mono font-black ${performanceKPIs.boxMatchingScore >= 95 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {performanceKPIs.boxMatchingScore.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+
+            {/* 4 Metric Cards for Cash Flow (Compact) */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Card 1: Actual Cash in Drawer */}
+              <div className="bg-sky-50/60 border border-sky-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-sky-900">نقدية الدرج الفعلية</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-sky-900 font-mono">
+                  {formatPrice(performanceKPIs.absoluteActualCashInDrawer)}
+                </div>
+                <p className="text-[9.5px] text-sky-700 font-medium">جاهز للجرد الفوري</p>
+              </div>
+
+              {/* Card 2: Received Cash in Period */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">إجمالي المقبوضات</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-slate-800 font-mono">
+                  {formatPrice(performanceKPIs.receivedCashInPeriod)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">مبيعات + سداد ديون</p>
+              </div>
+
+              {/* Card 3: Settlements to Owner */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">المصفى للمالك</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-purple-700 font-mono">
+                  {formatPrice(performanceKPIs.totalSettledAmount)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">التصفيات المسلّمة</p>
+              </div>
+
+              {/* Card 4: Withdrawals and Expenses */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">نفقات ومسحوبات</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-rose-700 font-mono">
+                  -{formatPrice(performanceKPIs.totalWithdrawals)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">مصاريف مسجلة</p>
+              </div>
+            </div>
+
+            {/* Cashflow Timeline Chart & Donut */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-2">
+                <h4 className="text-xs font-bold text-slate-700">التدفق النقدي والنمو اليومي</h4>
+                <div className="h-44 w-full bg-white rounded-xl p-1.5 border border-slate-100">
+                  {unifiedCashflowTimeline.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                      لم يتم تسجيل أي بضائع مباعة بالتصفية المحددة.
+                      لا تتوفر حركات مالية مسجلة.
                     </div>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                      <BarChart data={topProductsChart} layout="vertical" margin={{ top: 10, right: 30, left: -20, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                        <XAxis type="number" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
-                        <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={9} fontWeight="extrabold" width={110} tickLine={false} />
+                      <AreaChart data={unifiedCashflowTimeline} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorMoneyInSec" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.16}/>
+                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0.0}/>
+                          </linearGradient>
+                          <linearGradient id="colorMoneyOutSec" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#dc2626" stopOpacity={0.12}/>
+                            <stop offset="95%" stopColor="#dc2626" stopOpacity={0.0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                        <XAxis dataKey="dateStr" stroke="#94a3b8" fontSize={9} fontWeight="bold" tickLine={false} />
+                        <YAxis stroke="#94a3b8" fontSize={9} fontWeight="bold" tickLine={false} tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
                         <Tooltip 
-                          contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '16px', fontSize: '11px' }}
+                          contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '12px', border: '1px solid #f1f5f9', fontSize: '10px' }} 
+                          formatter={(value: any, name: any) => [
+                            formatPrice(Math.round(value)), 
+                            name === 'moneyIn' ? 'المقبوضات' : 'المدفوعات'
+                          ]}
+                        />
+                        <Area type="monotone" dataKey="moneyIn" name="moneyIn" stroke="#2563eb" strokeWidth={1.8} fillOpacity={1} fill="url(#colorMoneyInSec)" animationDuration={200} />
+                        <Area type="monotone" dataKey="moneyOut" name="moneyOut" stroke="#dc2626" strokeWidth={1.8} fillOpacity={1} fill="url(#colorMoneyOutSec)" animationDuration={200} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </div>
+
+              {/* Liquidity Donut Allocation */}
+              <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 flex flex-col justify-between space-y-2">
+                <h4 className="text-xs font-bold text-slate-700">توزيع السيولة بالمنظومة</h4>
+                <div className="h-32 w-full flex items-center justify-center relative">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <RechartsPieChart>
+                      <Pie
+                        data={[
+                          { name: 'كاش الدرج', value: performanceKPIs.absoluteActualCashInDrawer },
+                          { name: 'المسحوبات', value: performanceKPIs.totalWithdrawals },
+                          { name: 'المصفى للمالك', value: performanceKPIs.totalSettledAmount },
+                          { name: 'ذمم العملاء', value: performanceKPIs.debtSalesTotal }
+                        ]}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={36}
+                        outerRadius={52}
+                        paddingAngle={3}
+                        dataKey="value"
+                        animationDuration={200}
+                      >
+                        <Cell fill="#3b82f6" />
+                        <Cell fill="#f43f5e" />
+                        <Cell fill="#8b5cf6" />
+                        <Cell fill="#d97706" />
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '10px', fontSize: '9.5px' }}
+                        formatter={(value: any) => formatPrice(value)} 
+                      />
+                    </RechartsPieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1 text-[8.5px] font-bold">
+                  <div className="bg-white p-1 border border-slate-100 rounded flex justify-between">
+                    <span className="text-blue-500">🔵 كاش:</span>
+                    <span className="font-mono text-slate-700">{formatPrice(performanceKPIs.absoluteActualCashInDrawer)}</span>
+                  </div>
+                  <div className="bg-white p-1 border border-slate-100 rounded flex justify-between">
+                    <span className="text-rose-500">🔴 سحب:</span>
+                    <span className="font-mono text-slate-700">{formatPrice(performanceKPIs.totalWithdrawals)}</span>
+                  </div>
+                  <div className="bg-white p-1 border border-slate-100 rounded flex justify-between">
+                    <span className="text-purple-500">🟣 مصفى:</span>
+                    <span className="font-mono text-slate-700">{formatPrice(performanceKPIs.totalSettledAmount)}</span>
+                  </div>
+                  <div className="bg-white p-1 border border-slate-100 rounded flex justify-between">
+                    <span className="text-amber-600">🟠 آجل:</span>
+                    <span className="font-mono text-slate-700">{formatPrice(performanceKPIs.debtSalesTotal)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* SECTION 2: 📦 قسم المخزون والمنتجات وحركة الرفوف (Inventory Hub) */}
+        {(activeHubTab === 'all' || activeHubTab === 'inventory') && (
+          <section className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
+                  <Package className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-sm font-black text-slate-800">
+                      قسم المخزون والرفوف
+                    </h3>
+                    <span className="text-[9.5px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-bold border border-emerald-100">
+                      Inventory Hub
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">رأس مال المخزون، النواقص، والأصناف المباعة</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-600 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-100">
+                <span>القيمة بالبيع:</span>
+                <span className="font-mono text-emerald-700 font-black">{formatPrice(inventoryStats.totalRetailValuation)}</span>
+              </div>
+            </div>
+
+            {/* 4 Metric Cards for Inventory (Compact) */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Card 1: Inventory Cost Valuation */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">رأس مال المخزون (بالتكلفة)</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-slate-800 font-mono">
+                  {formatPrice(inventoryStats.totalCostValuation)}
+                </div>
+                <div className="text-[10px] font-bold text-emerald-700">
+                  أرباح متوقعة: <span className="font-mono font-black">{formatPrice(inventoryStats.potentialProfit)}</span>
+                </div>
+              </div>
+
+              {/* Card 2: Total Items & Stock Units */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">الأصناف والقطع</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-indigo-700 font-mono">
+                  {inventoryStats.totalProductsCount} <span className="text-xs font-bold text-slate-500 font-sans">صنف</span>
+                </div>
+                <div className="text-[10px] font-bold text-slate-500">
+                  إجمالي القطع: <span className="font-mono font-bold text-slate-700">{inventoryStats.totalStockUnits}</span>
+                </div>
+              </div>
+
+              {/* Card 3: Out of Stock & Low Stock Alert */}
+              <div className={`p-3 rounded-xl flex flex-col justify-between border ${
+                inventoryStats.outOfStockCount > 0 || inventoryStats.lowStockCount > 0 
+                  ? 'bg-rose-50/50 border-rose-100' 
+                  : 'bg-slate-50/70 border-slate-100'
+              }`}>
+                <span className={`text-[11px] font-bold ${inventoryStats.outOfStockCount > 0 ? 'text-rose-700' : 'text-slate-500'}`}>
+                  النواقص والحد الأدنى
+                </span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-rose-700 font-mono">
+                  {inventoryStats.outOfStockCount} <span className="text-xs font-bold font-sans">منتهية</span>
+                </div>
+                <div className="text-[10px] font-bold text-amber-700">
+                  قارب على النفاد: <span className="font-mono font-bold">{inventoryStats.lowStockCount} صنف</span>
+                </div>
+              </div>
+
+              {/* Card 4: Expiry Alerts */}
+              <div className={`p-3 rounded-xl flex flex-col justify-between border ${
+                inventoryStats.expiringSoonCount > 0 
+                  ? 'bg-amber-50/50 border-amber-100' 
+                  : 'bg-slate-50/70 border-slate-100'
+              }`}>
+                <span className={`text-[11px] font-bold ${inventoryStats.expiringSoonCount > 0 ? 'text-amber-800' : 'text-slate-500'}`}>
+                  تنبيه الصلاحية
+                </span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-amber-800 font-mono">
+                  {inventoryStats.expiringSoonCount} <span className="text-xs font-bold font-sans">صنف</span>
+                </div>
+                <p className="text-[9.5px] text-slate-400">خلال 30 يوماً</p>
+              </div>
+            </div>
+
+            {/* 2 Sub-panels: Top Products + Shelf Categories */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Top Selling Products */}
+              <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-2">
+                <h4 className="text-xs font-bold text-slate-700">أعلى السلع عائداً مالياً</h4>
+                <div className="h-44 w-full bg-white rounded-xl p-1.5 border border-slate-100">
+                  {topProductsChart.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                      لم يتم تسجيل مبيعات للأصناف.
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                      <BarChart data={topProductsChart} layout="vertical" margin={{ top: 5, right: 15, left: -25, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                        <XAxis type="number" stroke="#94a3b8" fontSize={8} fontWeight="bold" tickFormatter={(v) => typeof v === 'number' ? formatPrice(Math.round(v)) : v} />
+                        <YAxis type="category" dataKey="name" stroke="#64748b" fontSize={8} fontWeight="bold" width={80} tickLine={false} />
+                        <Tooltip 
+                          contentStyle={{ direction: 'rtl', textAlign: 'right', borderRadius: '10px', fontSize: '9.5px' }}
                           formatter={(value: any, name: any) => [formatPrice(value), name === 'revenue' ? 'المبيعات' : 'الأرباح']}
                         />
-                        <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px', fontWeight: 'bold' }} />
-                        <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
-                        <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 8, 8, 0]} barSize={9} animationDuration={250} />
+                        <Bar dataKey="revenue" name="revenue" fill="#6366f1" radius={[0, 6, 6, 0]} barSize={7} animationDuration={200} />
+                        <Bar dataKey="profit" name="profit" fill="#10b981" radius={[0, 6, 6, 0]} barSize={7} animationDuration={200} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
                 </div>
               </div>
 
-              {/* Ranked category shelving share list */}
-              <div className="bg-slate-50/50 border border-slate-100 rounded-2xl p-4 space-y-4">
-                <div>
-                  <h3 className="text-xs font-black text-slate-700">نسبة مساهمة السلع حسب تصنيفات الرفوف</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5">قوة ومبيعات فئات المخزن وتأثيرها على العوائد المالية الكلية</p>
-                </div>
-
-                <div className="space-y-2 max-h-[256px] overflow-y-auto custom-scrollbar pr-1">
+              {/* Shelving Category Share */}
+              <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-2">
+                <h4 className="text-xs font-bold text-slate-700">مبيعات تصنيفات الرفوف</h4>
+                <div className="space-y-1.5 max-h-[176px] overflow-y-auto custom-scrollbar pr-1">
                   {categorySalesChart.length === 0 ? (
-                    <div className="text-center py-10 text-xs text-slate-400">
-                      لا توجد فئات رفوف مباعة ملموسة تحت تاريخ التصفية.
+                    <div className="text-center py-6 text-xs text-slate-400">
+                      لا توجد فئات رفوف مباعة.
                     </div>
                   ) : (
                     categorySalesChart.map((cat, idx) => {
@@ -2665,30 +2236,13 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                       const percentage = ((cat.sales / totalSalesForPercentage) * 100);
                       
                       return (
-                        <div key={`cat-sales-chart-${cat.name || 'cat'}-${idx}`} className="p-3 bg-white rounded-2xl border border-slate-100 flex items-center justify-between gap-3 text-right">
-                          <div className="space-y-1 w-full">
-                            <div className="flex justify-between items-center">
-                              <span className="font-extrabold text-xs text-slate-800">{cat.name}</span>
-                              <span className="font-extrabold text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-md">
-                                الصافي: {formatPrice(cat.profit)}
-                              </span>
-                            </div>
-                            
-                            <div className="flex items-center gap-2">
-                              <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                <div 
-                                  className="h-full bg-indigo-500 rounded-full" 
-                                  style={{ width: `${Math.min(100, percentage)}%` }}
-                                ></div>
-                              </div>
-                              <span className="text-[9px] font-mono font-black text-slate-500 shrink-0">
-                                {percentage.toFixed(0)}%
-                              </span>
-                            </div>
-                            
-                            <p className="text-[10px] text-slate-400 font-bold">
-                              مجموع مبيعات الرف: <span className="font-mono text-slate-600 font-black">{formatPrice(cat.sales)}</span>
-                            </p>
+                        <div key={`cat-sales-chart-${cat.name || 'cat'}-${idx}`} className="p-2 bg-white rounded-xl border border-slate-100 space-y-1 text-right">
+                          <div className="flex justify-between items-center text-[11px]">
+                            <span className="font-extrabold text-slate-800">{cat.name}</span>
+                            <span className="font-mono font-bold text-emerald-700">{formatPrice(cat.sales)}</span>
+                          </div>
+                          <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+                            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${Math.min(100, percentage)}%` }}></div>
                           </div>
                         </div>
                       );
@@ -2696,11 +2250,727 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                   )}
                 </div>
               </div>
-            </motion.div>
-          </AnimatePresence>
-        </div>
+            </div>
+          </section>
+        )}
+
+        {/* SECTION 3: 👥 قسم العملاء والذمم المدينة (Receivables Hub) */}
+        {(activeHubTab === 'all' || activeHubTab === 'customers') && (
+          <section className="bg-white border border-slate-100 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl border border-amber-100">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-sm font-black text-slate-800">
+                      قسم العملاء والديون والذمم
+                    </h3>
+                    <span className="text-[9.5px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-100">
+                      Receivables Hub
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">أرصدة الزبائن، معدلات التحصيل، والديون القائمة</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerReceivablesModal(true)}
+                  className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 border border-amber-200"
+                >
+                  <Users className="w-3 h-3" />
+                  <span>كشف حساب الذمم 👤</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 4 Metric Cards for Customers (Compact) */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Card 1: Total Outstanding Debts */}
+              <div className="bg-rose-50/50 border border-rose-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-rose-800">إجمالي ديون العملاء</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-rose-700 font-mono">
+                  {formatPrice(customerAnalytics.totalCustomerDebts)}
+                </div>
+                <div className="text-[10px] font-bold text-rose-700">
+                  المدينين: <span className="font-mono font-black">{customerAnalytics.debtorsCount} زبون</span>
+                </div>
+              </div>
+
+              {/* Card 2: Debt Recovery Rate */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">معدل تحصيل الديون</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-purple-700 font-mono">
+                  {performanceKPIs.debtRecoveryRate.toFixed(1)}%
+                </div>
+                <div className="text-[10px] font-bold text-slate-500">
+                  نسبة التحصيل
+                </div>
+              </div>
+
+              {/* Card 3: Period Debt Sales */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">المبيعات الآجلة</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-amber-700 font-mono">
+                  {formatPrice(performanceKPIs.debtSalesTotal)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">ديون جديدة بالفترة</p>
+              </div>
+
+              {/* Card 4: Collected Cash from Debts */}
+              <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl flex flex-col justify-between">
+                <span className="text-[11px] font-bold text-slate-500">المقبوض نقداً من السداد</span>
+                <div className="my-1.5 text-base sm:text-lg font-black text-emerald-700 font-mono">
+                  {formatPrice(performanceKPIs.totalCollectedPayments)}
+                </div>
+                <p className="text-[9.5px] text-slate-400">تحصيلات الفترة</p>
+              </div>
+            </div>
+
+            {/* Mini Preview Table of Customers */}
+            <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-2">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-1.5">
+                <h4 className="text-xs font-bold text-slate-700">نشاط العملاء والديون</h4>
+                <div className="relative w-full sm:w-48">
+                  <Search className="w-3 h-3 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input 
+                    type="text"
+                    placeholder="ابحث بالاسم..."
+                    value={customerSearchKey}
+                    onChange={(e) => setCustomerSearchKey(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg pr-7 pl-2 py-1 text-xs text-slate-800 placeholder-slate-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto custom-scrollbar">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="bg-slate-100/80 text-slate-600 font-bold border-b border-slate-200 text-[10px]">
+                      <th className="p-2 rounded-r-lg">العميل</th>
+                      <th className="p-2 text-center">العمليات</th>
+                      <th className="p-2">الشراء</th>
+                      <th className="p-2 text-left rounded-l-lg">الرصيد المتبقي</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-[11px]">
+                    {searchedCustomerSales.slice(0, 4).map((c, idx) => (
+                      <tr key={`cust-row-${c.id || idx}`} className="hover:bg-white transition-colors">
+                        <td className="p-2 font-bold text-slate-800">{c.name}</td>
+                        <td className="p-2 text-center font-mono">{c.count}</td>
+                        <td className="p-2 font-mono font-bold text-indigo-700">{formatPrice(c.totalAmount)}</td>
+                        <td className="p-2 text-left font-mono font-bold">
+                          {c.balance > 0 ? (
+                            <span className="text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded text-[10px]">
+                              {formatPrice(c.balance)}
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[10px]">
+                              خالص
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* SECTION 5: 🏬 قسم الموردين والمشتريات والمستحقات (Suppliers Hub) */}
+        {(activeHubTab === 'all' || activeHubTab === 'suppliers') && (
+          <section className={`bg-white border border-slate-100 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4 ${activeHubTab === 'all' ? 'xl:col-span-2' : ''}`}>
+            <div className="flex flex-col lg:flex-row justify-between lg:items-center gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-50 text-amber-700 rounded-xl border border-amber-200">
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h3 className="text-sm font-black text-slate-800">
+                      مستحقات الموردين وتفاصيل رأس المال
+                    </h3>
+                    <span className="text-[9.5px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full font-bold border border-amber-200">
+                      {supplierAnalytics.activeViewMetrics.name}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    متابعة رأس المال والمستحقات، المسدد والمطلوب، وقيمة بضاعة المورد بالمخزن والمباعة
+                  </p>
+                </div>
+              </div>
+
+              {/* Supplier Selection Button / Dropdown */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 bg-amber-50/60 border border-amber-200 p-1 rounded-xl">
+                  <span className="text-[11px] font-bold text-amber-900 px-1.5 flex items-center gap-1">
+                    <Building2 className="w-3 h-3 text-amber-700" />
+                    <span>المورد:</span>
+                  </span>
+                  <select
+                    value={selectedSupplierFilter}
+                    onChange={(e) => setSelectedSupplierFilter(e.target.value)}
+                    className="bg-white border border-amber-300 text-slate-800 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer shadow-2xs"
+                  >
+                    <option value="all">🌐 جميع الموردين ({supplierAnalytics.totalSuppliersCount})</option>
+                    {supplierAnalytics.supplierList.map((sup) => (
+                      <option key={`sup-select-${sup.id}`} value={String(sup.id)}>
+                        {sup.name} {sup.balance > 0 ? `(مستحق: ${formatPrice(sup.balance)})` : '(خالص)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Filter Status Pills */}
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setSupplierFilterType('all')}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] transition-all cursor-pointer ${
+                      supplierFilterType === 'all' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    الكل
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSupplierFilterType('due')}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] transition-all cursor-pointer ${
+                      supplierFilterType === 'due' ? 'bg-amber-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    مستحق ({supplierAnalytics.suppliersWithDebtCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSupplierFilterType('settled')}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] transition-all cursor-pointer ${
+                      supplierFilterType === 'settled' ? 'bg-emerald-600 text-white shadow-xs' : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    مسدد
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Dynamic Metric Cards for Selected Supplier / All Suppliers */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              {/* Card 1: المطلوب قبل السداد (إجمالي مستحقات الموردين / رأس المال الكلي قبل الدفعات) */}
+              <div className="bg-slate-50/90 border border-slate-200 p-3 rounded-xl flex flex-col justify-between hover:border-slate-300 transition-colors">
+                <div>
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-700 mb-0.5">
+                    <span>المطلوب قبل السداد</span>
+                    <span className="text-[9px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded font-mono font-bold">قبل الدفع</span>
+                  </div>
+                  <div className="my-1 text-base sm:text-lg font-black text-slate-800 font-mono">
+                    {formatPrice(supplierAnalytics.activeViewMetrics.totalRequiredBeforeSettlement)}
+                  </div>
+                </div>
+                <p className="text-[9.5px] text-slate-500 font-medium">
+                  {supplierAnalytics.activeViewMetrics.isSpecific 
+                    ? `المستحقات الكليّة للمورد (${supplierAnalytics.activeViewMetrics.name}) قبل أي مدفوعات` 
+                    : 'المستحقات الكليّة لجميع التجار قبل أي مدفوعات'}
+                </p>
+              </div>
+
+              {/* Card 2: المبالغ المسلمة (رأس المال المسلّم للتجار) */}
+              <div className="bg-emerald-50/60 border border-emerald-200/80 p-3 rounded-xl flex flex-col justify-between hover:border-emerald-300 transition-colors">
+                <div>
+                  <div className="flex items-center justify-between text-[11px] font-bold text-emerald-900 mb-0.5">
+                    <span>المبالغ المسلمة</span>
+                    <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-mono font-bold">مدفوع</span>
+                  </div>
+                  <div className="my-1 text-base sm:text-lg font-black text-emerald-700 font-mono">
+                    {formatPrice(supplierAnalytics.activeViewMetrics.totalPaid)}
+                  </div>
+                </div>
+                <p className="text-[9.5px] text-emerald-800 font-medium">
+                  {supplierAnalytics.activeViewMetrics.isSpecific 
+                    ? `رأس المال المسلّم للمورد (${supplierAnalytics.activeViewMetrics.paymentsCount} دفعة مسجلة)`
+                    : 'إجمالي الدفعات المسددة والمسجلة للموردين'}
+                </p>
+              </div>
+
+              {/* Card 3: المطلوب حالياً (المستحق الحالي المتبقي) */}
+              <div className="bg-amber-50/70 border border-amber-200 p-3 rounded-xl flex flex-col justify-between hover:border-amber-300 transition-colors">
+                <div>
+                  <div className="flex items-center justify-between text-[11px] font-bold text-amber-900 mb-0.5">
+                    <span>المطلوب حالياً</span>
+                    <span className="text-[9px] bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded font-mono font-bold">المتبقي</span>
+                  </div>
+                  <div className="my-1 text-base sm:text-lg font-black text-amber-900 font-mono">
+                    {formatPrice(supplierAnalytics.activeViewMetrics.currentBalance)}
+                  </div>
+                </div>
+                <p className="text-[9.5px] text-amber-800 font-medium">
+                  {supplierAnalytics.activeViewMetrics.isSpecific
+                    ? (supplierAnalytics.activeViewMetrics.currentBalance > 0 ? 'المستحق الحالي المتبقي لهذا المورد' : 'الحساب خالص بالكامل')
+                    : `مستحقات معلقة على ${supplierAnalytics.suppliersWithDebtCount} مورد`}
+                </p>
+              </div>
+
+              {/* Card 4: مستحق المورد الكلي (الموجود في المخزون + المباع بالتكلفة) */}
+              <div className="bg-indigo-50/60 border border-indigo-200/80 p-3 rounded-xl flex flex-col justify-between hover:border-indigo-300 transition-colors">
+                <div>
+                  <div className="flex items-center justify-between text-[11px] font-bold text-indigo-900 mb-0.5">
+                    <span>مستحق البضائع الكلي</span>
+                    <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.2 rounded font-mono font-bold">مخزون + مباع</span>
+                  </div>
+                  <div className="my-1 text-base sm:text-lg font-black text-indigo-700 font-mono">
+                    {formatPrice(supplierAnalytics.activeViewMetrics.totalInventoryAndSoldCost)}
+                  </div>
+                </div>
+                <div className="text-[9px] text-indigo-900 flex justify-between items-center font-mono">
+                  <span>المخزون: {formatPrice(supplierAnalytics.activeViewMetrics.inventoryCostValue)}</span>
+                  <span>•</span>
+                  <span>المباع: {formatPrice(supplierAnalytics.activeViewMetrics.soldCostValue)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Supplier Quick Filter Bar */}
+            {supplierAnalytics.totalSuppliersCount > 1 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto custom-scrollbar pb-1 pt-0.5">
+                <span className="text-[10px] font-bold text-slate-500 shrink-0">تبديل سريع:</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer ${
+                    selectedSupplierFilter === 'all'
+                      ? 'bg-slate-800 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  الكل
+                </button>
+                {supplierAnalytics.supplierList.map(sup => {
+                  const isSelected = selectedSupplierFilter === String(sup.id);
+                  return (
+                    <button
+                      key={`sup-quick-btn-${sup.id}`}
+                      type="button"
+                      onClick={() => setSelectedSupplierFilter(String(sup.id))}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
+                        isSelected
+                          ? 'bg-amber-600 text-white shadow-xs'
+                          : 'bg-slate-100 text-slate-700 hover:bg-amber-50 hover:text-amber-900'
+                      }`}
+                    >
+                      <span>{sup.name}</span>
+                      {sup.balance > 0 && (
+                        <span className={`text-[9px] px-1 py-0.2 rounded font-mono ${isSelected ? 'bg-amber-800 text-white' : 'bg-amber-200 text-amber-900'}`}>
+                          {formatPrice(sup.balance)}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Suppliers Interactive Grid / Directory */}
+            <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-3 space-y-3">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Truck className="w-3.5 h-3.5 text-amber-600" />
+                    <span>دليل الموردين (انقر على أي مورد لعرض كشفه التفصيلي)</span>
+                  </h4>
+                </div>
+
+                {/* Search Bar for Suppliers */}
+                <div className="relative w-full sm:w-60">
+                  <Search className="w-3 h-3 absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input 
+                    type="text"
+                    placeholder="ابحث بالاسم أو الهاتف..."
+                    value={supplierSearchKey}
+                    onChange={(e) => setSupplierSearchKey(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-lg pr-7 pl-7 py-1 text-xs text-slate-800 placeholder-slate-400 focus:outline-none"
+                  />
+                  {supplierSearchKey && (
+                    <button
+                      type="button"
+                      onClick={() => setSupplierSearchKey('')}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {filteredSupplierList.length === 0 ? (
+                <div className="bg-white rounded-xl p-6 border border-slate-100 text-center space-y-1.5">
+                  <Building2 className="w-6 h-6 text-slate-300 mx-auto" />
+                  <p className="text-xs font-bold text-slate-500">لا يوجد موردين مطابقين لمعايير البحث الحالية.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                  {filteredSupplierList.map((sup, idx) => {
+                    const hasBalance = sup.balance > 0;
+                    return (
+                      <div
+                        key={`supplier-card-${sup.id || idx}`}
+                        onClick={() => {
+                          setSelectedSupplierForDetails(sup);
+                          setSupplierDetailsTab('overview');
+                          setSupplierProductSearch('');
+                        }}
+                        className="bg-white border border-slate-200/80 hover:border-amber-400 hover:shadow-xs rounded-xl p-3 transition-all duration-150 cursor-pointer flex flex-col justify-between group text-right"
+                      >
+                        <div>
+                          {/* Top Supplier Name & Badge */}
+                          <div className="flex items-start justify-between gap-1.5 mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center font-bold text-xs shrink-0 group-hover:bg-amber-100 transition-colors">
+                                <Building2 className="w-3.5 h-3.5" />
+                              </div>
+                              <div>
+                                <h5 className="text-xs font-black text-slate-800 leading-tight group-hover:text-amber-800 transition-colors">
+                                  {sup.name}
+                                </h5>
+                                <p className="text-[9.5px] text-slate-400 flex items-center gap-1 font-mono">
+                                  <Phone className="w-2.5 h-2.5" />
+                                  <span>{sup.phone || 'بدون هاتف'}</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md shrink-0 border ${
+                              hasBalance 
+                                ? 'bg-amber-50 text-amber-900 border-amber-200' 
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            }`}>
+                              {hasBalance ? 'مستحق' : 'مسدد'}
+                            </span>
+                          </div>
+
+                          {/* Main Balance Display */}
+                          <div className="bg-slate-50 rounded-lg p-2 my-1.5 border border-slate-100 flex justify-between items-center">
+                            <span className="text-[9.5px] font-bold text-slate-500">الرصيد المتبقي له:</span>
+                            <span className={`text-xs font-black font-mono ${hasBalance ? 'text-amber-900' : 'text-emerald-700'}`}>
+                              {formatPrice(sup.balance)}
+                            </span>
+                          </div>
+
+                          {/* Supplier Sub-metrics */}
+                          <div className="grid grid-cols-2 gap-1 text-[9.5px] text-slate-600 mb-1.5">
+                            <div className="bg-slate-50/80 p-1 rounded">
+                              <span className="text-[8.5px] text-slate-400 block">الأصناف:</span>
+                              <span className="font-bold text-slate-800 font-mono">{sup.productsCount} صنف</span>
+                            </div>
+                            <div className="bg-slate-50/80 p-1 rounded">
+                              <span className="text-[8.5px] text-slate-400 block">قيمة المخزون:</span>
+                              <span className="font-bold text-slate-800 font-mono">{formatPrice(sup.inventoryCostValue)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bottom Action Footer */}
+                        <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between text-[9.5px] font-bold text-amber-800">
+                          <span>عرض الكشف التفصيلي</span>
+                          <div className="flex items-center gap-0.5 text-amber-700 group-hover:translate-x-[-2px] transition-transform">
+                            <span>فحص</span>
+                            <ArrowUpRight className="w-3 h-3" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
       </div>
+
+      {/* MODAL: Comprehensive Supplier Analytics Details Modal */}
+      <AnimatePresence>
+        {selectedSupplierForDetails && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white text-slate-900 rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-200"
+            >
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-slate-900 via-amber-950 to-slate-900 p-4 sm:p-5 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-500/20 border border-amber-400/30 text-amber-300 rounded-2xl shrink-0">
+                    <Building2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base sm:text-lg font-black text-white">
+                        {selectedSupplierForDetails.name}
+                      </h3>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                        selectedSupplierForDetails.balance > 0 
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-400/30' 
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                      }`}>
+                        {selectedSupplierForDetails.balance > 0 ? `مستحق: ${formatPrice(selectedSupplierForDetails.balance)}` : 'خالص / مسدد'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-200/80 mt-0.5 flex items-center gap-2">
+                      <span>الهاتف: {selectedSupplierForDetails.phone || 'بدون هاتف'}</span>
+                      <span>•</span>
+                      <span>الأصناف المربوطة: {selectedSupplierForDetails.productsCount} صنف</span>
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierForDetails(null)}
+                  className="p-2 hover:bg-white/10 text-slate-300 hover:text-white rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Interactive Tabs */}
+              <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setSupplierDetailsTab('overview')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      supplierDetailsTab === 'overview' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" />
+                    <span>الموجز المالي الشامل</span>
+                  </button>
+                  <button
+                    onClick={() => setSupplierDetailsTab('products')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      supplierDetailsTab === 'products' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    <span>المنتجات والبضائع ({selectedSupplierForDetails.productsCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setSupplierDetailsTab('payments')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      supplierDetailsTab === 'payments' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>سجل الدفعات والتسديدات ({selectedSupplierForDetails.payments.length})</span>
+                  </button>
+                </div>
+
+                <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
+                  كشف حساب تحليلي فوري
+                </span>
+              </div>
+
+              {/* Modal Body Content */}
+              <div className="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                {/* TAB 1: OVERVIEW */}
+                {supplierDetailsTab === 'overview' && (
+                  <div className="space-y-4">
+                    {/* Primary Highlight Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl text-right">
+                        <span className="text-[11px] font-bold text-amber-800 block">الرصيد المستحق للتسليم</span>
+                        <div className="text-xl font-black text-amber-900 font-mono my-1">
+                          {formatPrice(selectedSupplierForDetails.balance)}
+                        </div>
+                        <p className="text-[10px] text-amber-700">الذمة الدائنة القائمة</p>
+                      </div>
+
+                      <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl text-right">
+                        <span className="text-[11px] font-bold text-slate-500 block">قيمة المخزون الحالي بسعر التكلفة</span>
+                        <div className="text-xl font-black text-slate-800 font-mono my-1">
+                          {formatPrice(selectedSupplierForDetails.inventoryCostValue)}
+                        </div>
+                        <p className="text-[10px] text-slate-500">القيمة بسعر البيع: {formatPrice(selectedSupplierForDetails.inventoryRetailValue)}</p>
+                      </div>
+
+                      <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-right">
+                        <span className="text-[11px] font-bold text-emerald-800 block">إجمالي المسدد للمورد تاريخياً</span>
+                        <div className="text-xl font-black text-emerald-700 font-mono my-1">
+                          {formatPrice(selectedSupplierForDetails.totalPaid)}
+                        </div>
+                        <p className="text-[10px] text-emerald-700">عدد الدفعات المسجلة: {selectedSupplierForDetails.payments.length}</p>
+                      </div>
+                    </div>
+
+                    {/* Operational Performance Highlights */}
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3">
+                      <h4 className="text-xs font-bold text-slate-800">مؤشرات أداء مبيعات بضائع هذا المورد</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-right">
+                        <div className="bg-white p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] text-slate-400 font-bold block">إجمالي مبيعات منتجاته</span>
+                          <span className="text-sm font-black text-indigo-600 font-mono mt-0.5 block">
+                            {formatPrice(selectedSupplierForDetails.totalSoldValue)}
+                          </span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] text-slate-400 font-bold block">القطع المباعة للعملاء</span>
+                          <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">
+                            {selectedSupplierForDetails.totalSoldQuantity} قطعة
+                          </span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] text-slate-400 font-bold block">القطع المتوفرة بالرف</span>
+                          <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">
+                            {selectedSupplierForDetails.inventoryStock} قطعة
+                          </span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] text-slate-400 font-bold block">آخر دفعة مسددة</span>
+                          <span className="text-xs font-bold text-slate-700 font-mono mt-0.5 block truncate">
+                            {selectedSupplierForDetails.lastPaymentDate ? new Date(selectedSupplierForDetails.lastPaymentDate).toLocaleDateString('ar-SA') : 'لا يوجد'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 2: PRODUCTS */}
+                {supplierDetailsTab === 'products' && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center gap-2">
+                      <div className="relative w-full sm:w-72">
+                        <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="ابحث في منتجات المورد..."
+                          value={supplierProductSearch}
+                          onChange={(e) => setSupplierProductSearch(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl pr-8 pl-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        />
+                      </div>
+                      <span className="text-xs text-slate-500 font-bold">
+                        {selectedSupplierForDetails.products.length} صنف مسجل
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto custom-scrollbar border border-slate-100 rounded-2xl">
+                      <table className="w-full text-right text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                            <th className="p-3">اسم المنتج / الصنف</th>
+                            <th className="p-3">الباركود</th>
+                            <th className="p-3">التصنيف</th>
+                            <th className="p-3">سعر التكلفة</th>
+                            <th className="p-3">سعر البيع</th>
+                            <th className="p-3">المخزون الحالي</th>
+                            <th className="p-3">قيمة المخزون</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {selectedSupplierForDetails.products
+                            .filter((p: any) => !supplierProductSearch.trim() || p.name.toLowerCase().includes(supplierProductSearch.toLowerCase()) || (p.barcode && p.barcode.includes(supplierProductSearch)))
+                            .map((p: any, idx: number) => {
+                              const stockQty = p.stock_quantity || 0;
+                              const stockValue = stockQty * (p.cost_price || 0);
+                              return (
+                                <tr key={`sup-prod-${p.id || idx}`} className="hover:bg-slate-50 transition-colors">
+                                  <td className="p-3 font-bold text-slate-800">{p.name}</td>
+                                  <td className="p-3 font-mono text-slate-500 text-[11px]">{p.barcode || '—'}</td>
+                                  <td className="p-3 text-slate-600">{p.category || 'عام'}</td>
+                                  <td className="p-3 font-mono text-amber-800 font-bold">{formatPrice(p.cost_price || 0)}</td>
+                                  <td className="p-3 font-mono text-emerald-700 font-bold">{formatPrice(p.sale_price || 0)}</td>
+                                  <td className="p-3 font-mono font-bold">
+                                    <span className={`px-2 py-0.5 rounded-md text-[10px] ${
+                                      stockQty <= 0 ? 'bg-rose-100 text-rose-800' : stockQty <= 5 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'
+                                    }`}>
+                                      {stockQty} وحدة
+                                    </span>
+                                  </td>
+                                  <td className="p-3 font-mono font-bold text-slate-800">{formatPrice(stockValue)}</td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: PAYMENTS */}
+                {supplierDetailsTab === 'payments' && (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xs font-bold text-slate-800">سجل الدفعات المالية المسلمة للمورد</h4>
+                      <span className="text-xs font-bold text-emerald-700">
+                        إجمالي المسدد: {formatPrice(selectedSupplierForDetails.totalPaid)}
+                      </span>
+                    </div>
+
+                    {selectedSupplierForDetails.payments.length === 0 ? (
+                      <div className="bg-slate-50 rounded-2xl p-8 text-center text-xs text-slate-400">
+                        لم يتم تسجيل أي دفعات مالية مسددة لهذا المورد حتى الآن.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto custom-scrollbar border border-slate-100 rounded-2xl">
+                        <table className="w-full text-right text-xs">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                              <th className="p-3">تاريخ الدفعة</th>
+                              <th className="p-3">المبلغ المسدد</th>
+                              <th className="p-3">البيان والملاحظات</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {selectedSupplierForDetails.payments.map((pmt: any, idx: number) => (
+                              <tr key={`sup-pmt-${pmt.id || idx}`} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-3 font-mono text-slate-700">
+                                  {new Date(pmt.payment_date).toLocaleDateString('ar-SA')} {new Date(pmt.payment_date).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                                <td className="p-3 font-mono font-bold text-emerald-700 text-sm">
+                                  {formatPrice(pmt.amount)}
+                                </td>
+                                <td className="p-3 text-slate-600">
+                                  {pmt.notes || 'تسديد دفعة حساب'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
+                <span className="text-xs text-slate-500 font-medium">
+                  الرصيد المتبقي: <strong className="font-mono text-amber-900">{formatPrice(selectedSupplierForDetails.balance)}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSupplierForDetails(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl font-bold text-xs cursor-pointer transition-colors"
+                >
+                  إغلاق النافذة
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Visual Models Extension Component (Market Basket, Profit Scatter, Credit Risk, Cashflow Waterfall) */}
       <VisualModelsExtension 
@@ -2713,469 +2983,22 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
         formatPrice={formatPrice}
       />
 
-      {/* Modal: Smart Advisor & Robotic Advisor System Modal */}
-      <AnimatePresence>
-        {isSmartAdvisorModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-950/80 backdrop-blur-md transition-all duration-300" dir="rtl">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white/98 backdrop-blur-2xl text-slate-900 rounded-3xl shadow-2xl w-full max-w-7xl 2xl:max-w-[1550px] overflow-hidden flex flex-col max-h-[95vh] h-[92vh] border border-slate-200/90 ring-1 ring-black/10"
-            >
-              {/* Header */}
-              <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 p-4 sm:p-5 text-white flex items-center justify-between shrink-0 border-b border-indigo-900/50 shadow-md">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-indigo-600/30 border border-indigo-400/30 text-amber-300 rounded-2xl shrink-0 shadow-xs">
-                    <Sparkles className="w-5 h-5 animate-pulse" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm sm:text-base font-black text-white">🤖 الذكاء التحليلي والتوصيات الحسابية الموجهة (Robotic Advisor System)</h3>
-                    <p className="text-[11px] text-indigo-200/80 font-medium mt-0.5">
-                      مستشار ذكي محلي آمن 100% يحلل الأداء المالي، التوقعات المستقبلية، ويجيب على كافة استفساراتك المحاسبية فوراً
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsSmartAdvisorModalOpen(false)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-rose-600/80 border border-white/15 hover:border-rose-500/40 text-slate-200 hover:text-white transition-all text-xs font-bold cursor-pointer shadow-xs active:scale-95 shrink-0"
-                  title="إغلاق النافذة"
-                >
-                  <X className="w-4 h-4" />
-                  <span className="hidden sm:inline">إغلاق</span>
-                </button>
-              </div>
-
-              {/* Body */}
-              <div className="p-3 sm:p-5 md:p-6 overflow-y-auto custom-scrollbar flex-1 bg-slate-50/80">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 md:gap-6 h-full">
-                  {/* Primary Column 1: AI Smart Assistant Interactive Chatbot Container (الوكيل المحاسبي الذكي) */}
-                  <div className="lg:col-span-8 bg-white border border-slate-200/90 rounded-3xl shadow-lg flex flex-col justify-between overflow-hidden min-h-[580px] h-full ring-1 ring-slate-100">
-                    {/* Header Banner */}
-                    <div className="bg-gradient-to-r from-slate-950 via-indigo-950 to-slate-900 p-3.5 text-white shrink-0 relative overflow-hidden" dir="rtl">
-                      <div className="absolute -left-10 -top-10 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl pointer-events-none"></div>
-                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 relative z-10">
-                        <div className="flex items-center gap-2.5">
-                          <div className="p-2 bg-indigo-600/30 border border-indigo-400/30 text-amber-300 rounded-xl shrink-0">
-                            <Brain className="w-5 h-5 animate-pulse" />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-xs sm:text-sm font-black text-white">الوكيل المحاسبي الذكي</h3>
-                              <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 border border-emerald-400/30">
-                                <Shield className="w-2.5 h-2.5 text-emerald-400" /> محلي وآمن 100%
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-indigo-200/80 font-medium mt-0.5">
-                              مستشارك المالي المستقل، يعمل بالكامل داخل جهازك لضمان سرية بياناتك
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Header Compact Action Buttons */}
-                        <div className="flex items-center gap-1.5 flex-wrap self-end sm:self-auto">
-                          <button
-                            type="button"
-                            onClick={() => setIsStagesModalOpen(true)}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-indigo-200 hover:text-white bg-indigo-500/25 hover:bg-indigo-500/40 border border-indigo-400/30 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
-                            title="استعراض مراحل التحليل والتفكير الذكي"
-                          >
-                            <Brain className="w-3 h-3 text-indigo-300" />
-                            <span>مراحل التحليل</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setIsQuestionBankModalOpen(true)}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-amber-200 hover:text-white bg-amber-500/25 hover:bg-amber-500/40 border border-amber-400/30 rounded-lg transition-all cursor-pointer shrink-0 shadow-2xs"
-                            title="استعراض بنك الأسئلة الشامل"
-                          >
-                            <Sparkles className="w-3 h-3 text-amber-300" />
-                            <span>بنك الأسئلة</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={handleResetChat}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold text-slate-300 hover:text-white bg-white/10 hover:bg-rose-500/80 border border-white/10 rounded-lg transition-all cursor-pointer shrink-0"
-                            title="إعادة البدء ومسح المحادثة"
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                            <span>بدء جديد (مسح)</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Chat Messages Log */}
-                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 sm:p-6 space-y-4 bg-gradient-to-b from-slate-900/60 via-slate-950/70 to-slate-950 text-slate-100" dir="rtl">
-                      {chatMessages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center my-auto text-center py-6 px-2 sm:px-6 w-full max-w-2xl mx-auto">
-                          {/* Animated Icon Avatar */}
-                          <div className="relative mb-3.5">
-                            <div className="w-16 h-16 bg-gradient-to-tr from-indigo-600 via-indigo-500 to-amber-400 rounded-3xl p-0.5 shadow-xl shadow-indigo-500/25 flex items-center justify-center">
-                              <div className="w-full h-full bg-slate-950 rounded-[22px] flex items-center justify-center">
-                                <Brain className="w-8 h-8 text-amber-300 animate-pulse" />
-                              </div>
-                            </div>
-                            <span className="absolute -bottom-1 -right-1 flex h-4 w-4">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-4 w-4 bg-emerald-500 border-2 border-slate-900"></span>
-                            </span>
-                          </div>
-                          
-                          {/* Title & Badge Header */}
-                          <div className="flex flex-wrap items-center justify-center gap-2 mb-2 text-center">
-                            <h4 className="text-base sm:text-lg md:text-xl font-black text-white tracking-tight">
-                              مرحباً بك في الوكيل المحاسبي الذكي
-                            </h4>
-                            <span className="text-[11px] bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 rounded-full border border-emerald-400/30 font-bold flex items-center gap-1">
-                              <Shield className="w-3 h-3 text-emerald-400" />
-                              مؤمن ومحلي 100%
-                            </span>
-                          </div>
-
-                          {/* Subtitle Description */}
-                          <p className="text-xs sm:text-sm text-slate-300 max-w-lg leading-relaxed mb-6 font-medium text-center">
-                            مستشارك المالي والتقني الفوري لتحليل الأرباح، ديون العملاء، نواقص المخزون، مستحقات الموردين، ودليل كامل لجميع شاشات وأقسام النظام.
-                          </p>
-                          
-                          {/* Starter Quick Chips Container */}
-                          <div className="w-full bg-slate-900/70 border border-slate-800/90 rounded-3xl p-3.5 sm:p-4.5 shadow-xl backdrop-blur-sm">
-                            <div className="flex items-center justify-between gap-2 mb-3 px-1 border-b border-slate-800/80 pb-2.5">
-                              <span className="text-xs font-black text-indigo-300 flex items-center gap-1.5">
-                                <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-                                <span>استفسارات محاسبية وتقنية مقترحة:</span>
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setIsQuestionBankModalOpen(true)}
-                                className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 font-bold bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/20 px-2.5 py-1 rounded-xl transition-colors cursor-pointer"
-                              >
-                                <span>عرض بنك الأسئلة الشامل</span>
-                                <span className="font-mono bg-amber-400/20 px-1.5 py-0.2 rounded-full text-[10px]">({COMPREHENSIVE_QUICK_QUESTIONS.length})</span>
-                              </button>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-right">
-                              {/* 1. Daily Profits */}
-                              <button
-                                type="button"
-                                onClick={() => handleSendMessage('ماهو صافي أرباح اليوم؟')}
-                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-emerald-950/40 border border-slate-800 hover:border-emerald-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
-                                    💰
-                                  </div>
-                                  <div className="flex flex-col min-w-0 text-right">
-                                    <span className="text-xs font-black text-white group-hover:text-emerald-300 truncate transition-colors">
-                                      صافي أرباح اليوم
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 group-hover:text-emerald-400/90 font-medium truncate mt-0.5">
-                                      حساب دقيق لليوم الحالي
-                                    </span>
-                                  </div>
-                                </div>
-                                <span className="text-xs text-slate-600 group-hover:text-emerald-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
-                                  ←
-                                </span>
-                              </button>
-
-                              {/* 2. Smart Import */}
-                              <button
-                                type="button"
-                                onClick={() => handleSendMessage('معلومات عن قسم الاستيراد الذكي')}
-                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-sky-950/40 border border-slate-800 hover:border-sky-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
-                                    📥
-                                  </div>
-                                  <div className="flex flex-col min-w-0 text-right">
-                                    <span className="text-xs font-black text-white group-hover:text-sky-300 truncate transition-colors">
-                                      قسم الاستيراد الذكي
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 group-hover:text-sky-400/90 font-medium truncate mt-0.5">
-                                      استيراد الفواتير وإكسل والكاميرا
-                                    </span>
-                                  </div>
-                                </div>
-                                <span className="text-xs text-slate-600 group-hover:text-sky-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
-                                  ←
-                                </span>
-                              </button>
-
-                              {/* 3. Major Debtors */}
-                              <button
-                                type="button"
-                                onClick={() => handleSendMessage('من هم أكثر العملاء ديناً (كبار المدينين)؟')}
-                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
-                                    🚨
-                                  </div>
-                                  <div className="flex flex-col min-w-0 text-right">
-                                    <span className="text-xs font-black text-white group-hover:text-rose-300 truncate transition-colors">
-                                      كبار المدينين بالدفتر
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 group-hover:text-rose-400/90 font-medium truncate mt-0.5">
-                                      أعلى الذمم المعلقة
-                                    </span>
-                                  </div>
-                                </div>
-                                <span className="text-xs text-slate-600 group-hover:text-rose-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
-                                  ←
-                                </span>
-                              </button>
-
-                              {/* 4. Critical Stock Shortages */}
-                              <button
-                                type="button"
-                                onClick={() => handleSendMessage('ما هي البضاعة الناقصة التي قاربت على النفاد؟')}
-                                className="group flex items-center justify-between p-3 rounded-2xl bg-slate-950/80 hover:bg-amber-950/40 border border-slate-800 hover:border-amber-500/40 cursor-pointer transition-all duration-200 hover:scale-[1.01] shadow-xs text-right"
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-lg shrink-0 group-hover:scale-105 transition-transform">
-                                    📦
-                                  </div>
-                                  <div className="flex flex-col min-w-0 text-right">
-                                    <span className="text-xs font-black text-white group-hover:text-amber-300 truncate transition-colors">
-                                      نواقص المخزون الحرجة
-                                    </span>
-                                    <span className="text-[10px] text-slate-400 group-hover:text-amber-400/90 font-medium truncate mt-0.5">
-                                      الأصناف تحت حد الطلب
-                                    </span>
-                                  </div>
-                                </div>
-                                <span className="text-xs text-slate-600 group-hover:text-amber-400 group-hover:translate-x-[-2px] transition-all shrink-0 mr-1">
-                                  ←
-                                </span>
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        chatMessages.map((msg, idx) => {
-                          const prevMsg = idx > 0 ? chatMessages[idx - 1] : null;
-                          const queryText = prevMsg && prevMsg.role === 'user' ? prevMsg.text : '';
-                          return (
-                            <div
-                              key={`chat-msg-${msg.id || idx}-${idx}`}
-                              className={`flex flex-col max-w-[92%] sm:max-w-[88%] rounded-3xl p-3.5 sm:p-5 text-xs sm:text-sm shadow-xl transition-all ${
-                                msg.role === 'user'
-                                  ? 'bg-gradient-to-r from-indigo-600 via-indigo-600 to-indigo-700 text-white self-start rounded-tr-none border border-indigo-400/20 shadow-indigo-600/10'
-                                  : msg.id.startsWith('error')
-                                    ? 'bg-rose-950/95 border border-rose-800 text-rose-100 self-end rounded-tl-none shadow-rose-950/40'
-                                    : 'bg-slate-900/95 border border-indigo-500/20 text-slate-100 self-end rounded-tl-none shadow-slate-950/50 ring-1 ring-white/10'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between text-[10px] opacity-80 mb-2 font-black border-b border-inherit pb-1.5">
-                                <span className="flex items-center gap-2 text-xs">
-                                  {msg.role === 'user' ? (
-                                    <span className="flex items-center gap-1.5 text-indigo-100 font-black">
-                                      👤 سؤالك
-                                    </span>
-                                  ) : (
-                                    <span className="flex items-center gap-1.5 text-amber-300 font-black">
-                                      <Brain className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                                      المستشار الذكي
-                                    </span>
-                                  )}
-                                </span>
-                                <div className="flex items-center gap-2.5">
-                                  <span className="font-mono text-[9.5px] opacity-70">
-                                    {new Date(msg.timestamp).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteMessage(msg.id)}
-                                    className="p-1 hover:bg-white/20 rounded-lg text-slate-300 hover:text-rose-300 transition-colors cursor-pointer"
-                                    title="حذف هذه الرسالة"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="whitespace-pre-wrap leading-relaxed">
-                                {msg.role === 'user' ? msg.text : formatAssistantMessage(msg.text, `chat-${msg.id || idx}-${idx}`)}
-                              </div>
-                              {msg.role === 'assistant' && (
-                                <div className="flex justify-between items-center gap-2 mt-3 pt-2 border-t border-slate-800 text-right flex-wrap">
-                                  <div className="flex items-center gap-1.5">
-                                    <button
-                                      onClick={() => handleCopyText(msg.id, msg.text)}
-                                      className="px-2.5 py-1 hover:bg-slate-800 rounded-lg text-[10.5px] flex items-center gap-1.5 cursor-pointer text-slate-300 hover:text-white transition-all bg-white/5 border border-white/5"
-                                      title="نسخ التقرير بالكامل"
-                                    >
-                                      {copiedMessageId === msg.id ? (
-                                        <>
-                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                          <span className="text-emerald-400 font-black">تم النسخ</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Copy className="w-3.5 h-3.5 text-slate-400" />
-                                          <span className="font-bold">نسخ الإجابة</span>
-                                        </>
-                                      )}
-                                    </button>
-                                  </div>
-                                  {msg.id !== 'welcome' && (
-                                    ratedMessages[msg.id] ? (
-                                      <span className="text-[10px] text-emerald-400 font-black px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20">
-                                        {ratedMessages[msg.id] === 'up' ? 'تم التقييم بمفيد 👍' : 'تم تدوين الملاحظة 👎'}
-                                      </span>
-                                    ) : (
-                                      <div className="flex items-center gap-1">
-                                        <span className="text-[9.5px] text-slate-400 ml-1">هل الإجابة دقيقة؟</span>
-                                        <button
-                                          onClick={() => {
-                                            handleFeedback(msg.id, true, queryText, msg.text);
-                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'up' }));
-                                          }}
-                                          className="p-1.5 hover:bg-emerald-500/20 text-slate-400 hover:text-emerald-400 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-emerald-500/30"
-                                          title="مفيد ودقيق"
-                                        >
-                                          <ThumbsUp className="w-3.5 h-3.5" />
-                                        </button>
-                                        <button
-                                          onClick={() => {
-                                            handleFeedback(msg.id, false, queryText, msg.text);
-                                            setRatedMessages(prev => ({ ...prev, [msg.id]: 'down' }));
-                                          }}
-                                          className="p-1.5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-rose-500/30"
-                                          title="غير دقيق"
-                                        >
-                                          <ThumbsDown className="w-3.5 h-3.5" />
-                                        </button>
-                                      </div>
-                                    )
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      )}
-                      {isTyping && (
-                        <div className="bg-slate-900 border border-indigo-500/30 text-slate-200 max-w-[45%] rounded-3xl p-3 text-xs self-end rounded-tl-none flex items-center gap-2.5 shadow-md">
-                          <span className="w-2 h-2 bg-indigo-400 rounded-full animate-ping"></span>
-                          <span className="text-[11px] font-black text-indigo-300">جاري التدقيق والتحليل المحاسبي...</span>
-                        </div>
-                      )}
-                      <div ref={chatEndRef} />
-                    </div>
-
-                    {/* Permanent Chat Input Form */}
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }}
-                      className="p-2.5 sm:p-3 bg-white border-t border-slate-200 flex items-center gap-1.5 sm:gap-2 shrink-0"
-                      dir="rtl"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setIsQuestionBankModalOpen(true)}
-                        className="px-2 sm:px-2.5 py-2 sm:py-2.5 rounded-xl border flex items-center gap-1 text-xs font-bold transition-all cursor-pointer shrink-0 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-900 border-indigo-200/80 shadow-2xs"
-                        title="استعراض بنك الأسئلة الشامل"
-                      >
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                        <span className="hidden sm:inline text-[11px]">بنك الأسئلة</span>
-                      </button>
-
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="اكتب استفسارك هنا (مثال: كم المبيعات؟ من هم المدينون؟)..."
-                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 sm:py-2.5 text-xs sm:text-sm font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-right shadow-inner"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!chatInput.trim() || isTyping}
-                        className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center justify-center transition-colors shadow-md cursor-pointer shrink-0 font-bold text-xs sm:text-sm gap-1 sm:gap-1.5"
-                      >
-                        <span>إرسال</span>
-                        <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4 transform rotate-180" />
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Secondary Column 2: Robotic Advisor Report (توصيات المساعد الموجهة) */}
-                  <div className="lg:col-span-4 bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg text-white overflow-hidden relative flex flex-col justify-between min-h-[580px] h-full">
-                    <div className="flex flex-col h-full">
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
-                      <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
-
-                      <div className="flex justify-between items-center mb-3 border-b border-white/10 pb-2.5 shrink-0" dir="rtl">
-                        <div className="flex items-center gap-2">
-                          <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-                          <h3 className="text-xs sm:text-sm font-extrabold text-white">توصيات المساعد الموجهة</h3>
-                        </div>
-                        <span className="text-[9px] bg-indigo-500/20 text-indigo-200 border border-indigo-400/30 px-2 py-0.5 rounded-full font-bold">بموجب البيانات</span>
-                      </div>
-
-                      <div className="space-y-2.5 overflow-y-auto custom-scrollbar pr-1 flex-1" dir="rtl">
-                        {smartAIRecommendations.map((insight, idx) => (
-                          <div 
-                            key={`insight-item-${insight.id || idx}-${idx}`} 
-                            className={`p-3 rounded-2xl border transition-all duration-200 ${
-                              insight.type === 'success' 
-                                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-100' 
-                                : insight.type === 'warning'
-                                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-100'
-                                  : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-100'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2 mb-1">
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                {insight.type === 'success' && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
-                                {insight.type === 'warning' && <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                                {insight.type === 'info' && <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
-                                <span className="font-extrabold text-xs truncate">{insight.title}</span>
-                              </div>
-                            </div>
-                            <p className="text-[11px] leading-relaxed opacity-90 pr-5">
-                              {insight.desc}
-                            </p>
-                            {insight.anomalyKey && (
-                              <div className="mt-2.5 pt-2 border-t border-white/10 flex items-center justify-between gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setAnomalyModalType(insight.anomalyKey || null)}
-                                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-all shadow-xs cursor-pointer border border-white/20 hover:scale-[1.02] active:scale-[0.98]"
-                                >
-                                  <span>{insight.actionLabel || 'فحص وتدقيق المشكلة'}</span>
-                                  <ArrowLeft className="w-3 h-3 rotate-180" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleResolveAnomaly(insight.anomalyKey!)}
-                                  className="text-[9px] text-amber-200/80 hover:text-amber-100 hover:underline font-bold cursor-pointer"
-                                >
-                                  تم التحقق (إخفاء)
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Floating Action Button - Opens Full Smart Advisor Directly (hidden when modal is open) */}
+      <SmartAdvisorModal
+        isOpen={isSmartAdvisorModalOpen}
+        onClose={() => setIsSmartAdvisorModalOpen(false)}
+        products={products}
+        customers={customers}
+        sales={sales}
+        saleItems={saleItems}
+        debts={debts}
+        withdrawals={cashWithdrawals}
+        formatPrice={formatPrice}
+        currency={currency}
+        onOpenAnomalyModal={(type) => setAnomalyModalType(type as any)}
+        initialQuery={advisorInitialQuery}
+        onClearInitialQuery={() => setAdvisorInitialQuery(null)}
+      />
+{/* Floating Action Button - Opens Full Smart Advisor Directly (hidden when modal is open) */}
       {!isSmartAdvisorModalOpen && (
         <button
           type="button"
@@ -3459,7 +3282,8 @@ export default function SmartAnalytics({ currency, formatPrice, onGoBack }: Smar
                           key={`quick-q-btn-${q.id || idx}-${idx}`}
                           type="button"
                           onClick={() => {
-                            handleSendMessage(q.question);
+                            setAdvisorInitialQuery(q.question);
+                            setIsSmartAdvisorModalOpen(true);
                             setIsQuestionBankModalOpen(false);
                           }}
                           className={`flex flex-col justify-between p-3 rounded-2xl border text-right cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md ${colorMap[q.themeColor]}`}

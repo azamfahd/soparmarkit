@@ -21,6 +21,7 @@ export interface CustomerDetailsModalProps {
   storeName?: string;
   storePhone?: string;
   currency?: string;
+  onPrintVoucher?: (voucherData: any) => void;
 }
 
 export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
@@ -40,6 +41,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
   storeName = 'متجرنا',
   storePhone = '',
   currency = 'ر.س',
+  onPrintVoucher,
 }) => {
   const [selectedMonth, setSelectedMonth] = useState<string>('ALL');
   const [showCardImageModal, setShowCardImageModal] = useState<boolean>(false);
@@ -103,7 +105,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
 
   return (
     <>
-      <div key="modal-customer-details" className="fixed inset-0 bg-black/60 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
+      <div className="fixed inset-0 bg-black/60 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm">
         <motion.div 
           initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
           className="bg-slate-50 w-full max-w-2xl rounded-t-3xl sm:rounded-3xl flex flex-col h-[95vh] sm:h-[85vh] overflow-hidden shadow-2xl"
@@ -410,6 +412,27 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                             <Printer className="w-3 h-3 text-emerald-600" /> طباعة الإيصال
                           </button>
                         </div>
+                      </div>
+                    )}
+                    {entry.entryType !== 'sale' && entry.type === 'payment' && onPrintVoucher && (
+                      <div className="flex justify-end pt-1 border-t border-slate-200/50">
+                        <button 
+                          onClick={() => onPrintVoucher({
+                            type: 'receipt',
+                            voucherNumber: `REC-${String(entry.id || Math.abs(entry.amount)).padStart(5, '0')}`,
+                            date: entry.created_at || new Date().toISOString(),
+                            partyName: showCustomerDetails.name,
+                            partyPhone: showCustomerDetails.phone || '',
+                            amount: entry.amount,
+                            previousBalance: entry.previous_balance !== undefined ? entry.previous_balance : (showCustomerDetails.balance + entry.amount),
+                            newBalance: entry.new_balance !== undefined ? entry.new_balance : showCustomerDetails.balance,
+                            notes: entry.notes || 'سداد دفعة من الحساب',
+                            paymentMethod: 'cash'
+                          })}
+                          className="text-[10px] text-emerald-800 bg-white border border-emerald-300 px-2.5 py-1 rounded-md font-bold flex items-center gap-1 hover:bg-emerald-50 cursor-pointer transition-all shadow-2xs"
+                        >
+                          <Printer className="w-3 h-3 text-emerald-600" /> طباعة سند القبض
+                        </button>
                       </div>
                     )}
                   </div>

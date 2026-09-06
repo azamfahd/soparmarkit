@@ -1,4 +1,4 @@
-const CACHE_NAME = 'future-pos-offline-v4-pwa-assets';
+const CACHE_NAME = 'future-pos-offline-v5-embedded-fonts';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -11,7 +11,29 @@ const PRECACHE_ASSETS = [
   '/icons/apple-touch-icon.png',
   '/screenshot-wide.png',
   '/screenshot-narrow.png',
-  'https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap'
+  '/fonts/fonts.css',
+  '/fonts/font_1.woff2',
+  '/fonts/font_2.woff2',
+  '/fonts/font_3.woff2',
+  '/fonts/font_4.woff2',
+  '/fonts/font_5.woff2',
+  '/fonts/font_6.woff2',
+  '/fonts/font_7.woff2',
+  '/fonts/font_8.woff2',
+  '/fonts/font_9.woff2',
+  '/fonts/font_10.woff2',
+  '/fonts/font_11.woff2',
+  '/fonts/font_12.woff2',
+  '/fonts/font_13.woff2',
+  '/fonts/font_14.woff2',
+  '/fonts/font_15.woff2',
+  '/fonts/font_16.woff2',
+  '/fonts/font_17.woff2',
+  '/fonts/font_18.woff2',
+  '/fonts/font_19.woff2',
+  '/fonts/font_20.woff2',
+  '/fonts/font_21.woff2',
+  '/fonts/font_22.woff2'
 ];
 
 // Install Event - Precache essential assets

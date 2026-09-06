@@ -1,4 +1,4 @@
-export type { Supplier, Product, Customer, Sale } from './db';
+export type { Supplier, Product, Customer, Sale, SaleItem, SupplierPayment, Debt } from './db';
 
 export type ActiveTab = 
   | 'pos' 
