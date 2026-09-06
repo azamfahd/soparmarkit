@@ -211,7 +211,7 @@ export default defineConfig(({mode}) => {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
     resolve: {
-      dedupe: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
+      dedupe: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-is'],
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
@@ -223,6 +223,7 @@ export default defineConfig(({mode}) => {
         'react-dom/client',
         'react/jsx-runtime',
         'react/jsx-dev-runtime',
+        'react-is',
         'motion/react',
         'lucide-react',
         'recharts',
