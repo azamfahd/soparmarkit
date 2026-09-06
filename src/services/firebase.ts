@@ -25,11 +25,11 @@ try {
 // Initialize Firebase App safely
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore with custom database ID from config and resilient transport
+// Initialize Firestore with custom database ID from config and auto-detect transport
 let cloudDbInstance;
 try {
   cloudDbInstance = initializeFirestore(app, {
-    experimentalForceLongPolling: true,
+    experimentalAutoDetectLongPolling: true,
     ignoreUndefinedProperties: true
   }, firebaseConfig.firestoreDatabaseId || "(default)");
 } catch {
@@ -63,32 +63,42 @@ export async function submitActivationRequest(
   requestType: 'initial' | 'renewal' = 'initial',
   requestedDuration: number = 365
 ): Promise<void> {
-  const docRef = doc(cloudDb, 'activation_requests', deviceId);
-  const requestData: ActivationRequest = {
-    id: deviceId,
-    deviceId,
-    storeName: storeName || 'محل تجاري جديد',
-    phone: phone || '',
-    requestedAt: new Date().toISOString(),
-    status: 'pending',
-    requestType,
-    requestedDuration
-  };
+  try {
+    const docRef = doc(cloudDb, 'activation_requests', deviceId);
+    const requestData: ActivationRequest = {
+      id: deviceId,
+      deviceId,
+      storeName: storeName || 'محل تجاري جديد',
+      phone: phone || '',
+      requestedAt: new Date().toISOString(),
+      status: 'pending',
+      requestType,
+      requestedDuration
+    };
 
-  await setDoc(docRef, requestData, { merge: true });
+    await setDoc(docRef, requestData, { merge: true });
+  } catch (err) {
+    console.warn("Firestore submitActivationRequest warning:", err);
+    throw err;
+  }
 }
 
 /**
  * Gets a specific activation request by deviceId
  */
 export async function getActivationRequest(deviceId: string): Promise<ActivationRequest | null> {
-  const docRef = doc(cloudDb, 'activation_requests', deviceId);
-  const docSnap = await getDoc(docRef);
-  
-  if (docSnap.exists()) {
-    return docSnap.data() as ActivationRequest;
+  try {
+    const docRef = doc(cloudDb, 'activation_requests', deviceId);
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      return docSnap.data() as ActivationRequest;
+    }
+    return null;
+  } catch (err) {
+    console.warn("Firestore getActivationRequest warning:", err);
+    return null;
   }
-  return null;
 }
 
 /**
@@ -106,7 +116,7 @@ export function subscribeToDeviceActivation(deviceId: string, callback: (request
         callback(docSnap.data() as ActivationRequest);
       }
     }, (error) => {
-      console.warn("Firestore listening error (likely offline):", error);
+      console.warn("Firestore listening error (handled gracefully):", error);
     });
   } catch (err) {
     console.warn("Failed to subscribe to device activation:", err);
@@ -130,7 +140,7 @@ export function subscribeToAllActivationRequests(callback: (requests: Activation
       });
       callback(requests);
     }, (error) => {
-      console.warn("Firestore loading requests error (likely offline):", error);
+      console.warn("Firestore loading requests error (handled gracefully):", error);
     });
   } catch (err) {
     console.warn("Failed to subscribe to all activation requests:", err);
@@ -142,32 +152,47 @@ export function subscribeToAllActivationRequests(callback: (requests: Activation
  * Approves a user's activation request and signs a license key
  */
 export async function approveRequestInCloud(deviceId: string, durationDays: number, licenseKey: string): Promise<void> {
-  const docRef = doc(cloudDb, 'activation_requests', deviceId);
-  await updateDoc(docRef, {
-    status: 'approved',
-    licenseKey,
-    durationDays,
-    approvedAt: new Date().toISOString()
-  });
+  try {
+    const docRef = doc(cloudDb, 'activation_requests', deviceId);
+    await updateDoc(docRef, {
+      status: 'approved',
+      licenseKey,
+      durationDays,
+      approvedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    console.warn("Firestore approveRequestInCloud warning:", err);
+    throw err;
+  }
 }
 
 /**
  * Rejects a user's activation request
  */
 export async function rejectRequestInCloud(deviceId: string, rejectReason?: string): Promise<void> {
-  const docRef = doc(cloudDb, 'activation_requests', deviceId);
-  await updateDoc(docRef, {
-    status: 'rejected',
-    approvedAt: null,
-    licenseKey: null,
-    rejectReason: rejectReason || ''
-  });
+  try {
+    const docRef = doc(cloudDb, 'activation_requests', deviceId);
+    await updateDoc(docRef, {
+      status: 'rejected',
+      approvedAt: null,
+      licenseKey: null,
+      rejectReason: rejectReason || ''
+    });
+  } catch (err) {
+    console.warn("Firestore rejectRequestInCloud warning:", err);
+    throw err;
+  }
 }
 
 /**
  * Deletes a request from Firestore
  */
 export async function deleteRequestFromCloud(deviceId: string): Promise<void> {
-  const docRef = doc(cloudDb, 'activation_requests', deviceId);
-  await deleteDoc(docRef);
+  try {
+    const docRef = doc(cloudDb, 'activation_requests', deviceId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.warn("Firestore deleteRequestFromCloud warning:", err);
+    throw err;
+  }
 }

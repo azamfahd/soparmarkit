@@ -435,10 +435,11 @@ export default function App() {
   }, [activeTab, showSalesSummaryModal, showProfitSummaryModal, showInventoryDetailsModal, showMonthlySalesDetailsModal, showSupplierSummaryModal]);
   
   const salesDetailsStats = React.useMemo(() => {
-    if (!showMonthlySalesDetailsModal && !showSalesSummaryModal && !showProfitSummaryModal && !showInventoryDetailsModal) {
+    if (!showMonthlySalesDetailsModal && !showSalesSummaryModal && !showProfitSummaryModal && !showInventoryDetailsModal && activeTab !== 'dashboard') {
       return { days: [], weeks: [], months: [], productStats: [] };
     }
-    if (!allSalesForDetails.length) {
+    const salesListToUse = allSalesForDetails.length > 0 ? allSalesForDetails : sales;
+    if (!salesListToUse.length) {
       return { days: [], weeks: [], months: [], productStats: [] };
     }
 
@@ -463,7 +464,7 @@ export default function App() {
     // For products breakdown
     const productSalesMap = new Map<number, { id: number; name: string; category: string; soldQty: number; revenue: number; transactions: number }>();
 
-    allSalesForDetails.forEach(sale => {
+    salesListToUse.forEach(sale => {
       if (!sale.created_at) return;
       const date = new Date(sale.created_at);
       if (isNaN(date.getTime())) return;
@@ -535,16 +536,45 @@ export default function App() {
       });
     });
 
-    const daysList = Object.keys(dayGroups).sort((a,b) => b.localeCompare(a)).map(key => ({
-      label: key,
-      ...dayGroups[key]
-    }));
+    const todayStr = new Date().toISOString().split('T')[0];
+    const yesterdayDate = new Date();
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().split('T')[0];
+
+    const daysList = Object.keys(dayGroups).sort((a,b) => b.localeCompare(a)).map(key => {
+      let niceLabel = key;
+      try {
+        const d = new Date(key + 'T00:00:00');
+        const formattedDate = d.toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        if (key === todayStr) {
+          niceLabel = `اليوم (${formattedDate})`;
+        } else if (key === yesterdayStr) {
+          niceLabel = `أمس (${formattedDate})`;
+        } else {
+          niceLabel = formattedDate;
+        }
+      } catch {
+        niceLabel = key;
+      }
+      return {
+        label: niceLabel,
+        rawDate: key,
+        ...dayGroups[key]
+      };
+    });
 
     const weeksList = Object.keys(weekGroups).sort((a,b) => b.localeCompare(a)).map(key => {
-      const start = new Date(key);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
-      const formattedRange = `إسبوع ${start.toLocaleDateString('ar-SA', { month: 'numeric', day: 'numeric' })} - ${end.toLocaleDateString('ar-SA', { month: 'numeric', day: 'numeric' })}`;
+      let formattedRange = key;
+      try {
+        const start = new Date(key + 'T00:00:00');
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        const formattedStart = start.toLocaleDateString('ar-EG', { month: 'numeric', day: 'numeric' });
+        const formattedEnd = end.toLocaleDateString('ar-EG', { month: 'numeric', day: 'numeric' });
+        formattedRange = `الأسبوع (${formattedStart} - ${formattedEnd})`;
+      } catch {
+        formattedRange = key;
+      }
       return {
         label: formattedRange,
         rawDate: key,
@@ -553,9 +583,14 @@ export default function App() {
     });
 
     const monthsList = Object.keys(monthGroups).sort((a,b) => b.localeCompare(a)).map(key => {
-      const [y, m] = key.split('-');
-      const d = new Date(parseInt(y), parseInt(m) - 1, 1);
-      const niceLabel = d.toLocaleDateString('ar-SA', { year: 'numeric', month: 'long' });
+      let niceLabel = key;
+      try {
+        const [y, m] = key.split('-');
+        const d = new Date(parseInt(y), parseInt(m) - 1, 1);
+        niceLabel = d.toLocaleDateString('ar-EG', { year: 'numeric', month: 'long' });
+      } catch {
+        niceLabel = key;
+      }
       return {
         label: niceLabel,
         rawKey: key,

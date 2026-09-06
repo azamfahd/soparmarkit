@@ -44,7 +44,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: 6. Install NPM Dependencies
-        run: npm ci
+        run: npm install --legacy-peer-deps
 
       - name: 7. Build Web Standalone Assets
         run: npm run build

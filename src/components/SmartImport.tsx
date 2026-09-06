@@ -890,67 +890,101 @@ export default function SmartImport(props: SmartImportHubProps) {
           </div>
         </div>
 
-        {/* Group Selector Tabs */}
-        <div className="flex items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 overflow-x-auto scrollbar-none shadow-2xs">
-          <button
-            onClick={() => setActiveGroup('excel')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
-              activeGroup === 'excel'
-                ? 'bg-white text-emerald-700 shadow-sm border border-emerald-200'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-            }`}
-          >
-            <FileSpreadsheet className={`w-4 h-4 ${activeGroup === 'excel' ? 'text-emerald-600' : 'text-slate-400'}`} />
-            <span>إدارة ومزامنة Excel الشاملة 📊</span>
-            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-              محلي 100%
-            </span>
-          </button>
+        {/* Compact & Fully Visible Top Segmented Navigation Bar */}
+        <div className="p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 shadow-2xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+            {/* Tab 1: Excel */}
+            <button
+              type="button"
+              onClick={() => setActiveGroup('excel')}
+              className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeGroup === 'excel'
+                  ? 'bg-white text-emerald-800 shadow-xs border border-emerald-300 ring-1 ring-emerald-400/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`p-1.5 rounded-lg shrink-0 ${activeGroup === 'excel' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200/60 text-slate-500'}`}>
+                  <FileSpreadsheet className="w-4 h-4" />
+                </div>
+                <span className="whitespace-nowrap font-black">إدارة ومزامنة Excel 📊</span>
+              </div>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
+                activeGroup === 'excel' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
+              }`}>
+                محلي 100%
+              </span>
+            </button>
 
-          <button
-            onClick={() => setActiveGroup('database')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
-              activeGroup === 'database'
-                ? 'bg-white text-violet-700 shadow-sm border border-violet-200'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-            }`}
-          >
-            <Database className={`w-4 h-4 ${activeGroup === 'database' ? 'text-violet-600' : 'text-slate-400'}`} />
-            <span>قاعدة البيانات والنسخ الاحتياطي 💾</span>
-            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-violet-50 text-violet-700 border border-violet-200">
-              JSON & قرص
-            </span>
-          </button>
+            {/* Tab 2: Database */}
+            <button
+              type="button"
+              onClick={() => setActiveGroup('database')}
+              className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeGroup === 'database'
+                  ? 'bg-white text-violet-800 shadow-xs border border-violet-300 ring-1 ring-violet-400/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`p-1.5 rounded-lg shrink-0 ${activeGroup === 'database' ? 'bg-violet-100 text-violet-700' : 'bg-slate-200/60 text-slate-500'}`}>
+                  <Database className="w-4 h-4" />
+                </div>
+                <span className="whitespace-nowrap font-black">قاعدة البيانات والنسخ 💾</span>
+              </div>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
+                activeGroup === 'database' ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
+              }`}>
+                JSON & قرص
+              </span>
+            </button>
 
-          <button
-            onClick={() => setActiveGroup('ocr_ai')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
-              activeGroup === 'ocr_ai'
-                ? 'bg-white text-amber-700 shadow-sm border border-amber-200'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-            }`}
-          >
-            <Sparkles className={`w-4 h-4 ${activeGroup === 'ocr_ai' ? 'text-amber-500 animate-pulse' : 'text-slate-400'}`} />
-            <span>استيراد الفواتير والمستندات الذكي 📷</span>
-            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-amber-50 text-amber-700 border border-amber-200">
-              AI & كلاسيك
-            </span>
-          </button>
+            {/* Tab 3: OCR & AI */}
+            <button
+              type="button"
+              onClick={() => setActiveGroup('ocr_ai')}
+              className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeGroup === 'ocr_ai'
+                  ? 'bg-white text-amber-800 shadow-xs border border-amber-300 ring-1 ring-amber-400/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`p-1.5 rounded-lg shrink-0 ${activeGroup === 'ocr_ai' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200/60 text-slate-500'}`}>
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <span className="whitespace-nowrap font-black">استيراد الفواتير والمستندات 📷</span>
+              </div>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
+                activeGroup === 'ocr_ai' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
+              }`}>
+                AI & كلاسيك
+              </span>
+            </button>
 
-          <button
-            onClick={() => setActiveGroup('cloud_sync')}
-            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap cursor-pointer ${
-              activeGroup === 'cloud_sync'
-                ? 'bg-white text-blue-700 shadow-sm border border-blue-200'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-            }`}
-          >
-            <Cloud className={`w-4 h-4 ${activeGroup === 'cloud_sync' ? 'text-blue-600' : 'text-slate-400'}`} />
-            <span>المزامنة والربط السحابي 🌐</span>
-            <span className="text-[9px] px-1.5 py-0.5 rounded-md font-bold bg-blue-50 text-blue-700 border border-blue-200">
-              اختياري
-            </span>
-          </button>
+            {/* Tab 4: Cloud Sync */}
+            <button
+              type="button"
+              onClick={() => setActiveGroup('cloud_sync')}
+              className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                activeGroup === 'cloud_sync'
+                  ? 'bg-white text-blue-800 shadow-xs border border-blue-300 ring-1 ring-blue-400/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`p-1.5 rounded-lg shrink-0 ${activeGroup === 'cloud_sync' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/60 text-slate-500'}`}>
+                  <Cloud className="w-4 h-4" />
+                </div>
+                <span className="whitespace-nowrap font-black">المزامنة والربط السحابي 🌐</span>
+              </div>
+              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
+                activeGroup === 'cloud_sync' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
+              }`}>
+                اختياري
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
