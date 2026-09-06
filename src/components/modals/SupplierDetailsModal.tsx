@@ -452,7 +452,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
           {/* --- SUB-VIEW: STOCK QUANTITY & ADDITIONS --- */}
           {supplierDetailsTab === 'stock_qty' && (() => {
             const allLogs = supplierHistory.inventoryLogs || [];
-            const relevantLogs = allLogs.filter(log => ['initial', 'manual_update', 'refund'].includes(log.reason));
+            const relevantLogs = allLogs.filter(log => ['initial', 'manual_update', 'manual_withdraw', 'refund', 'new_product', 'edit_product'].includes(log.reason) || (log.change_amount !== undefined && log.reason !== 'sale'));
             
             return (
               <div className="space-y-3.5">
@@ -460,7 +460,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                 <div className="bg-white p-3.5 rounded-2xl border border-slate-100 shadow-xs flex justify-between items-center text-right">
                   <div className="space-y-1">
                     <span className="text-[10px] text-slate-400 font-black block">إجمالي حركة المخزون</span>
-                    <p className="text-[9px] text-slate-400 max-w-[240px]">يشمل مخزون التأسيس، التوريد الإضافي، والتحديثات والمرتجعات.</p>
+                    <p className="text-[9px] text-slate-400 max-w-[240px]">يشمل مخزون التأسيس، التوريد الإضافي، التحديثات، والسحوبات والمرتجعات.</p>
                   </div>
                   <div className="bg-blue-50/70 p-2.5 rounded-xl shrink-0 text-left">
                     <span className="text-[9px] text-blue-600 font-bold block">صافي الحركة</span>
@@ -490,7 +490,7 @@ export const SupplierDetailsModal: React.FC<SupplierDetailsModalProps> = ({
                         <tbody className="divide-y divide-slate-100 text-xs">
                           {relevantLogs.map((log, idx) => {
                             const isReturn = log.reason === 'refund';
-                            const isWithdrawal = log.reason === 'manual_update' && log.change_amount < 0;
+                            const isWithdrawal = log.reason === 'manual_withdraw' || (log.reason === 'manual_update' && log.change_amount < 0) || (log.change_amount < 0 && log.reason !== 'sale');
                             const isUpdate = log.reason === 'manual_update' && log.change_amount > 0;
                             const badgeStyle = getProductBadgeStyles(log.product_name || '');
                             return (

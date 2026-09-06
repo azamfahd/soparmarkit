@@ -160,9 +160,9 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
               >
                 جميع العمليات ({ledgerEntries.length})
               </button>
-              {availableMonths.map((m) => (
+              {availableMonths.map((m, idx) => (
                 <button
-                  key={`month-btn-${m.key}`}
+                  key={`month-btn-${m.key}-${idx}`}
                   type="button"
                   onClick={() => setSelectedMonth(m.key)}
                   className={`text-xs px-3 py-1.5 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
@@ -417,18 +417,24 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                     {entry.entryType !== 'sale' && entry.type === 'payment' && onPrintVoucher && (
                       <div className="flex justify-end pt-1 border-t border-slate-200/50">
                         <button 
-                          onClick={() => onPrintVoucher({
-                            type: 'receipt',
-                            voucherNumber: `REC-${String(entry.id || Math.abs(entry.amount)).padStart(5, '0')}`,
-                            date: entry.created_at || new Date().toISOString(),
-                            partyName: showCustomerDetails.name,
-                            partyPhone: showCustomerDetails.phone || '',
-                            amount: entry.amount,
-                            previousBalance: entry.previous_balance !== undefined ? entry.previous_balance : (showCustomerDetails.balance + entry.amount),
-                            newBalance: entry.new_balance !== undefined ? entry.new_balance : showCustomerDetails.balance,
-                            notes: entry.notes || 'سداد دفعة من الحساب',
-                            paymentMethod: 'cash'
-                          })}
+                          onClick={() => {
+                            const entryAmount = Math.abs(Number(entry.amount) || 0);
+                            const prevBal = entry.previous_balance !== undefined ? Number(entry.previous_balance) : (Number(showCustomerDetails.balance || 0) + entryAmount);
+                            const newBal = entry.new_balance !== undefined ? Number(entry.new_balance) : Number(showCustomerDetails.balance || 0);
+                            
+                            onPrintVoucher({
+                              type: 'receipt',
+                              voucherNumber: `REC-${String(entry.id || Math.abs(Math.round(entryAmount))).padStart(5, '0')}`,
+                              date: entry.created_at || new Date().toISOString(),
+                              partyName: showCustomerDetails.name,
+                              partyPhone: showCustomerDetails.phone || '',
+                              amount: entryAmount,
+                              previousBalance: prevBal,
+                              newBalance: newBal,
+                              notes: entry.notes || 'سداد دفعة من الحساب',
+                              paymentMethod: 'cash'
+                            });
+                          }}
                           className="text-[10px] text-emerald-800 bg-white border border-emerald-300 px-2.5 py-1 rounded-md font-bold flex items-center gap-1 hover:bg-emerald-50 cursor-pointer transition-all shadow-2xs"
                         >
                           <Printer className="w-3 h-3 text-emerald-600" /> طباعة سند القبض

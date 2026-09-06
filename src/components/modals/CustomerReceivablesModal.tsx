@@ -58,7 +58,7 @@ export const CustomerReceivablesModal: React.FC<CustomerReceivablesModalProps> =
             </thead>
             <tbody className="divide-y divide-slate-100">
               {customerSalesBreakdown.map((cust, idx) => (
-                <tr key={cust.id || idx} className="hover:bg-slate-50/50 transition-colors">
+                <tr key={`cust-rec-${cust.id || idx}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
                   <td className="p-3 font-black text-slate-800">{cust.name}</td>
                   <td className="p-3 font-bold text-slate-600">{cust.count}</td>
                   <td className="p-3 font-bold text-slate-600">{formatPrice(cust.cashAmount)}</td>

@@ -312,8 +312,8 @@ export const ExpensesModal: React.FC<ExpensesModalProps> = ({
                 className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none"
               >
                 <option value="ALL">جميع بنود المصروفات</option>
-                {EXPENSE_CATEGORIES.map(c => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
+                {EXPENSE_CATEGORIES.map((c, idx) => (
+                  <option key={`exp-c-${c.id}-${idx}`} value={c.id}>{c.label}</option>
                 ))}
               </select>
             </div>
@@ -373,8 +373,8 @@ export const ExpensesModal: React.FC<ExpensesModalProps> = ({
                       onChange={e => setNewCategory(e.target.value)}
                       className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none"
                     >
-                      {EXPENSE_CATEGORIES.map(cat => (
-                        <option key={cat.id} value={cat.id}>{cat.label}</option>
+                      {EXPENSE_CATEGORIES.map((cat, idx) => (
+                        <option key={`new-exp-cat-${cat.id}-${idx}`} value={cat.id}>{cat.label}</option>
                       ))}
                     </select>
                   </div>
@@ -460,11 +460,11 @@ export const ExpensesModal: React.FC<ExpensesModalProps> = ({
                       </td>
                     </tr>
                   ) : (
-                    filteredExpenses.map(exp => {
+                    filteredExpenses.map((exp, idx) => {
                       const catInfo = EXPENSE_CATEGORIES.find(c => c.id === exp.category);
                       const IconComp = catInfo?.icon || HelpCircle;
                       return (
-                        <tr key={exp.id} className="hover:bg-slate-50/80 transition-colors">
+                        <tr key={`expense-row-${exp.id ?? 'noid'}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                           <td className="p-3 font-extrabold text-slate-800">
                             {exp.title}
                           </td>

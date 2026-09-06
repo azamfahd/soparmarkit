@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Wallet, X } from 'lucide-react';
+import { Wallet, X, Receipt } from 'lucide-react';
 import { Button } from '../ui/Button';
 
 export interface SupplierPaymentModalProps {
@@ -13,19 +13,21 @@ export interface SupplierPaymentModalProps {
 export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({
   showSupplierPaymentModal,
   setShowSupplierPaymentModal,
-        handleSupplierPayment,
+  handleSupplierPayment,
   formatPrice,
 }) => {
 
   const [supplierPaymentAmount, setSupplierPaymentAmount] = useState('');
   const [supplierPaymentNotes, setSupplierPaymentNotes] = useState('');
+  const [showVoucher, setShowVoucher] = useState(false);
 
   const handleSave = () => {
     handleSupplierPayment(
-      { supplierPaymentAmount, supplierPaymentNotes },
+      { supplierPaymentAmount, supplierPaymentNotes, showVoucher },
       () => {
         setSupplierPaymentAmount('');
         setSupplierPaymentNotes('');
+        setShowVoucher(false);
       }
     );
   };
@@ -79,6 +81,21 @@ export const SupplierPaymentModal: React.FC<SupplierPaymentModalProps> = ({
                 className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl h-20 text-sm outline-none focus:border-emerald-500 resize-none transition-all"
               />
            </div>
+
+           {/* Optional Voucher Option */}
+           <label className="flex items-center gap-2.5 p-3 bg-slate-50 hover:bg-slate-100/80 rounded-2xl border border-slate-200 transition-all cursor-pointer select-none">
+             <input 
+               type="checkbox" 
+               checked={showVoucher} 
+               onChange={e => setShowVoucher(e.target.checked)} 
+               className="w-4 h-4 text-emerald-600 rounded-md border-slate-300 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
+             />
+             <div className="flex-1 text-right">
+               <span className="text-xs font-bold text-slate-800 block">عرض / طباعة سند الصرف (اختياري)</span>
+               <span className="text-[10px] text-slate-500 block">حفظ وفك التجميد فوراً دون فتح النافذة</span>
+             </div>
+             <Receipt className={`w-4 h-4 ${showVoucher ? 'text-emerald-600' : 'text-slate-400'}`} />
+           </label>
            <Button className="w-full py-4 rounded-2xl text-lg font-black shadow-lg shadow-emerald-500/20" onClick={handleSave}>
              تأكيد التسديد وحفظ
            </Button>

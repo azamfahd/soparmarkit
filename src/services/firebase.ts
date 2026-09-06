@@ -29,7 +29,7 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 let cloudDbInstance;
 try {
   cloudDbInstance = initializeFirestore(app, {
-    experimentalAutoDetectLongPolling: true,
+    experimentalForceLongPolling: true,
     ignoreUndefinedProperties: true
   }, firebaseConfig.firestoreDatabaseId || "(default)");
 } catch {
@@ -196,3 +196,52 @@ export async function deleteRequestFromCloud(deviceId: string): Promise<void> {
     throw err;
   }
 }
+
+export interface AppVersionConfig {
+  latestVersion: string;
+  apkUrl: string;
+  updateMessage: string;
+  mandatory: boolean;
+  updatedAt: string;
+}
+
+/**
+ * Subscribes to app version configuration updates from Firestore.
+ */
+export function subscribeToAppVersion(callback: (config: AppVersionConfig | null) => void) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return () => {};
+  }
+  try {
+    const docRef = doc(cloudDb, 'app_config', 'version_info');
+    return onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback(docSnap.data() as AppVersionConfig);
+      } else {
+        callback(null);
+      }
+    }, (error) => {
+      console.warn("Firestore listening error for app version:", error);
+    });
+  } catch (err) {
+    console.warn("Failed to subscribe to app version:", err);
+    return () => {};
+  }
+}
+
+/**
+ * Updates the latest app version configuration in Firestore (Admin only).
+ */
+export async function updateLatestAppVersion(config: Omit<AppVersionConfig, 'updatedAt'>): Promise<void> {
+  try {
+    const docRef = doc(cloudDb, 'app_config', 'version_info');
+    await setDoc(docRef, {
+      ...config,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.warn("Firestore updateLatestAppVersion warning:", err);
+    throw err;
+  }
+}
+

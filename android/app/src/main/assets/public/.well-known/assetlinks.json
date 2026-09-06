@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "app.azamfahd.account20.twa",
+    "sha256_cert_fingerprints": ["FF:B3:6F:74:C4:87:3B:54:1A:B4:00:74:60:C5:20:D8:D0:F0:7E:A1:90:20:81:A7:08:CB:43:B4:A1:DA:81:A0"]
+  }
+}]

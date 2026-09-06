@@ -7,13 +7,15 @@ interface UpdateNotificationBannerProps {
   onUpdateNow: () => void;
   onDismiss: () => void;
   onDownloadAPK: () => void;
+  updateMessage?: string;
 }
 
 export const UpdateNotificationBanner: React.FC<UpdateNotificationBannerProps> = ({
   show,
   onUpdateNow,
   onDismiss,
-  onDownloadAPK
+  onDownloadAPK,
+  updateMessage
 }) => {
   return (
     <AnimatePresence>
@@ -45,7 +47,7 @@ export const UpdateNotificationBanner: React.FC<UpdateNotificationBannerProps> =
                   </h4>
                 </div>
                 <p className="text-[11px] text-emerald-200/90 font-medium mt-0.5">
-                  تم نشر ميزات وتحسينات جديدة. اضغط للتحديث فوراً أو تحميل أحدث APK.
+                  {updateMessage || "تم نشر ميزات وتحسينات جديدة. اضغط للتحديث فوراً أو تحميل أحدث APK."}
                 </p>
               </div>
               <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">

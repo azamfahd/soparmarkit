@@ -2358,7 +2358,7 @@ export default function SmartAnalytics
                   </thead>
                   <tbody className="divide-y divide-slate-100 text-[11px]">
                     {searchedCustomerSales.slice(0, 4).map((c, idx) => (
-                      <tr key={`cust-row-${c.id || idx}`} className="hover:bg-white transition-colors">
+                      <tr key={`cust-row-${c.id ?? 'noid'}-${idx}`} className="hover:bg-white transition-colors">
                         <td className="p-2 font-bold text-slate-800">{c.name}</td>
                         <td className="p-2 text-center font-mono">{c.count}</td>
                         <td className="p-2 font-mono font-bold text-indigo-700">{formatPrice(c.totalAmount)}</td>
@@ -2418,8 +2418,8 @@ export default function SmartAnalytics
                     className="bg-white border border-amber-300 text-slate-800 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer shadow-2xs"
                   >
                     <option value="all">🌐 جميع الموردين ({supplierAnalytics.totalSuppliersCount})</option>
-                    {supplierAnalytics.supplierList.map((sup) => (
-                      <option key={`sup-select-${sup.id}`} value={String(sup.id)}>
+                    {supplierAnalytics.supplierList.map((sup, idx) => (
+                      <option key={`sup-select-${sup.id ?? 'noid'}-${idx}`} value={String(sup.id)}>
                         {sup.name} {sup.balance > 0 ? `(مستحق: ${formatPrice(sup.balance)})` : '(خالص)'}
                       </option>
                     ))}
@@ -2549,11 +2549,11 @@ export default function SmartAnalytics
                 >
                   الكل
                 </button>
-                {supplierAnalytics.supplierList.map(sup => {
+                {supplierAnalytics.supplierList.map((sup, idx) => {
                   const isSelected = selectedSupplierFilter === String(sup.id);
                   return (
                     <button
-                      key={`sup-quick-btn-${sup.id}`}
+                      key={`sup-quick-btn-${sup.id ?? 'noid'}-${idx}`}
                       type="button"
                       onClick={() => setSelectedSupplierFilter(String(sup.id))}
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -2617,7 +2617,7 @@ export default function SmartAnalytics
                     const hasBalance = sup.balance > 0;
                     return (
                       <div
-                        key={`supplier-card-${sup.id || idx}`}
+                        key={`supplier-card-${sup.id || idx}-${idx}`}
                         onClick={() => {
                           setSelectedSupplierForDetails(sup);
                           setSupplierDetailsTab('overview');
@@ -2885,7 +2885,7 @@ export default function SmartAnalytics
                               const stockQty = p.stock_quantity || 0;
                               const stockValue = stockQty * (p.cost_price || 0);
                               return (
-                                <tr key={`sup-prod-${p.id || idx}`} className="hover:bg-slate-50 transition-colors">
+                                <tr key={`sup-prod-${p.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors">
                                   <td className="p-3 font-bold text-slate-800">{p.name}</td>
                                   <td className="p-3 font-mono text-slate-500 text-[11px]">{p.barcode || '—'}</td>
                                   <td className="p-3 text-slate-600">{p.category || 'عام'}</td>
@@ -2934,7 +2934,7 @@ export default function SmartAnalytics
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {selectedSupplierForDetails.payments.map((pmt: any, idx: number) => (
-                              <tr key={`sup-pmt-${pmt.id || idx}`} className="hover:bg-slate-50 transition-colors">
+                              <tr key={`sup-pmt-${pmt.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors">
                                 <td className="p-3 font-mono text-slate-700">
                                   {new Date(pmt.payment_date).toLocaleDateString('ar-SA')} {new Date(pmt.payment_date).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
                                 </td>

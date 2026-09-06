@@ -21,7 +21,7 @@ jobs:
       - name: 2. Setup Node.js Environment
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: 3. Setup Java Development Kit (JDK 17)
@@ -34,7 +34,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: 5. Cache Gradle Bundles & Dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches

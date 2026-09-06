@@ -239,7 +239,7 @@ export default function BarcodeScanner({
         if (!isMounted) return;
         const errName = err?.name || 'CameraError';
         const errStr = err?.message || String(err);
-        console.error("Camera initialization failure:", errName, errStr, err);
+        console.warn("Camera initialization failure:", errName, errStr);
         
         let userMessage = "يمكنك منح صلاحية الكاميرا أو كتابة الباركود يدوياً أو رفع صورة الباركود.";
         if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errStr.toLowerCase().includes('permission denied')) {
@@ -294,7 +294,7 @@ export default function BarcodeScanner({
     } catch (err: any) {
       const errName = err?.name || 'PermissionDenied';
       const errStr = err?.message || String(err);
-      console.error("Direct permission request failed:", errName, errStr, err);
+      console.warn("Direct permission request failed:", errName, errStr);
       setErrorMsg("الوصول للكاميرا مرفوض حالياً من المتصفح. يمكنك استخدام الإدخال اليدوي أو رفع صورة الباركود.");
     }
   };
@@ -420,14 +420,14 @@ export default function BarcodeScanner({
     } catch (err: any) {
       const errName = err?.name || (typeof err === 'string' ? err : 'CameraError');
       const errStr = err?.message || (typeof err === 'string' ? err : String(err));
-      console.error("Failed to start scanner:", errName, errStr, err);
+      console.warn("Failed to start scanner:", errName, errStr);
       
       if (typeof cameraIdOrConfig === 'string') {
         try {
           await startScanning({ facingMode: "environment" });
           return;
         } catch (e) {
-          console.error("Camera fallback failed:", e);
+          console.warn("Camera fallback failed:", e);
         }
       }
       

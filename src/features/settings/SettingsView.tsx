@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
+import { updateLatestAppVersion, type AppVersionConfig } from '../../services/firebase';
 import { embeddingManager, reindexAllKnowledgeDocuments } from '../../services/ai/rag';
 import { FileSpreadsheet } from 'lucide-react';
 import {
@@ -20,6 +21,111 @@ import {
   downloadExcelBackupManual,
   importExcelBackupManual
 } from '../../services/excelSync';
+import { subscribeToAppVersion } from '../../services/firebase';
+
+const ApkUpdateManager: React.FC = () => {
+  const [config, setConfig] = React.useState<AppVersionConfig | null>(null);
+  const [version, setVersion] = React.useState('');
+  const [apkUrl, setApkUrl] = React.useState('');
+  const [updateMessage, setUpdateMessage] = React.useState('');
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [successMsg, setSuccessMsg] = React.useState('');
+
+  React.useEffect(() => {
+    const unsub = subscribeToAppVersion((cfg) => {
+      if (cfg) {
+        setConfig(cfg);
+        setVersion(cfg.latestVersion);
+        setApkUrl(cfg.apkUrl);
+        setUpdateMessage(cfg.updateMessage);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const handlePublish = async () => {
+    setIsSubmitting(true);
+    setSuccessMsg('');
+    try {
+      await updateLatestAppVersion({
+        latestVersion: version,
+        apkUrl,
+        updateMessage,
+        mandatory: false
+      });
+      setSuccessMsg('تم نشر التحديث لجميع المستخدمين بنجاح! 🚀');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch (e) {
+      console.error(e);
+      alert('فشل نشر التحديث');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4 text-right">
+      <div className="bg-emerald-50/50 p-4 border border-emerald-100 rounded-xl space-y-2">
+        <h4 className="text-emerald-800 font-bold text-xs flex items-center gap-1.5 justify-end">
+          <span>نشر تحديث تطبيق الأندرويد (APK)</span>
+          <RefreshCw className="w-4 h-4" />
+        </h4>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          قم بتغيير رقم الإصدار هنا لإرسال إشعار تحديث فوري لجميع الأجهزة التي تستخدم التطبيق بصيغة APK.
+        </p>
+      </div>
+      
+      <div className="space-y-3">
+        <div className="space-y-1 text-right">
+          <label className="text-[11px] font-bold text-slate-600 block">رقم الإصدار الجديد (مثال: 1.0.2)</label>
+          <input 
+            type="text" 
+            value={version} 
+            onChange={e => setVersion(e.target.value)}
+            className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-500 outline-none transition-all text-sm font-mono text-left"
+            placeholder="1.0.2"
+          />
+        </div>
+
+        <div className="space-y-1 text-right">
+          <label className="text-[11px] font-bold text-slate-600 block">رابط تحميل الـ APK (أو المسار)</label>
+          <input 
+            type="text" 
+            value={apkUrl} 
+            onChange={e => setApkUrl(e.target.value)}
+            className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-500 outline-none transition-all text-xs font-mono text-left"
+            placeholder="https://example.com/app.apk أو /smart_account.apk"
+          />
+        </div>
+
+        <div className="space-y-1 text-right">
+          <label className="text-[11px] font-bold text-slate-600 block">رسالة التحديث (اختياري)</label>
+          <textarea 
+            value={updateMessage} 
+            onChange={e => setUpdateMessage(e.target.value)}
+            className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-500 outline-none transition-all text-xs resize-none custom-scrollbar"
+            rows={2}
+            placeholder="ما الجديد في هذا التحديث؟"
+          />
+        </div>
+
+        {successMsg && (
+          <div className="p-2 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-lg text-center">
+            {successMsg}
+          </div>
+        )}
+
+        <Button 
+          onClick={handlePublish} 
+          disabled={isSubmitting || !version.trim() || !apkUrl.trim()}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+        >
+          {isSubmitting ? 'جاري النشر...' : 'نشر التحديث 🚀'}
+        </Button>
+      </div>
+    </div>
+  );
+};
 
 export interface SettingsViewProps {
   isAutoBackupEnabled: boolean;
@@ -76,8 +182,8 @@ export interface SettingsViewProps {
   developerPinError: string;
   setDeveloperPinError: (val: string) => void;
   handleVerifyDeveloperPIN: () => void;
-  activeDevTab: 'generator' | 'requests';
-  setActiveDevTab: (tab: 'generator' | 'requests') => void;
+  activeDevTab: 'generator' | 'requests' | 'updates';
+  setActiveDevTab: (tab: 'generator' | 'requests' | 'updates') => void;
   allCloudRequests: any[];
   requestDurations: Record<string, number>;
   setRequestDurations: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -1259,24 +1365,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             
             <div className="space-y-4">
               {/* Developer Sub-Tabs */}
-              <div className="grid grid-cols-2 p-1 bg-slate-150 rounded-xl border border-slate-200">
+              <div className="grid grid-cols-3 p-1 bg-slate-150 rounded-xl border border-slate-200">
                 <button 
                   onClick={() => setActiveDevTab('generator')}
                   className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'generator' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
                 >
-                  🛠️ توليد يدوي مباشر
+                  🛠️ توليد ترخيص
                 </button>
                 <button 
                   onClick={_handleCloudTabTelemetrySync}
                   className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center relative ${activeDevTab === 'requests' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
                   title="النقر المتكرر 5 مرات يفتح نافذة تحديث رمز المالك"
                 >
-                  📡 طلبات التفعيل السحابية
+                  📡 الطلبات
                   {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (
                     <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-extrabold text-[9px] w-5.5 h-5.5 flex items-center justify-center rounded-full border-2 border-white animate-pulse">
                       {allCloudRequests.filter(r => r.status === 'pending').length}
                     </span>
                   )}
+                </button>
+                <button 
+                  onClick={() => setActiveDevTab('updates')}
+                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'updates' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                >
+                  🔄 التحديثات
                 </button>
               </div>
 
@@ -1451,6 +1563,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   )}
                 </div>
+              ) : activeDevTab === 'updates' ? (
+                /* APK Updates Manager */
+                <ApkUpdateManager />
               ) : (
                 /* Manual Direct Generator */
                 <>

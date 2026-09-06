@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ShieldCheck, X, TrendingUp, Sparkles, RotateCcw } from 'lucide-react';
+import { ShieldCheck, X, TrendingUp, Sparkles, RotateCcw, Receipt } from 'lucide-react';
 import { Button } from '../ui/Button';
 
 export interface CustomerPaymentModalProps {
@@ -14,19 +14,21 @@ export interface CustomerPaymentModalProps {
 export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
   showPaymentModal,
   setShowPaymentModal,
-        handlePayment,
+  handlePayment,
   formatPrice,
   currency,
 }) => {
 
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [showReceiptVoucher, setShowReceiptVoucher] = useState(false);
 
   const handleSave = () => {
-    handlePayment({ paymentAmount, paymentNotes }, () => {
-        setPaymentAmount('');
-      }
-    );
+    handlePayment({ paymentAmount, paymentNotes, showReceiptVoucher }, () => {
+      setPaymentAmount('');
+      setPaymentNotes('');
+      setShowReceiptVoucher(false);
+    });
   };
 
   if (!showPaymentModal) return null;
@@ -173,7 +175,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
             <label className="text-xs font-black text-slate-600 pr-1">البيان / ملاحظات:</label>
             <textarea 
               placeholder="اكتب أي ملاحظات هنا..." 
-              className="w-full p-4 bg-slate-50 rounded-2xl text-xs text-slate-700 focus:outline-none border-2 border-slate-100 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-200 transition-all min-h-[80px] resize-none" 
+              className="w-full p-4 bg-slate-50 rounded-2xl text-xs text-slate-700 focus:outline-none border-2 border-slate-100 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-200 transition-all min-h-[70px] resize-none" 
               value={paymentNotes} 
               onChange={e => setPaymentNotes(e.target.value)} 
             />

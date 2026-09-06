@@ -36,6 +36,7 @@ export interface VoucherModalProps {
   voucher: VoucherData | null;
   storeName: string;
   formatPrice: (price: number) => string;
+  currency?: string;
 }
 
 export const VoucherModal: React.FC<VoucherModalProps> = ({
@@ -43,7 +44,8 @@ export const VoucherModal: React.FC<VoucherModalProps> = ({
   onClose,
   voucher,
   storeName,
-  formatPrice
+  formatPrice,
+  currency = 'ريال'
 }) => {
   const [paperFormat, setPaperFormat] = useState<'thermal' | 'a5'>('thermal');
   const [copiedShare, setCopiedShare] = useState(false);
@@ -53,10 +55,168 @@ export const VoucherModal: React.FC<VoucherModalProps> = ({
   const isReceipt = voucher.type === 'receipt';
   const voucherTitle = isReceipt ? 'سند قبض نقدي' : 'سند صرف نقدي';
   const voucherColor = isReceipt ? 'emerald' : 'amber';
-  const amountWords = tafqeetArabic(voucher.amount, 'ريال');
+  const amountWords = tafqeetArabic(Math.abs(Number(voucher.amount) || 0), currency);
 
   const handlePrint = () => {
+    const previewId = paperFormat === 'thermal' ? 'thermal-voucher-preview' : 'formal-voucher-preview';
+    const previewElement = document.getElementById(previewId);
+    if (!previewElement) {
+      window.print();
+      return;
+    }
+
+    const contentHtml = previewElement.outerHTML;
+
+    // Custom print styles for non-blocking direct printing
+    const printStyles = paperFormat === 'thermal' ? `
+      @page {
+        size: 80mm auto;
+        margin: 0;
+      }
+      body {
+        margin: 0;
+        padding: 4mm;
+        width: 72mm;
+        font-family: 'Cairo', Arial, sans-serif;
+        direction: rtl;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        color: #333;
+      }
+      #thermal-voucher-preview {
+        box-shadow: none !important;
+        border: none !important;
+        padding: 0 !important;
+        max-width: 100% !important;
+      }
+    ` : `
+      @page {
+        size: A5 landscape;
+        margin: 5mm;
+      }
+      body {
+        margin: 0;
+        padding: 10px;
+        font-family: 'Cairo', Arial, sans-serif;
+        direction: rtl;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        color: #333;
+      }
+      #formal-voucher-preview {
+        box-shadow: none !important;
+        max-width: 100% !important;
+        border: 2px solid #000 !important;
+      }
+    `;
+
+    const html = `
+      <div style="direction: rtl;">
+        <style>
+          ${printStyles}
+          .flex { display: flex; }
+          .justify-between { justify-content: space-between; }
+          .items-center { align-items: center; }
+          .text-center { text-align: center; }
+          .font-bold { font-weight: bold; }
+          .font-black { font-weight: 900; }
+          .text-emerald-700 { color: #047857; }
+          .bg-slate-50 { background-color: #f8fafc; }
+          .bg-emerald-50\\/50 { background-color: rgba(236, 253, 245, 0.5); }
+          .p-2 { padding: 8px; }
+          .rounded-lg { border-radius: 8px; }
+          .border { border: 1px solid #e2e8f0; }
+          .border-t-2 { border-top-width: 2px; }
+          .border-dashed { border-style: dashed; }
+          .border-slate-300 { border-color: #cbd5e1; }
+          .grid { display: grid; }
+          .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .gap-4 { gap: 16px; }
+          .gap-2 { gap: 8px; }
+          .text-[10px] { font-size: 10px; }
+          .text-[11px] { font-size: 11px; }
+          .text-slate-400 { color: #94a3b8; }
+          .text-slate-500 { color: #64748b; }
+          .text-slate-600 { color: #475569; }
+          .text-slate-700 { color: #334155; }
+          .text-slate-900 { color: #0f172a; }
+          .space-y-4 > * + * { margin-top: 16px; }
+          .space-y-2 > * + * { margin-top: 8px; }
+          .space-y-1.5 > * + * { margin-top: 6px; }
+          .space-y-1 > * + * { margin-top: 4px; }
+          .space-y-6 > * + * { margin-top: 24px; }
+          .pb-3 { padding-bottom: 12px; }
+          .pt-2 { padding-top: 8px; }
+          .pt-4 { padding-top: 16px; }
+          .pt-6 { padding-top: 24px; }
+          .border-b-2 { border-bottom-width: 2px; }
+          .border-slate-800 { border-color: #1e293b; }
+          .border-slate-200 { border-color: #e2e8f0; }
+          .px-3 { padding-left: 12px; padding-right: 12px; }
+          .py-0.5 { padding-top: 2px; padding-bottom: 2px; }
+          .bg-white { background-color: #ffffff; }
+          .rounded-xl { border-radius: 12px; }
+          .border-l { border-left-width: 1px; }
+          .pl-1 { padding-left: 4px; }
+          .pr-1 { padding-right: 4px; }
+          .px-1 { padding-left: 4px; padding-right: 4px; }
+          .w-14 { width: 56px; }
+          .h-14 { height: 56px; }
+          .mx-auto { margin-left: auto; margin-right: auto; }
+          .rounded-full { border-radius: 9999px; }
+          .text-indigo-500 { color: #6366f1; }
+        </style>
+        ${contentHtml}
+      </div>
+    `;
+
+    // 1. Create a print container
+    const printContainer = document.createElement('div');
+    printContainer.id = 'direct-print-container';
+    printContainer.innerHTML = html;
+    document.body.appendChild(printContainer);
+
+    // 2. Create style element to hide everything else during print
+    const style = document.createElement('style');
+    style.id = 'direct-print-style';
+    style.innerHTML = `
+      @media print {
+        body {
+          background: white !important;
+          color: black !important;
+        }
+        body > :not(#direct-print-container) {
+          display: none !important;
+        }
+        #direct-print-container {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          direction: rtl;
+          display: block !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 3. Trigger printing on main window
     window.print();
+
+    // 4. Cleanup
+    const cleanup = () => {
+      const container = document.getElementById('direct-print-container');
+      const styleEl = document.getElementById('direct-print-style');
+      if (container) container.remove();
+      if (styleEl) styleEl.remove();
+    };
+
+    if ('onafterprint' in window) {
+      window.addEventListener('afterprint', cleanup, { once: true });
+    } else {
+      setTimeout(cleanup, 1500);
+    }
   };
 
   const handleShareWhatsApp = () => {

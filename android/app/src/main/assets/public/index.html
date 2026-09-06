@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="النظام المحاسبي الذكي" />
+    <meta name="application-name" content="النظام المحاسبي الذكي" />
+    <title>النظام المحاسبي الذكي</title>
+    <!-- خطوط النظام مدمجة محلياً بالكامل للعمل أوفلاين بدون إنترنت (Cairo, Amiri, Reem Kufi, Aref Ruqaa) -->
+    <link rel="stylesheet" href="/fonts/fonts.css" />
+    <script>
+      window.addEventListener('error', function(e) {
+        if (e.message && (e.message.includes('WebSocket') || e.message.includes('Script error'))) {
+          return;
+        }
+        console.error('Global Error caught:', e.message, e.filename, e.lineno);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var msg = String(e.reason || '');
+        if (msg.includes('WebSocket') || msg.includes('websocket') || msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          e.preventDefault();
+          console.warn('Suppressed benign offline/websocket network rejection:', e.reason);
+          return;
+        }
+        console.error('Unhandled Rejection:', e.reason);
+      });
+      
+      // Handle Service Worker
+      if ('serviceWorker' in navigator) {
+        if (location.hostname === 'localhost' || location.hostname.includes('ais-dev')) {
+          // Dev mode: unregister any leftover service workers to prevent caching bugs
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var registration of registrations) {
+              registration.unregister();
+            }
+          });
+        } else {
+          window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/sw.js')
+              .then(function(reg) {
+                console.log('Offline SW registered successfully:', reg.scope);
+              })
+              .catch(function(err) {
+                console.warn('SW registration failed:', err);
+              });
+          });
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-BOkP9Mnz.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-CQfiDHz-.js">
+    <link rel="modulepreload" crossorigin href="/assets/icons-BvLqAg9f.js">
+    <link rel="modulepreload" crossorigin href="/assets/charts-DNg24SJa.js">
+    <link rel="modulepreload" crossorigin href="/assets/db-CnOIDVPF.js">
+    <link rel="modulepreload" crossorigin href="/assets/firebase-DuOa54iE.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-Ck8Eu-Um.css">
+  <link rel="manifest" href="/manifest.webmanifest"></head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

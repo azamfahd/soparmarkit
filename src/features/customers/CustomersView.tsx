@@ -173,13 +173,13 @@ const CustomersViewComponent: React.FC<CustomersViewProps> = ({
         </Button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+      <div className="flex flex-col sm:flex-row gap-2 mb-3">
         <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5 pointer-events-none" />
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 pointer-events-none" />
           <input 
             type="text" 
             placeholder="ابحث عن زبون بالاسم أو رقم الهاتف..." 
-            className="w-full p-3 pr-10 pl-9 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-800 placeholder-slate-400 shadow-2xs transition-all font-bold text-sm"
+            className="w-full py-2 px-3 pr-9 pl-8 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-slate-800 placeholder-slate-400 shadow-2xs transition-all font-bold text-xs sm:text-sm"
             value={customerSearchTerm}
             onChange={(e) => setCustomerSearchTerm(e.target.value)}
           />
@@ -187,20 +187,20 @@ const CustomersViewComponent: React.FC<CustomersViewProps> = ({
             <button
               type="button"
               onClick={() => setCustomerSearchTerm('')}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5 rounded-full cursor-pointer"
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5 rounded-full cursor-pointer"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
-        <div className="shrink-0 flex items-center bg-emerald-50/80 border border-emerald-200 rounded-xl shadow-sm pl-2 pr-3 overflow-hidden transition-all hover:bg-emerald-100/80 hover:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/20 cursor-pointer">
-           <SlidersHorizontal className="w-4 h-4 text-emerald-600 ml-2" />
+        <div className="shrink-0 flex items-center bg-emerald-50/80 border border-emerald-200 rounded-xl shadow-2xs px-2 py-0.5 overflow-hidden transition-all hover:bg-emerald-100/80 hover:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/20 cursor-pointer">
+           <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-600 ml-1.5 shrink-0" />
            <span className="text-xs font-extrabold text-emerald-800 whitespace-nowrap">ترتيب:</span>
            <select
              value={sortType}
              onChange={(e) => setSortType(e.target.value as any)}
-             className="p-3 bg-transparent border-none outline-none text-sm font-black text-emerald-950 cursor-pointer transition-colors appearance-none pr-8 relative z-10"
-             style={{ backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'left 0.5rem center', backgroundSize: '1em' }}
+             className="py-1.5 px-1 bg-transparent border-none outline-none text-xs font-black text-emerald-950 cursor-pointer transition-colors appearance-none pr-6 relative z-10"
+             style={{ backgroundImage: 'url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3e%3cpolyline points=\'6 9 12 15 18 9\'%3e%3c/polyline%3e%3c/svg%3e")', backgroundRepeat: 'no-repeat', backgroundPosition: 'left 0.25rem center', backgroundSize: '0.85em' }}
            >
              <option value="last_sale_desc">🛒 آخر عملية بيع (الأحدث)</option>
              <option value="last_sale_asc">⏱️ أقدم عملية بيع (المنقطعون)</option>
@@ -215,8 +215,8 @@ const CustomersViewComponent: React.FC<CustomersViewProps> = ({
 
       <div className="space-y-2">
         {filteredCustomers.length === 0 ? (
-          <Card className="p-8 text-center bg-white border border-dashed border-slate-200">
-            <p className="text-sm font-bold text-slate-600">لا يوجد زبائن مطابقين للبحث</p>
+          <Card className="p-6 text-center bg-white border border-dashed border-slate-200 rounded-xl">
+            <p className="text-xs sm:text-sm font-bold text-slate-600">لا يوجد زبائن مطابقين للبحث</p>
           </Card>
         ) : (
           filteredCustomers.map((c, idx) => {
@@ -225,71 +225,71 @@ const CustomersViewComponent: React.FC<CustomersViewProps> = ({
             return (
               <Card 
                 key={`customer-card-${c.id ?? 'no-id'}-${idx}`} 
-                className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 cursor-pointer active:bg-slate-50 p-4 border border-slate-100 bg-white hover:border-slate-200 hover:shadow-sm transition-all shadow-xs rounded-2xl"
+                className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 cursor-pointer active:bg-slate-50 p-2.5 sm:p-3 border border-slate-100 bg-white hover:border-slate-200 hover:shadow-2xs transition-all shadow-2xs rounded-xl"
                 onClick={() => fetchCustomerHistory(c)}
               >
-                <div className="text-right space-y-1 min-w-0">
+                <div className="text-right space-y-0.5 min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="font-bold text-slate-800 text-base">{c.name}</p>
+                    <p className="font-bold text-slate-800 text-sm">{c.name}</p>
                     {lastSale ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-sky-800 bg-sky-50 px-2 py-0.5 rounded-lg font-bold border border-sky-200/70">
+                      <span className="inline-flex items-center gap-1 text-[10px] text-sky-800 bg-sky-50 px-1.5 py-0.5 rounded-md font-bold border border-sky-200/70">
                         <ShoppingBag className="w-3 h-3 text-sky-600" />
                         آخر شراء: {formatRelativeDate(lastSale.date)}
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md font-medium">
+                      <span className="inline-flex items-center gap-1 text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md font-medium">
                         لا توجد مشتريات
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-500">
-                    <span className="flex items-center gap-1 font-mono">
+                  <div className="flex items-center gap-2.5 text-xs text-slate-500 flex-wrap">
+                    <span className="flex items-center gap-1 font-mono text-[11px]">
                       <Phone className="w-3 h-3 text-slate-400" />
                       {c.phone || 'بدون رقم هاتف'}
                     </span>
                     {lastSale && lastSale.count > 1 && (
-                      <span className="text-[11px] text-slate-400">
-                        • {lastSale.count} عملية بيع سابقة
+                      <span className="text-[10px] text-slate-400">
+                        • {lastSale.count} عملية بيع
                       </span>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between sm:justify-end gap-4 w-full sm:w-auto border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
+                <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100 shrink-0">
                   <div className="text-right sm:text-left">
-                    <p className="text-[10px] text-slate-400 font-bold">
-                      {c.balance > 0 ? 'الرصيد المستحق (دين)' : c.balance < 0 ? 'رصيد دائن (دفعة مقدمة)' : 'الرصيد خالص'}
+                    <p className="text-[9px] text-slate-400 font-bold">
+                      {c.balance > 0 ? 'الرصيد المستحق (دين)' : c.balance < 0 ? 'رصيد دائن' : 'الرصيد خالص'}
                     </p>
-                    <p className={`font-bold text-sm sm:text-base ${c.balance > 0 ? 'text-red-500' : c.balance < 0 ? 'text-emerald-600 font-black' : 'text-slate-500'}`}>
+                    <p className={`font-bold text-xs sm:text-sm ${c.balance > 0 ? 'text-red-500' : c.balance < 0 ? 'text-emerald-600 font-black' : 'text-slate-500'}`}>
                       {c.balance < 0 ? formatPrice(Math.abs(c.balance)) : formatPrice(c.balance)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1 shrink-0">
                     <button 
                       onClick={(e) => { e.stopPropagation(); setShowPaymentModal(c); }}
-                      className={`font-semibold text-xs px-3 py-1.5 rounded-xl cursor-pointer transition-colors shadow-2xs ${
+                      className={`font-bold text-[11px] px-2.5 py-1 rounded-lg cursor-pointer transition-colors shadow-2xs ${
                         c.balance > 0 
                           ? 'bg-amber-100 text-amber-900 hover:bg-amber-200' 
                           : 'bg-emerald-100 text-emerald-900 hover:bg-emerald-200'
                       }`}
                     >
-                      {c.balance > 0 ? 'سداد متبقي' : 'إيداع مقدم'}
+                      {c.balance > 0 ? 'سداد' : 'إيداع'}
                     </button>
                     {setEditingCustomer && (
                       <button 
                         onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); }}
-                        className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-xl cursor-pointer transition-colors"
+                        className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-lg cursor-pointer transition-colors"
                         title="تعديل بيانات العميل"
                       >
-                        <Edit2 className="w-4 h-4" />
+                        <Edit2 className="w-3.5 h-3.5" />
                       </button>
                     )}
                     <button 
                       onClick={(e) => { e.stopPropagation(); handleDeleteCustomer(c.id!); }}
-                      className="text-red-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl cursor-pointer transition-colors"
+                      className="text-red-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg cursor-pointer transition-colors"
                       title="حذف العميل"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>

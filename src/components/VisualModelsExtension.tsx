@@ -490,7 +490,7 @@ export default function VisualModelsExtension({
 
                           return (
                             <line
-                              key={idx}
+                              key={`market-link-${link.source}-${link.target}-${idx}`}
                               x1={x1}
                               y1={y1}
                               x2={x2}
@@ -515,7 +515,7 @@ export default function VisualModelsExtension({
 
                         return (
                           <button
-                            key={node.id}
+                            key={`vm-node-${node.id ?? idx}-${idx}`}
                             onClick={() => setSelectedProductNode(isSelected ? null : node.id)}
                             style={{ 
                               left: `${leftPct}%`, 
@@ -754,8 +754,8 @@ export default function VisualModelsExtension({
                   <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
                     {customerDebtMatrix
                       .sort((a, b) => b.riskScore - a.riskScore)
-                      .map(c => (
-                        <div key={c.id} className="bg-white p-3 rounded-xl border border-slate-200 text-xs flex items-center justify-between">
+                      .map((c, idx) => (
+                        <div key={`vm-cust-${c.id ?? idx}-${idx}`} className="bg-white p-3 rounded-xl border border-slate-200 text-xs flex items-center justify-between">
                           <div>
                             <span className="font-bold text-slate-900 block">{c.name}</span>
                             <span className="text-slate-500 text-[11px]">{c.debtAgeDays} يوماً متأخراً</span>

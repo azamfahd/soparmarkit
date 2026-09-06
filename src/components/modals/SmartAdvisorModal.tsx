@@ -1054,9 +1054,9 @@ export function SmartAdvisorModal({
                         </div>
                       </div>
                     ) : (
-                      chatMessages.map((msg) => (
+                      chatMessages.map((msg, msgIdx) => (
                         <div
-                          key={msg.id}
+                          key={`chat-msg-${msg.id || msgIdx}-${msgIdx}`}
                           className={`flex gap-3 max-w-[90%] sm:max-w-[85%] ${
                             msg.role === 'user' ? 'mr-auto flex-row-reverse' : 'ml-auto flex-row'
                           }`}
@@ -1089,7 +1089,7 @@ export function SmartAdvisorModal({
                               <div className="mb-3 pb-2.5 border-b border-indigo-500/20 flex flex-wrap items-center gap-1.5">
                                 {msg.stages.map((stg: any, sIdx: number) => (
                                   <span
-                                    key={`stage-badge-${msg.id}-${sIdx}`}
+                                    key={`stage-badge-${msg.id || msgIdx}-${msgIdx}-${sIdx}`}
                                     className="bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-lg text-[9.5px] font-bold flex items-center gap-1"
                                   >
                                     <CheckCircle className="w-3 h-3 text-emerald-400" />
@@ -1103,7 +1103,7 @@ export function SmartAdvisorModal({
                             {msg.role === 'user' ? (
                               <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
                             ) : (
-                              <div className="space-y-1">{formatAssistantMessage(msg.text, msg.id)}</div>
+                              <div className="space-y-1">{formatAssistantMessage(msg.text, `msg-${msg.id || msgIdx}-${msgIdx}`)}</div>
                             )}
 
                             {/* Footer Actions */}
@@ -1567,7 +1567,7 @@ export function SmartAdvisorModal({
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {mlForecastingData.stockDepletionForecast.map((item, idx) => (
                           <div
-                            key={`depletion-${item.product.id || idx}`}
+                            key={`depletion-${item.product.id || idx}-${idx}`}
                             className={`p-4 rounded-2xl border transition-all space-y-2 ${
                               item.daysRemaining <= 3
                                 ? 'bg-rose-50/70 border-rose-200 text-slate-900'
@@ -1659,12 +1659,12 @@ export function SmartAdvisorModal({
                       </div>
 
                       <div className="space-y-3 pt-2">
-                        {mlForecastingData.daySeasonality.map((day) => {
+                        {mlForecastingData.daySeasonality.map((day, idx) => {
                           const maxDayAvg = Math.max(...mlForecastingData.daySeasonality.map(d => d.avgSales), 1);
                           const barWidth = Math.max(8, (day.avgSales / maxDayAvg) * 100);
 
                           return (
-                            <div key={`season-day-${day.dayIndex}`} className="space-y-1.5">
+                            <div key={`season-day-${day.dayIndex}-${idx}`} className="space-y-1.5">
                               <div className="flex items-center justify-between text-xs font-bold">
                                 <div className="flex items-center gap-2">
                                   <span className="text-slate-800 font-black">{day.dayName}</span>
@@ -1803,9 +1803,9 @@ export function SmartAdvisorModal({
                       </div>
                     ) : (
                       <div className="grid grid-cols-1 gap-4">
-                        {mlForecastingData.storeDiagnostics.map((diag) => (
+                        {mlForecastingData.storeDiagnostics.map((diag, idx) => (
                           <div
-                            key={diag.id}
+                            key={`diag-${diag.id || idx}-${idx}`}
                             className={`p-5 rounded-3xl border shadow-xs space-y-3 transition-all ${
                               diag.severity === 'critical'
                                 ? 'bg-rose-50/70 border-rose-200'
@@ -2033,9 +2033,9 @@ export function SmartAdvisorModal({
                     { id: 'debts', label: 'الديون والعملاء 👥' },
                     { id: 'sales', label: 'المبيعات والنمو 📈' },
                     { id: 'cash', label: 'السيولة والصندوق 💵' }
-                  ].map((filter) => (
+                  ].map((filter, filterIdx) => (
                     <button
-                      key={filter.id}
+                      key={`rec-filter-${filter.id}-${filterIdx}`}
                       type="button"
                       onClick={() => setRecommendationsFilter(filter.id as any)}
                       className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
@@ -2053,7 +2053,7 @@ export function SmartAdvisorModal({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredRecommendations.map((rec, idx) => (
                     <div
-                      key={`rec-item-${rec.id || idx}`}
+                      key={`rec-item-${rec.id || idx}-${idx}`}
                       className={`p-4 sm:p-5 rounded-3xl border transition-all duration-200 space-y-3 shadow-sm flex flex-col justify-between ${
                         rec.type === 'critical'
                           ? 'bg-rose-50/80 border-rose-200 text-slate-900'
@@ -2176,9 +2176,9 @@ export function SmartAdvisorModal({
                 </div>
 
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 custom-scrollbar">
-                  {QUICK_QUESTION_CATEGORIES.map((cat) => (
+                  {QUICK_QUESTION_CATEGORIES.map((cat, idx) => (
                     <button
-                      key={cat.id}
+                      key={`advisor-cat-${cat.id || idx}-${idx}`}
                       type="button"
                       onClick={() => setSelectedQuestionCategory(cat.id)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
@@ -2197,7 +2197,7 @@ export function SmartAdvisorModal({
               <div className="p-4 overflow-y-auto custom-scrollbar flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50/50">
                 {filteredQuickQuestions.map((q, idx) => (
                   <button
-                    key={`modal-q-${q.id || idx}`}
+                    key={`modal-q-${q.id || idx}-${idx}`}
                     type="button"
                     onClick={() => {
                       setIsQuestionBankOpen(false);

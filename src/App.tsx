@@ -117,6 +117,7 @@ import {
   Cell,
   LabelList
 } from 'recharts';
+import { App as CapApp } from '@capacitor/app';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
 import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from './utils/licensing';
 import { useLiveQuery } from './hooks/useLiveQuery';
@@ -128,6 +129,9 @@ import {
   approveRequestInCloud, 
   rejectRequestInCloud, 
   deleteRequestFromCloud,
+  subscribeToAppVersion,
+  updateLatestAppVersion,
+  type AppVersionConfig,
   type ActivationRequest
 } from './services/firebase';
 
@@ -837,7 +841,7 @@ export default function App() {
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(false);
   const [developerPinInput, setDeveloperPinInput] = useState<string>('');
   const [developerPinError, setDeveloperPinError] = useState<string>('');
-  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests'>('requests');
+  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests' | 'updates'>('requests');
   const [devClickCount, setDevClickCount] = useState<number>(0);
   const [showHiddenAdminInput, setShowHiddenAdminInput] = useState<boolean>(false);
   const [diagnosticAttempts, setDiagnosticAttempts] = useState<number>(0);
@@ -926,6 +930,10 @@ export default function App() {
 
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
+  const [remoteAppConfig, setRemoteAppConfig] = useState<AppVersionConfig | null>(null);
+  const [currentAppVersion, setCurrentAppVersion] = useState<string>('');
+  const [isNativeAndroid, setIsNativeAndroid] = useState(false);
+  const [updateBannerMessage, setUpdateBannerMessage] = useState<string>('');
   const [showBrowserBanner, setShowBrowserBanner] = useState(() => {
     if (typeof window === 'undefined') return false;
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
@@ -954,13 +962,15 @@ export default function App() {
   };
 
   const handleDownloadAPK = () => {
+    const url = remoteAppConfig?.apkUrl || '/smart_account.apk';
     const link = document.createElement('a');
-    link.href = '/smart_account.apk';
+    link.href = url;
+    link.target = '_blank';
     link.download = 'smart_account.apk';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showNotification('جاري بدء تنزيل ملف smart_account.apk...', 'success');
+    showNotification('جاري بدء تنزيل التحديث...', 'success');
   };
 
   const handleUpdateAppNow = () => {
@@ -1546,6 +1556,33 @@ export default function App() {
       }
     });
   }, []);
+
+  // Fetch native app version
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform()) {
+      setIsNativeAndroid(true);
+      CapApp.getInfo().then(info => {
+        setCurrentAppVersion(info.version);
+      }).catch(console.warn);
+    }
+  }, []);
+
+  // Subscribe to remote app version in Firebase
+  useEffect(() => {
+    const unsub = subscribeToAppVersion((config) => {
+      if (config) {
+        setRemoteAppConfig(config);
+        // Compare version if running in APK
+        if (isNativeAndroid && currentAppVersion) {
+          if (config.latestVersion && config.latestVersion !== currentAppVersion) {
+            setUpdateBannerMessage(config.updateMessage || 'يتوفر تحديث جديد لتطبيق الأندرويد.');
+            setShowUpdateBanner(true);
+          }
+        }
+      }
+    });
+    return () => unsub();
+  }, [isNativeAndroid, currentAppVersion]);
 
   const isPopStateRef = useRef<boolean>(false);
 
@@ -2510,7 +2547,11 @@ export default function App() {
     init();
   }, []); // Empty dependency array ensures this runs only once on mount
 
-  const categories: string[] = React.useMemo(() => ['الكل', ...Array.from(new Set(products.map(p => p.category).filter(Boolean) as string[]))], [products]);
+  const categories: string[] = React.useMemo(() => {
+    const rawCategories = Array.from(new Set(products.map(p => p.category).filter(Boolean) as string[]));
+    const filtered = rawCategories.filter(cat => cat !== 'الكل');
+    return ['الكل', ...filtered];
+  }, [products]);
 
   const categoryIcons: Record<string, React.ReactNode> = {
     'الكل': <Package className="w-4 h-4" />,
@@ -2618,7 +2659,7 @@ export default function App() {
   };
 
   const handlePayment = async (data: any, resetForm: () => void) => {
-    const { paymentAmount, paymentNotes } = data;
+    const { paymentAmount, paymentNotes, showReceiptVoucher } = data;
     if (!showPaymentModal || !showPaymentModal.id) return;
     const amount = Number(paymentAmount);
     
@@ -2676,26 +2717,29 @@ export default function App() {
           await fetchCustomerHistory(updatedCustomer);
         }
 
-        // إتاحة طباعة سند قبض رسمي فوري
-        setActiveVoucherData({
-          type: 'receipt',
-          voucherNumber: `REC-${Date.now().toString().slice(-6)}`,
-          date: new Date().toISOString(),
-          partyName: showPaymentModal.name,
-          partyPhone: showPaymentModal.phone || '',
-          amount: amount,
-          previousBalance: oldBalance,
-          newBalance: updatedCustomer.balance,
-          notes: paymentNotes?.trim() || 'سداد دفعة نقدية لحساب الزبون',
-          paymentMethod: 'cash'
-        });
-        setVoucherModalOpen(true);
+        // إتاحة طباعة سند قبض رسمي عند تفعيل الخيار الاختياري
+        if (showReceiptVoucher) {
+          setActiveVoucherData({
+            type: 'receipt',
+            voucherNumber: `REC-${Date.now().toString().slice(-6)}`,
+            date: new Date().toISOString(),
+            partyName: showPaymentModal.name,
+            partyPhone: showPaymentModal.phone || '',
+            amount: amount,
+            previousBalance: oldBalance,
+            newBalance: updatedCustomer.balance,
+            notes: paymentNotes?.trim() || 'سداد دفعة نقدية لحساب الزبون',
+            paymentMethod: 'cash'
+          });
+          setVoucherModalOpen(true);
+        }
       }
     } catch (err) {
       console.error("Failed to process payment:", err);
       showNotification('خطأ في تسجيل الدفعة', 'error');
     }
 
+    if (resetForm) resetForm();
     setShowPaymentModal(null);
   };
 
@@ -3682,62 +3726,101 @@ export default function App() {
     });
   };
 
-  const printReceipt = (sale: any) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+  const executePrint = (htmlContent: string) => {
+    // 1. Create a print container
+    const printContainer = document.createElement('div');
+    printContainer.id = 'direct-print-container';
+    printContainer.innerHTML = htmlContent;
+    document.body.appendChild(printContainer);
 
-    const items = typeof sale.items === 'string' ? JSON.parse(sale.items) : sale.items;
+    // 2. Create style element to hide everything else during print
+    const style = document.createElement('style');
+    style.id = 'direct-print-style';
+    style.innerHTML = `
+      @media print {
+        body {
+          background: white !important;
+          color: black !important;
+        }
+        body > :not(#direct-print-container) {
+          display: none !important;
+        }
+        #direct-print-container {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          direction: rtl;
+          display: block !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 3. Trigger printing on main window
+    window.print();
+
+    // 4. Cleanup
+    const cleanup = () => {
+      const container = document.getElementById('direct-print-container');
+      const styleEl = document.getElementById('direct-print-style');
+      if (container) container.remove();
+      if (styleEl) styleEl.remove();
+    };
+
+    if ('onafterprint' in window) {
+      window.addEventListener('afterprint', cleanup, { once: true });
+    } else {
+      setTimeout(cleanup, 1500);
+    }
+  };
+
+  const printReceipt = (sale: any) => {
+    let items: any[] = [];
+    try {
+      items = typeof sale.items === 'string' ? JSON.parse(sale.items) : (sale.items || []);
+    } catch (e) {
+      items = [];
+    }
+    const customer = customers.find(c => c.id === sale.customer_id);
+    const customerName = sale.customer_name || customer?.name || 'زبون نقدي';
     
-    printWindow.document.write(`
-      <html dir="rtl">
-        <head>
-          <title>فاتورة بيع</title>
-          <link rel="stylesheet" href="/fonts/fonts.css">
-          <style>
-            body { font-family: 'Cairo', Arial, sans-serif; padding: 20px; text-align: center; }
-            .header { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: right; font-family: 'Cairo', Arial, sans-serif; }
-            .total { font-size: 1.2em; font-weight: bold; margin-top: 20px; }
-            .footer { margin-top: 40px; font-size: 0.8em; color: #666; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>${storeName}</h1>
-            <p>رقم الفاتورة: #${sale.id}</p>
-            <p>التاريخ: ${formatDateTimeWithDay(sale.created_at)}</p>
-          </div>
-          <p>الزبون: ${sale.customer_name || 'زبون نقدي'}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>المنتج</th>
-                <th>الكمية</th>
-                <th>السعر</th>
-                <th>المجموع</th>
+    const htmlContent = `
+      <div style="font-family: 'Cairo', Arial, sans-serif; padding: 20px; text-align: center; color: #333; direction: rtl;">
+        <div style="border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 20px; text-align: center;">
+          <h1 style="margin: 0; font-size: 24px;">${storeName}</h1>
+          <p style="margin: 5px 0 0 0;">رقم الفاتورة: #${sale.id}</p>
+          <p style="margin: 5px 0 0 0;">التاريخ: ${formatDateTimeWithDay(sale.created_at)}</p>
+        </div>
+        <p style="text-align: right;"><b>الزبون:</b> ${customerName}</p>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
+          <thead>
+            <tr style="background-color: #f9f9f9; border-bottom: 2px solid #ddd;">
+              <th style="padding: 10px; text-align: right;">المنتج</th>
+              <th style="padding: 10px; text-align: center;">الكمية</th>
+              <th style="padding: 10px; text-align: right;">السعر</th>
+              <th style="padding: 10px; text-align: left;">المجموع</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item: any) => `
+              <tr style="border-bottom: 1px solid #ddd;">
+                <td style="padding: 10px; text-align: right;">${item.name}</td>
+                <td style="padding: 10px; text-align: center;">${item.quantity}</td>
+                <td style="padding: 10px; text-align: right;">${item.price}</td>
+                <td style="padding: 10px; text-align: left;">${item.price * item.quantity}</td>
               </tr>
-            </thead>
-            <tbody>
-              ${items.map((item: any) => `
-                <tr>
-                  <td>${item.name}</td>
-                  <td>${item.quantity}</td>
-                  <td>${item.price}</td>
-                  <td>${item.price * item.quantity}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-          <div class="total">الإجمالي: ${sale.total_amount} ${currency}</div>
-          <p style="margin-bottom: 5px;">طريقة الدفع: ${sale.payment_type === 'cash' ? 'كاش' : 'دين'}</p>
-          ${sale.notes ? `<p style="margin-top: 5px; font-size: 12px; color: #555;">ملاحظات: ${sale.notes}</p>` : ''}
-          <div class="footer" style="margin-top: 20px;">شكراً لزيارتكم!</div>
-          <script>window.print(); setTimeout(() => window.close(), 500);</script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+            `).join('')}
+          </tbody>
+        </table>
+        <div style="font-size: 1.2em; font-weight: bold; margin-top: 20px; text-align: left;">الإجمالي: ${sale.total_amount} ${currency}</div>
+        <p style="margin-bottom: 5px; text-align: right;"><b>طريقة الدفع:</b> ${sale.payment_type === 'cash' ? 'كاش' : 'دين'}</p>
+        ${sale.notes ? `<p style="margin-top: 5px; font-size: 12px; color: #555; text-align: right;"><b>ملاحظات:</b> ${sale.notes}</p>` : ''}
+        <div style="margin-top: 40px; font-size: 0.8em; color: #666; text-align: center;">شكراً لزيارتكم!</div>
+      </div>
+    `;
+
+    executePrint(htmlContent);
   };
 
   const handleDownloadPDF = (customer: Customer) => {
@@ -3902,95 +3985,75 @@ export default function App() {
   };
 
   const printStatement = (customer: Customer) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    const htmlContent = `
+      <div style="font-family: 'Cairo', Arial, sans-serif; padding: 30px; color: #333; direction: rtl;">
+        <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
+          <h1 style="margin: 0; font-size: 24px;">${storeName} - كشف حساب</h1>
+          <p style="margin: 5px 0 0 0;">تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+          <div><strong>الزبون:</strong> ${customer.name}</div>
+          <div><strong>الهاتف:</strong> ${customer.phone || 'غير مسجل'}</div>
+        </div>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">التاريخ</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">البيان</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">مدين (+)</th>
+              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">دائن (-)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${ledgerEntries.map(entry => {
+              let title = '';
+              let debit: string | number = '-';
+              let credit: string | number = '-';
 
-    printWindow.document.write(`
-      <html dir="rtl">
-        <head>
-          <title>كشف حساب زبون</title>
-          <link rel="stylesheet" href="/fonts/fonts.css">
-          <style>
-            body { font-family: 'Cairo', Arial, sans-serif; padding: 30px; }
-            .header { text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px; }
-            .info { display: flex; justify-content: space-between; margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { border: 1px solid #000; padding: 8px; text-align: right; font-family: 'Cairo', Arial, sans-serif; }
-            th { background: #f2f2f2; }
-            .summary { margin-top: 30px; float: left; width: 250px; }
-            .summary-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee; }
-            .total-debt { font-weight: bold; font-size: 1.2em; border-top: 2px solid #000; margin-top: 10px; padding-top: 10px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>${storeName} - كشف حساب</h1>
-            <p>تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
-          </div>
-          <div class="info">
-            <div><strong>الزبون:</strong> ${customer.name}</div>
-            <div><strong>الهاتف:</strong> ${customer.phone}</div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>البيان</th>
-                <th>مدين (+)</th>
-                <th>دائن (-)</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${ledgerEntries.map(entry => {
-                let title = '';
-                let debit: string | number = '-';
-                let credit: string | number = '-';
-
-                if (entry.entryType === 'sale') {
-                  let itemNames = '';
-                  if (entry.items) {
-                    try {
-                      const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
-                      if (Array.isArray(parsed) && parsed.length > 0) {
-                        itemNames = parsed.map((i: any) => `${i.name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
-                      }
-                    } catch (e) {}
-                  }
-                  title = 'فاتورة مشتريات #' + entry.id + (itemNames ? `<br/><small style="color:#555;font-size:11px;">(الأصناف: ${itemNames})</small>` : '');
-                  debit = entry.total_amount;
-                } else {
-                  if (entry.amount === 0) {
-                    title = entry.notes || 'ملاحظة عامة';
-                  } else if (entry.type === 'purchase') {
-                    title = entry.notes ? `زيادة مديونية: ${entry.notes}` : 'زيادة مديونية';
-                    debit = entry.amount;
-                  } else {
-                    title = entry.notes ? `دفعة: ${entry.notes}` : 'تسديد مبلغ';
-                    credit = entry.amount;
-                  }
+              if (entry.entryType === 'sale') {
+                let itemNames = '';
+                if (entry.items) {
+                  try {
+                    const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                      itemNames = parsed.map((i: any) => `${i.name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
+                    }
+                  } catch (e) {}
                 }
+                title = 'فاتورة مشتريات #' + entry.id + (itemNames ? `<br/><small style="color:#555;font-size:11px;">(الأصناف: ${itemNames})</small>` : '');
+                debit = entry.total_amount;
+              } else {
+                if (entry.amount === 0) {
+                  title = entry.notes || 'ملاحظة عامة';
+                } else if (entry.type === 'purchase') {
+                  title = entry.notes ? `زيادة مديونية: ${entry.notes}` : 'زيادة مديونية';
+                  debit = entry.amount;
+                } else {
+                  title = entry.notes ? `دفعة: ${entry.notes}` : 'تسديد مبلغ';
+                  credit = entry.amount;
+                }
+              }
 
-                return `
-                  <tr>
-                    <td>${formatDateWithDay(entry.created_at)}</td>
-                    <td>${title}</td>
-                    <td>${debit}</td>
-                    <td>${credit}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-          <div class="summary">
-            <div class="summary-row"><span>إجمالي المشتريات:</span> <span>${customerStats.totalPurchased} ${currency}</span></div>
-            <div class="summary-row"><span>إجمالي المدفوعات:</span> <span>${customerStats.totalPaid} ${currency}</span></div>
-            <div class="summary-row total-debt"><span>الرصيد المتبقي:</span> <span>${customer.balance} ${currency}</span></div>
-          </div>
-          <script>window.print(); setTimeout(() => window.close(), 500);</script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+              return `
+                <tr>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${formatDateWithDay(entry.created_at)}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${title}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${debit}</td>
+                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${credit}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top: 30px; float: left; width: 250px;">
+          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المشتريات:</span> <span>${customerStats.totalPurchased} ${currency}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المدفوعات:</span> <span>${customerStats.totalPaid} ${currency}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 2px solid #000; margin-top: 10px; font-weight: bold; font-size: 1.2em;"><span>الرصيد المتبقي:</span> <span>${customer.balance} ${currency}</span></div>
+        </div>
+      </div>
+    `;
+
+    executePrint(htmlContent);
   };
 
   const [supplierHistory, setSupplierHistory] = useState<{
@@ -4111,7 +4174,7 @@ export default function App() {
   };
 
   const handleSupplierPayment = async (data: any, resetForm: () => void) => {
-    const { supplierPaymentAmount, supplierPaymentNotes } = data;
+    const { supplierPaymentAmount, supplierPaymentNotes, showVoucher } = data;
     if (!showSupplierPaymentModal || !supplierPaymentAmount) return;
     const amount = Number(supplierPaymentAmount);
     
@@ -4129,7 +4192,7 @@ export default function App() {
         });
       });
       
-      showNotification('تم تسجيل الدفعة بنجاح');
+      showNotification('تم تسجيل الدفعة بنجاح', 'success');
       const prevBal = showSupplierPaymentModal.balance;
       const newBal = prevBal - amount;
       const supplierName = showSupplierPaymentModal.name;
@@ -4140,24 +4203,28 @@ export default function App() {
         fetchSupplierHistory(showSupplierPaymentModal);
       }
 
-      // فتح سند الصرف الرسمي للمورد للطباعة أو المشاركة
-      setActiveVoucherData({
-        type: 'payment',
-        voucherNumber: `PAY-${Date.now().toString().slice(-6)}`,
-        date: new Date().toISOString(),
-        partyName: supplierName,
-        partyPhone: supplierPhone,
-        amount: amount,
-        previousBalance: prevBal,
-        newBalance: newBal,
-        notes: supplierPaymentNotes?.trim() || 'سداد دفعة نقدية للمورد',
-        paymentMethod: 'cash'
-      });
-      setVoucherModalOpen(true);
+      // فتح سند الصرف للمورد اختيارياً
+      if (showVoucher) {
+        setActiveVoucherData({
+          type: 'payment',
+          voucherNumber: `PAY-${Date.now().toString().slice(-6)}`,
+          date: new Date().toISOString(),
+          partyName: supplierName,
+          partyPhone: supplierPhone,
+          amount: amount,
+          previousBalance: prevBal,
+          newBalance: newBal,
+          notes: supplierPaymentNotes?.trim() || 'سداد دفعة نقدية للمورد',
+          paymentMethod: 'cash'
+        });
+        setVoucherModalOpen(true);
+      }
     } catch (err) {
       console.error("Failed to record supplier payment:", err);
       showNotification('خطأ في تسجيل الدفعة', 'error');
     }
+
+    if (resetForm) resetForm();
   };
 
   const handleAddCustomer = async (newCustomer: any, resetForm: () => void) => {
@@ -4662,7 +4729,7 @@ export default function App() {
         showNotification('تم منح صلاحية الكاميرا بنجاح!');
       }
     } catch (err: any) {
-      console.error("Camera permission error:", err);
+      console.warn("Camera permission error:", err);
       if (err.name === 'NotAllowedError') {
         showNotification('تم رفض الصلاحية مسبقاً. للحل: اذهب لإعدادات الهاتف -> التطبيقات -> تطبيقك (أو المتصفح) -> الأذونات، وفعل الكاميرا.', 'error');
       } else {
@@ -6040,32 +6107,41 @@ export default function App() {
                         if (inventoryHistoryFilter === 'all') return true;
                         if (inventoryHistoryFilter === 'sales') return log.reason === 'sale';
                         if (inventoryHistoryFilter === 'refunds') return log.reason === 'refund';
-                        if (inventoryHistoryFilter === 'updates') return log.reason === 'manual_update' || log.reason === 'initial_stock' || log.reason === 'new_product';
+                        if (inventoryHistoryFilter === 'updates') return log.reason === 'manual_update' || log.reason === 'manual_withdraw' || log.reason === 'initial_stock' || log.reason === 'new_product' || log.reason === 'edit_product' || log.reason === 'delete_product';
                         return true;
                       }).length > 0 ? productHistory.filter(log => {
                         if (inventoryHistoryFilter === 'all') return true;
                         if (inventoryHistoryFilter === 'sales') return log.reason === 'sale';
                         if (inventoryHistoryFilter === 'refunds') return log.reason === 'refund';
-                        if (inventoryHistoryFilter === 'updates') return log.reason === 'manual_update' || log.reason === 'initial_stock' || log.reason === 'new_product';
+                        if (inventoryHistoryFilter === 'updates') return log.reason === 'manual_update' || log.reason === 'manual_withdraw' || log.reason === 'initial_stock' || log.reason === 'new_product' || log.reason === 'edit_product' || log.reason === 'delete_product';
                         return true;
-                      }).map((log, idx) => (
+                      }).map((log, idx) => {
+                        const isWithdrawal = log.reason === 'manual_withdraw' || (log.reason === 'manual_update' && log.change_amount < 0) || (log.change_amount < 0 && log.reason !== 'sale');
+                        const isAddition = log.change_amount > 0 && log.reason !== 'refund';
+                        return (
                         <div key={`product-log-${log.id ?? 'no-id'}-${idx}`} className="relative flex items-start gap-4 group">
                           <div className={`w-10 h-10 rounded-2xl flex-shrink-0 flex items-center justify-center z-10 shadow-sm border-[3px] border-slate-50 transition-transform group-hover:scale-110
                             ${log.reason === 'sale' ? 'bg-rose-100 text-rose-600' : 
                               log.reason === 'refund' ? 'bg-indigo-100 text-indigo-600' : 
-                              log.reason === 'manual_update' ? (log.change_amount > 0 ? 'bg-teal-100 text-teal-600' : 'bg-orange-100 text-orange-600') : 'bg-emerald-100 text-emerald-600'}`}
+                              isWithdrawal ? 'bg-orange-100 text-orange-600' : 'bg-emerald-100 text-emerald-600'}`}
                           >
                             {log.reason === 'sale' ? <ShoppingCart className="w-5 h-5" /> : 
                              log.reason === 'refund' ? <RotateCcw className="w-5 h-5" /> : 
-                             log.reason === 'manual_update' ? (log.change_amount > 0 ? <Plus className="w-5 h-5" /> : <Minus className="w-5 h-5" />) : <PackagePlus className="w-5 h-5" />}
+                             isWithdrawal ? <Minus className="w-5 h-5" /> : <PackagePlus className="w-5 h-5" />}
                           </div>
                           <div className="flex-1 bg-white p-4 rounded-3xl shadow-sm border border-slate-100/80 hover:border-slate-300 transition-all hover:shadow-md">
                             <div className="flex justify-between items-start mb-2">
                               <div>
                                 <p className="text-sm font-black text-slate-800 flex items-center gap-1.5">
                                   {log.reason === 'sale' ? 'فاتورة مبيعات' : 
-                                   log.reason === 'refund' ? 'إرجاع بضاعة' : 
-                                   log.reason === 'manual_update' ? (log.change_amount > 0 ? 'تحديث أو إضافة بضاعة' : 'سحب أو تسوية نُقصان') : 'إضافة بضاعة جديدة'}
+                                   log.reason === 'refund' ? 'إرجاع بضاعة / مردودات' : 
+                                   log.reason === 'manual_withdraw' ? 'سحب من المخزن / تسوية نقصان' :
+                                   log.reason === 'manual_update' ? (log.change_amount < 0 ? 'سحب من المخزن / تسوية نقصان' : 'تحديث أو إضافة مخزون') :
+                                   log.reason === 'edit_product' ? 'تعديل بيانات المنتج' :
+                                   log.reason === 'initial_stock' ? 'رصيد مخزون أولي' :
+                                   log.reason === 'new_product' ? 'إضافة منتج جديد' :
+                                   log.reason === 'delete_product' ? 'حذف صنف من المخزن' :
+                                   log.type || (log.change_amount < 0 ? 'سحب / تسوية نقصان' : 'إضافة بضاعة جديدة')}
                                 </p>
                                 <p className="text-[11px] text-slate-500 font-bold mt-1 flex items-center gap-1.5">
                                   <Clock className="w-3.5 h-3.5 opacity-70" />
@@ -6087,7 +6163,8 @@ export default function App() {
                             )}
                           </div>
                         </div>
-                      )) : (
+                      );
+                      }) : (
                         <div className="text-center py-16 bg-white rounded-3xl border border-slate-100 border-dashed">
                           <Activity className="w-10 h-10 text-slate-300 mx-auto mb-3" />
                           <p className="text-slate-500 font-bold">لا توجد حركات مسجلة لهذا المنتج بعد.</p>
@@ -6597,6 +6674,7 @@ export default function App() {
               voucher={activeVoucherData}
               storeName={storeName}
               formatPrice={formatPrice}
+              currency={currency}
             />
           )}
 
@@ -6644,6 +6722,7 @@ export default function App() {
         <UpdateNotificationBanner 
           key="global-update-notification-banner"
           show={showUpdateBanner}
+          updateMessage={updateBannerMessage}
           onUpdateNow={handleUpdateAppNow}
           onDismiss={() => setShowUpdateBanner(false)}
           onDownloadAPK={handleDownloadAPK}
