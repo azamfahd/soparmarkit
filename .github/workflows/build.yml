@@ -11,6 +11,8 @@ jobs:
   build-apk:
     name: Package Standalone Android APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: 1. Checkout Source Code
