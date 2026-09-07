@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShoppingCart, Sparkles } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
 
 interface SplashScreenProps {
   onFinish?: () => void;
@@ -62,24 +62,24 @@ export default function SplashScreen({ onFinish, minDuration = 1800 }: SplashScr
           <div className="flex flex-col items-center text-center max-w-sm px-4">
             {/* App Icon with Golden Glow Aura */}
             <motion.div
-              initial={{ scale: 0.8, opacity: 0, y: 15 }}
+              initial={{ scale: 0.85, opacity: 0, y: 15 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
               className="relative mb-6"
             >
               {/* Outer Pulsing Aura */}
               <motion.div
-                animate={{ scale: [1, 1.08, 1], opacity: [0.35, 0.65, 0.35] }}
+                animate={{ scale: [1, 1.1, 1], opacity: [0.35, 0.7, 0.35] }}
                 transition={{ repeat: Infinity, duration: 2.5, ease: 'easeInOut' }}
-                className="absolute inset-0 -m-3 rounded-3xl bg-gradient-to-tr from-amber-500/30 to-amber-300/10 blur-xl"
+                className="absolute inset-0 -m-3 rounded-3xl bg-gradient-to-tr from-amber-500/30 via-amber-400/20 to-amber-300/10 blur-xl"
               />
 
-              {/* Icon Container */}
-              <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-3xl bg-slate-900 border-2 border-amber-500/30 p-2 shadow-2xl shadow-black/80 flex items-center justify-center overflow-hidden">
+              {/* Single High-Definition Golden Emblem Container */}
+              <div className="relative w-28 h-28 sm:w-32 sm:h-32 rounded-3xl bg-slate-900/90 border-2 border-amber-500/40 p-2.5 shadow-2xl shadow-black/80 flex items-center justify-center overflow-hidden backdrop-blur-md">
                 <img
                   src="/icon.png"
                   alt="شعار النظام المحاسبي الذكي"
-                  className="w-full h-full object-contain rounded-2xl drop-shadow-md"
+                  className="w-full h-full object-contain rounded-2xl drop-shadow-lg"
                   referrerPolicy="no-referrer"
                   onError={(e) => {
                     (e.currentTarget as HTMLImageElement).src = '/icon.svg';
@@ -87,38 +87,14 @@ export default function SplashScreen({ onFinish, minDuration = 1800 }: SplashScr
                 />
               </div>
 
-              {/* Dynamic Rotating Shopping Cart Badge on Frame Edge */}
-              <div className="absolute -bottom-3 -left-3 z-10">
-                {/* Rotating Dashed Orbit Ring */}
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 6, ease: 'linear' }}
-                  className="absolute -inset-1.5 rounded-full border border-dashed border-amber-400/60 pointer-events-none"
-                />
-
-                {/* Main Glowing Cart Circle */}
-                <motion.div
-                  animate={{ scale: [1, 1.08, 1] }}
-                  transition={{ repeat: Infinity, duration: 2, ease: 'easeInOut' }}
-                  className="relative p-2.5 rounded-full bg-gradient-to-tr from-amber-600 via-amber-500 to-amber-300 text-slate-950 shadow-xl shadow-amber-500/40 border-2 border-slate-900 flex items-center justify-center"
-                >
-                  <motion.div
-                    animate={{ rotate: [0, -8, 8, 0], y: [0, -1, 0] }}
-                    transition={{ repeat: Infinity, duration: 2.2, ease: 'easeInOut' }}
-                  >
-                    <ShoppingCart className="w-5 h-5 text-slate-950 fill-slate-950/20 stroke-[2.4]" />
-                  </motion.div>
-
-                  {/* Micro Rotating Sparkle Accent */}
-                  <motion.div
-                    animate={{ rotate: -360, scale: [0.8, 1.2, 0.8] }}
-                    transition={{ repeat: Infinity, duration: 3, ease: 'linear' }}
-                    className="absolute -top-1 -right-1"
-                  >
-                    <Sparkles className="w-3 h-3 text-amber-200 fill-amber-200 drop-shadow-sm" />
-                  </motion.div>
-                </motion.div>
-              </div>
+              {/* Micro Subtle Sparkle Badge */}
+              <motion.div
+                animate={{ rotate: [0, 15, -15, 0], scale: [1, 1.15, 1] }}
+                transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
+                className="absolute -top-1.5 -right-1.5 p-1.5 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 shadow-lg shadow-amber-500/30 border border-amber-200"
+              >
+                <Sparkles className="w-3.5 h-3.5 fill-slate-950 stroke-slate-950" />
+              </motion.div>
             </motion.div>
 
             {/* App Title */}
