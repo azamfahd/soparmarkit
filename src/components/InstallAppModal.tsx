@@ -49,7 +49,7 @@ export const InstallAppModal: React.FC<InstallAppModalProps> = ({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div id="install-app-modal-container" className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto">
+        <div key="install-app-modal-root-container" id="install-app-modal-container" className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto">
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}

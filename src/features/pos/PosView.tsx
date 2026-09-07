@@ -191,6 +191,7 @@ const PosViewComponent: React.FC<PosViewProps> = ({
       <AnimatePresence>
         {scannedProductInfo && (
           <motion.div 
+            key="pos-scanned-product-banner"
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
@@ -357,7 +358,7 @@ const PosViewComponent: React.FC<PosViewProps> = ({
 
       <AnimatePresence>
         {isCartExpanded && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm">
+          <div key="pos-cart-modal-backdrop" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, y: 100 }}
               animate={{ opacity: 1, y: 0 }}

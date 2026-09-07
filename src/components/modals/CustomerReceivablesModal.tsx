@@ -43,10 +43,10 @@ export const CustomerReceivablesModal: React.FC<CustomerReceivablesModalProps> =
           </button>
         </div>
 
-        <div className="overflow-x-auto border border-slate-150/55 rounded-2xl shadow-2xs">
+        <div className="overflow-x-auto border border-slate-200 rounded-2xl shadow-2xs">
           <table className="w-full text-right border-collapse text-xs">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-150 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
+              <tr className="bg-slate-50/80 border-b border-slate-200 text-slate-500 font-extrabold text-[11px] uppercase tracking-wider">
                 <th className="p-3">اسم العميل</th>
                 <th className="p-3">الفواتير</th>
                 <th className="p-3">مسدد</th>

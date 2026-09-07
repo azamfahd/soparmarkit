@@ -21,6 +21,7 @@ export const UpdateNotificationBanner: React.FC<UpdateNotificationBannerProps> =
     <AnimatePresence>
       {show && (
         <motion.div
+          key="app-update-notification-banner-motion"
           id="app-update-notification-banner"
           initial={{ y: -60, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}

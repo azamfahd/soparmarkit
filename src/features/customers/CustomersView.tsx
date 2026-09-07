@@ -10,6 +10,7 @@ import {
   ShoppingBag,
   Clock,
   Phone,
+  Printer,
   X
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
@@ -26,6 +27,7 @@ interface CustomersViewProps {
   setShowPaymentModal: (customer: any) => void;
   handleDeleteCustomer: (id: number) => void;
   setEditingCustomer?: (customer: any) => void;
+  onPrintCustomerStatement?: (customer: any) => void;
 }
 
 const CustomersViewComponent: React.FC<CustomersViewProps> = ({
@@ -37,6 +39,7 @@ const CustomersViewComponent: React.FC<CustomersViewProps> = ({
   setShowPaymentModal,
   handleDeleteCustomer,
   setEditingCustomer,
+  onPrintCustomerStatement,
 }) => {
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [sortType, setSortType] = useState<
@@ -275,6 +278,15 @@ const CustomersViewComponent: React.FC<CustomersViewProps> = ({
                     >
                       {c.balance > 0 ? 'سداد' : 'إيداع'}
                     </button>
+                    {onPrintCustomerStatement && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); onPrintCustomerStatement(c); }}
+                        className="text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 p-1.5 rounded-lg cursor-pointer transition-colors"
+                        title="طباعة كشف الحساب كاملاً"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     {setEditingCustomer && (
                       <button 
                         onClick={(e) => { e.stopPropagation(); setEditingCustomer(c); }}

@@ -17,6 +17,7 @@ export const BrowserInstallBanner: React.FC<BrowserInstallBannerProps> = ({
     <AnimatePresence>
       {show && (
         <motion.div
+          key="browser-install-prompt-banner-motion"
           id="browser-install-prompt-banner"
           initial={{ y: 80, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}

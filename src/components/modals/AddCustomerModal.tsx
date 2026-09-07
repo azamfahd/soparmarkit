@@ -169,6 +169,7 @@ export const AddCustomerModal: React.FC<AddCustomerModalProps> = ({
         <AnimatePresence>
           {exactDuplicate && (
             <motion.div
+              key="exact-duplicate-warning"
               initial={{ opacity: 0, height: 0, scale: 0.96 }}
               animate={{ opacity: 1, height: 'auto', scale: 1 }}
               exit={{ opacity: 0, height: 0, scale: 0.96 }}

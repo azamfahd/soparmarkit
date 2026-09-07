@@ -650,7 +650,7 @@ ${detailsList}
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 bg-slate-900/80 z-[80] flex items-center justify-center p-2 sm:p-4 backdrop-blur-md overflow-y-auto">
+      <div key="modal-customer-statement-card-backdrop" className="fixed inset-0 bg-slate-900/80 z-[90] flex items-center justify-center p-2 sm:p-4 backdrop-blur-md overflow-y-auto">
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}

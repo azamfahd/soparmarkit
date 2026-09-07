@@ -377,9 +377,9 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
             {/* Presets Row for Profit % */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
               <span className="text-[10px] text-slate-400 font-bold whitespace-nowrap ml-1">نسب ربح سريعة:</span>
-              {presetPcts.map(pct => (
+              {presetPcts.map((pct, idx) => (
                 <button
-                  key={`preset-${pct}`}
+                  key={`preset-edit-${pct}-${idx}`}
                   type="button"
                   onClick={() => applyPresetProfitPercent(pct)}
                   className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/60 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer whitespace-nowrap active:scale-95"

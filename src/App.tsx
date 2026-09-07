@@ -37,12 +37,16 @@ import { PinVerificationModal } from './components/modals/PinVerificationModal';
 import { PermissionsConfigModal } from './components/modals/PermissionsConfigModal';
 import { WithdrawModal } from './components/modals/WithdrawModal';
 import { VoucherModal, type VoucherData } from './components/modals/VoucherModal';
+import { ReceiptModal, type SaleReceiptData } from './components/modals/ReceiptModal';
+import { CustomerStatementPrintModal } from './components/modals/CustomerStatementPrintModal';
 import { ExpensesModal } from './components/modals/ExpensesModal';
 import { ExcelSyncCenterModal } from './components/modals/ExcelSyncCenterModal';
 import { BackupOptionsModal } from './components/modals/BackupOptionsModal';
 import { checkFileModifiedAndSync } from './services/excelSync';
+import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } from './utils/printUtils';
 import { InstallAppModal } from './components/InstallAppModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
+import SplashScreen from './components/SplashScreen';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { Scan, QrCode, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { 
@@ -786,6 +790,15 @@ export default function App() {
   // --- Printing & Vouchers States ---
   const [voucherModalOpen, setVoucherModalOpen] = useState<boolean>(false);
   const [activeVoucherData, setActiveVoucherData] = useState<VoucherData | null>(null);
+  const [receiptModalOpen, setReceiptModalOpen] = useState<boolean>(false);
+  const [activeReceiptData, setActiveReceiptData] = useState<SaleReceiptData | null>(null);
+  const [statementPrintModalOpen, setStatementPrintModalOpen] = useState<boolean>(false);
+  const [activeStatementPrintData, setActiveStatementPrintData] = useState<{
+    customer: Customer;
+    entries: any[];
+    stats: { totalPurchased: number; totalPaid: number };
+    monthLabel?: string;
+  } | null>(null);
 
   // --- Licensing & Subscription States ---
   const [isAutoBackupEnabled, setIsAutoBackupEnabled] = useState<boolean>(() => {
@@ -819,6 +832,7 @@ export default function App() {
     return cached ? (cached === 'null' ? null : parseInt(cached, 10)) : null;
   });
   const [isLicensingLoading, setIsLicensingLoading] = useState<boolean>(false);
+  const [showSplash, setShowSplash] = useState<boolean>(true);
   
   // Failsafe timeout for IndexedDB hanging
   useEffect(() => {
@@ -2527,8 +2541,23 @@ export default function App() {
 
   const customerStats = React.useMemo(() => {
     if (!showCustomerDetails) return { totalPurchased: 0, totalPaid: 0 };
-    const totalPurchased = customerHistory.sales.reduce((sum, s) => sum + s.total_amount, 0);
-    const totalPaid = customerHistory.debts.filter(d => d.type === 'payment').reduce((sum, d) => sum + d.amount, 0);
+    // Total purchases: sum of sales + standalone debt adjustments (type === 'purchase')
+    const salesTotal = customerHistory.sales.reduce((sum, s) => sum + (Number(s.total_amount) || 0), 0);
+    const manualDebtIncreases = customerHistory.debts
+      .filter(d => !d.sale_id && d.type === 'purchase')
+      .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+    const totalPurchased = salesTotal + manualDebtIncreases;
+
+    // Total payments: standalone debt payments + sale payments
+    const directPayments = customerHistory.debts
+      .filter(d => !d.sale_id && d.type === 'payment')
+      .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+    const salesPaid = customerHistory.sales.reduce((sum, s) => {
+      if (s.paid_amount !== undefined) return sum + (Number(s.paid_amount) || 0);
+      return sum + (s.payment_type === 'cash' ? (Number(s.total_amount) || 0) : 0);
+    }, 0);
+    const totalPaid = directPayments + salesPaid;
+
     return { totalPurchased, totalPaid };
   }, [customerHistory, showCustomerDetails]);
 
@@ -3272,18 +3301,25 @@ export default function App() {
   };
 
   const handleDeleteCustomer = async (id: number) => {
+    const cust = customers.find(c => c.id === id);
+    const hasBalance = cust && Math.abs(cust.balance) > 0;
+    const warningMsg = hasBalance
+      ? `تنبيه: هذا العميل لديه رصيد حالي (${cust.balance} ${currency}). هل أنت متأكد من حذفه نهائياً؟`
+      : 'هل أنت متأكد من حذف هذا العميل؟';
+
     setConfirmAction({
-      title: 'حذف زبون',
-      message: 'هل أنت متأكد من حذف هذا الزبون؟',
+      title: 'حذف العميل',
+      message: warningMsg,
       onConfirm: async () => {
         try {
-          // Delete from local DB
           await db.customers.delete(id);
-          
-          showNotification('تم حذف الزبون');
+          if (showCustomerDetails && showCustomerDetails.id === id) {
+            setShowCustomerDetails(null);
+          }
+          showNotification('تم حذف العميل بنجاح');
         } catch (err) {
           console.error("Failed to delete customer:", err);
-          showNotification('خطأ في حذف الزبون', 'error');
+          showNotification('خطأ في حذف العميل', 'error');
         }
         setConfirmAction(null);
       }
@@ -3726,126 +3762,91 @@ export default function App() {
     });
   };
 
-  const executePrint = (htmlContent: string) => {
-    // 1. Create a print container
-    const printContainer = document.createElement('div');
-    printContainer.id = 'direct-print-container';
-    printContainer.innerHTML = htmlContent;
-    document.body.appendChild(printContainer);
+  const executePrint = (htmlContent: string, title?: string) => {
+    executeDirectPrint(htmlContent, title || 'طباعة');
+  };
 
-    // 2. Create style element to hide everything else during print
-    const style = document.createElement('style');
-    style.id = 'direct-print-style';
-    style.innerHTML = `
-      @media print {
-        body {
-          background: white !important;
-          color: black !important;
-        }
-        body > :not(#direct-print-container) {
-          display: none !important;
-        }
-        #direct-print-container {
-          position: absolute;
-          left: 0;
-          top: 0;
-          width: 100%;
-          direction: rtl;
-          display: block !important;
+  const printReceipt = async (sale: any) => {
+    try {
+      let items: any[] = [];
+      if (sale.items) {
+        try {
+          items = typeof sale.items === 'string' ? JSON.parse(sale.items) : sale.items;
+        } catch (e) {
+          items = [];
         }
       }
-    `;
-    document.head.appendChild(style);
 
-    // 3. Trigger printing on main window
-    window.print();
+      // If items array is empty and sale has a valid ID, query db.saleItems & db.products
+      if ((!Array.isArray(items) || items.length === 0) && sale.id) {
+        const dbSaleItems = await db.saleItems.where('sale_id').equals(Number(sale.id)).toArray();
+        if (dbSaleItems && dbSaleItems.length > 0) {
+          const productIds = dbSaleItems.map(si => si.product_id).filter(Boolean);
+          const prods = productIds.length > 0 ? await db.products.where('id').anyOf(productIds).toArray() : [];
+          const prodMap = new Map(prods.map(p => [p.id, p]));
+          items = dbSaleItems.map(si => {
+            const p = prodMap.get(si.product_id);
+            return {
+              name: p?.name || 'صنف',
+              quantity: si.quantity,
+              price: si.price_at_sale,
+              unit: p?.unit || ''
+            };
+          });
+        }
+      }
 
-    // 4. Cleanup
-    const cleanup = () => {
-      const container = document.getElementById('direct-print-container');
-      const styleEl = document.getElementById('direct-print-style');
-      if (container) container.remove();
-      if (styleEl) styleEl.remove();
-    };
-
-    if ('onafterprint' in window) {
-      window.addEventListener('afterprint', cleanup, { once: true });
-    } else {
-      setTimeout(cleanup, 1500);
+      const customer = customers.find(c => c.id === sale.customer_id) || (showCustomerDetails?.id === sale.customer_id ? showCustomerDetails : undefined);
+      
+      setActiveReceiptData({
+        sale: {
+          ...sale,
+          items
+        },
+        items,
+        customerName: sale.customer_name || customer?.name || showCustomerDetails?.name || 'زبون نقدي',
+        customerPhone: customer?.phone || showCustomerDetails?.phone || ''
+      });
+      setReceiptModalOpen(true);
+    } catch (err) {
+      console.error('Error opening receipt preview:', err);
+      showNotification('حدث خطأ أثناء إعداد بطاقة الإيصال للمعاينة', 'error');
     }
   };
 
-  const printReceipt = (sale: any) => {
-    let items: any[] = [];
-    try {
-      items = typeof sale.items === 'string' ? JSON.parse(sale.items) : (sale.items || []);
-    } catch (e) {
-      items = [];
-    }
-    const customer = customers.find(c => c.id === sale.customer_id);
-    const customerName = sale.customer_name || customer?.name || 'زبون نقدي';
-    
-    const htmlContent = `
-      <div style="font-family: 'Cairo', Arial, sans-serif; padding: 20px; text-align: center; color: #333; direction: rtl;">
-        <div style="border-bottom: 2px dashed #000; padding-bottom: 10px; margin-bottom: 20px; text-align: center;">
-          <h1 style="margin: 0; font-size: 24px;">${storeName}</h1>
-          <p style="margin: 5px 0 0 0;">رقم الفاتورة: #${sale.id}</p>
-          <p style="margin: 5px 0 0 0;">التاريخ: ${formatDateTimeWithDay(sale.created_at)}</p>
-        </div>
-        <p style="text-align: right;"><b>الزبون:</b> ${customerName}</p>
-        <table style="width: 100%; border-collapse: collapse; margin-top: 20px;">
-          <thead>
-            <tr style="background-color: #f9f9f9; border-bottom: 2px solid #ddd;">
-              <th style="padding: 10px; text-align: right;">المنتج</th>
-              <th style="padding: 10px; text-align: center;">الكمية</th>
-              <th style="padding: 10px; text-align: right;">السعر</th>
-              <th style="padding: 10px; text-align: left;">المجموع</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map((item: any) => `
-              <tr style="border-bottom: 1px solid #ddd;">
-                <td style="padding: 10px; text-align: right;">${item.name}</td>
-                <td style="padding: 10px; text-align: center;">${item.quantity}</td>
-                <td style="padding: 10px; text-align: right;">${item.price}</td>
-                <td style="padding: 10px; text-align: left;">${item.price * item.quantity}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-        <div style="font-size: 1.2em; font-weight: bold; margin-top: 20px; text-align: left;">الإجمالي: ${sale.total_amount} ${currency}</div>
-        <p style="margin-bottom: 5px; text-align: right;"><b>طريقة الدفع:</b> ${sale.payment_type === 'cash' ? 'كاش' : 'دين'}</p>
-        ${sale.notes ? `<p style="margin-top: 5px; font-size: 12px; color: #555; text-align: right;"><b>ملاحظات:</b> ${sale.notes}</p>` : ''}
-        <div style="margin-top: 40px; font-size: 0.8em; color: #666; text-align: center;">شكراً لزيارتكم!</div>
-      </div>
-    `;
+  const handleDownloadPDF = (
+    customer: Customer,
+    customEntries?: any[],
+    customStats?: { totalPurchased: number; totalPaid: number },
+    customMonthLabel?: string
+  ) => {
+    const entriesToRender = customEntries || ledgerEntries;
+    const statsToRender = customStats || customerStats;
+    const label = customMonthLabel || 'كشف الحساب الكامل';
 
-    executePrint(htmlContent);
-  };
-
-  const handleDownloadPDF = (customer: Customer) => {
     const element = document.createElement('div');
     element.innerHTML = `
-      <div dir="rtl" style="font-family: 'Cairo', Arial, sans-serif; padding: 30px;">
-        <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
-          <h1>${storeName} - كشف حساب</h1>
-          <p>تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
+      <div dir="rtl" style="font-family: 'Cairo', Arial, sans-serif; padding: 30px; color: #1e293b;">
+        <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 25px; padding-bottom: 12px;">
+          <h1 style="margin: 0; font-size: 24px; color: #047857;">${storeName} - كشف حساب</h1>
+          <p style="margin: 4px 0 0 0; font-size: 13px; color: #64748b;">${label}</p>
+          <p style="margin: 4px 0 0 0; font-size: 11px; color: #94a3b8;">تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
         </div>
-        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 14px; background: #f8fafc; padding: 12px; border-radius: 8px;">
           <div><strong>الزبون:</strong> ${customer.name}</div>
-          <div><strong>الهاتف:</strong> ${customer.phone}</div>
+          <div><strong>الهاتف:</strong> ${customer.phone || 'غير مسجل'}</div>
         </div>
-        <table style="width: 100%; border-collapse: collapse;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
           <thead>
-            <tr style="background: #f2f2f2;">
-              <th style="border: 1px solid #000; padding: 8px; text-align: right;">التاريخ</th>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right;">البيان</th>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right;">مدين (+)</th>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right;">دائن (-)</th>
+            <tr style="background: #f1f5f9;">
+              <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right;">التاريخ</th>
+              <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right;">البيان</th>
+              <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; color: #dc2626;">مدين (+)</th>
+              <th style="border: 1px solid #cbd5e1; padding: 8px; text-align: right; color: #059669;">دائن (-)</th>
             </tr>
           </thead>
           <tbody>
-            ${ledgerEntries.map(entry => {
+            ${entriesToRender.map(entry => {
               let itemsHtml = '';
               let title = '';
               let debit = '-';
@@ -3855,51 +3856,52 @@ export default function App() {
                 if (entry.items) {
                   try {
                     const items = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
-                    if (Array.isArray(items)) {
-                      itemsHtml = `<div style="font-size: 0.85em; color: #555; margin-top: 5px; border-top: 1px solid #eee; padding-top: 5px;">
-                        ${items.map((item: any) => `${item.name} (${item.quantity} ${item.unit || ''} × ${item.price})`).join('<br/>')}
+                    if (Array.isArray(items) && items.length > 0) {
+                      itemsHtml = `<div style="font-size: 10px; color: #64748b; margin-top: 3px;">
+                        الأصناف: ${items.map((item: any) => `${item.name}${item.quantity > 1 ? ` (×${item.quantity})` : ''}`).join('، ')}
                       </div>`;
                     }
-                  } catch (e) {
-                    itemsHtml = '<div style="font-size: 0.8em; color: red;">خطأ في عرض المنتجات</div>';
-                  }
+                  } catch (e) {}
                 }
                 title = 'فاتورة مشتريات #' + entry.id + itemsHtml;
-                debit = entry.total_amount;
+                debit = `${entry.total_amount} ${currency}`;
               } else {
                 if (entry.amount === 0) {
                   title = entry.notes || 'ملاحظة عامة';
                 } else if (entry.type === 'purchase') {
                   title = entry.notes ? `زيادة مديونية: ${entry.notes}` : 'زيادة مديونية';
-                  debit = entry.amount;
+                  debit = `${entry.amount} ${currency}`;
                 } else {
-                  title = entry.notes ? `دفعة: ${entry.notes}` : 'تسديد مبلغ';
-                  credit = entry.amount;
+                  title = entry.notes ? `دفعة: ${entry.notes}` : 'سداد مبلغ';
+                  credit = `${entry.amount} ${currency}`;
                 }
               }
 
               return `
                 <tr>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${formatDateWithDay(entry.created_at)}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${title}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${debit}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${credit}</td>
+                  <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right; white-space: nowrap;">${formatDateWithDay(entry.created_at)}</td>
+                  <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right;">${title}</td>
+                  <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right; font-weight: bold; color: ${debit !== '-' ? '#dc2626' : '#94a3b8'};">${debit}</td>
+                  <td style="border: 1px solid #e2e8f0; padding: 8px; text-align: right; font-weight: bold; color: ${credit !== '-' ? '#059669' : '#94a3b8'};">${credit}</td>
                 </tr>
               `;
             }).join('')}
           </tbody>
         </table>
-        <div style="margin-top: 30px; float: left; width: 250px;">
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المشتريات:</span> <span>${customerStats.totalPurchased} ${currency}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المدفوعات:</span> <span>${customerStats.totalPaid} ${currency}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee; font-weight: bold; font-size: 1.2em; border-top: 2px solid #000; margin-top: 10px; padding-top: 10px;"><span>الرصيد المتبقي:</span> <span>${customer.balance} ${currency}</span></div>
+        <div style="margin-top: 25px; float: left; width: 280px; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0;">
+          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px;"><span>إجمالي المشتريات:</span> <span style="font-weight: bold;">${statsToRender.totalPurchased} ${currency}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px;"><span>إجمالي المدفوعات:</span> <span style="font-weight: bold; color: #059669;">${statsToRender.totalPaid} ${currency}</span></div>
+          <div style="display: flex; justify-content: space-between; padding: 8px 0 0 0; font-weight: bold; font-size: 14px; border-top: 2px solid #cbd5e1; margin-top: 8px;">
+            <span>الرصيد المتبقي:</span> 
+            <span style="color: ${customer.balance > 0 ? '#dc2626' : customer.balance < 0 ? '#059669' : '#475569'};">${customer.balance} ${currency}</span>
+          </div>
         </div>
       </div>
     `;
     
     const opt = {
-      margin: 0.5,
-      filename: `كشف_حساب_${customer.name}.pdf`,
+      margin: 0.4,
+      filename: `كشف_حساب_${customer.name}_${new Date().toISOString().split('T')[0]}.pdf`,
       image: { type: 'jpeg' as 'jpeg', quality: 0.98 },
       html2canvas: { 
         scale: 2,
@@ -3907,7 +3909,7 @@ export default function App() {
           return element.tagName === 'STYLE' || element.tagName === 'LINK';
         }
       },
-      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' as 'portrait' }
+      jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' as 'portrait' }
     };
     
     html2pdf().set(opt).from(element).save();
@@ -3963,16 +3965,21 @@ export default function App() {
     html2pdf().set(opt).from(element).save();
   };
 
-  const handleShareWhatsApp = (customer: Customer) => {
+  const handleShareWhatsApp = (customer: Customer, stats?: any, monthLabel?: string) => {
+    const currentStats = stats || customerStats;
     const statusText = customer.balance > 0
       ? `🔴 *المبلغ المتبقي المستحق:* ${formatPrice(customer.balance)}`
       : customer.balance < 0
       ? `🟢 *رصيد دائن مقدّم متوفر:* ${formatPrice(Math.abs(customer.balance))}`
       : `✅ *الحساب خالص تماماً (0 ${currency})*`;
 
+    const monthInfo = monthLabel && monthLabel !== 'كشف الحساب الكامل' ? `\n📅 *الفترة:* ${monthLabel}` : '';
+    const purchasesInfo = currentStats.totalPurchased > 0 ? `\n🛒 *إجمالي المشتريات للفترة:* ${formatPrice(currentStats.totalPurchased)}` : '';
+    const paymentsInfo = currentStats.totalPaid > 0 ? `\n💰 *إجمالي المسدد للفترة:* ${formatPrice(currentStats.totalPaid)}` : '';
+
     const message = `🧾 *كشف حساب رسمي - ${storeName}*
 👤 *العميل المكرم:* ${customer.name}
-📱 *رقم الهاتف:* ${customer.phone || 'غير مسجل'}
+📱 *رقم الهاتف:* ${customer.phone || 'غير مسجل'}${monthInfo}${purchasesInfo}${paymentsInfo}
 ----------------------------------
 📌 ${statusText}
 
@@ -3984,76 +3991,108 @@ export default function App() {
     window.open(whatsappUrl, '_blank');
   };
 
-  const printStatement = (customer: Customer) => {
-    const htmlContent = `
-      <div style="font-family: 'Cairo', Arial, sans-serif; padding: 30px; color: #333; direction: rtl;">
-        <div style="text-align: center; border-bottom: 3px double #000; margin-bottom: 30px; padding-bottom: 10px;">
-          <h1 style="margin: 0; font-size: 24px;">${storeName} - كشف حساب</h1>
-          <p style="margin: 5px 0 0 0;">تاريخ الإصدار: ${formatDateTimeWithDay(new Date())}</p>
-        </div>
-        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-          <div><strong>الزبون:</strong> ${customer.name}</div>
-          <div><strong>الهاتف:</strong> ${customer.phone || 'غير مسجل'}</div>
-        </div>
-        <table style="width: 100%; border-collapse: collapse;">
-          <thead>
-            <tr>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">التاريخ</th>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">البيان</th>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">مدين (+)</th>
-              <th style="border: 1px solid #000; padding: 8px; text-align: right; background: #f2f2f2;">دائن (-)</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${ledgerEntries.map(entry => {
-              let title = '';
-              let debit: string | number = '-';
-              let credit: string | number = '-';
+  const printStatement = (
+    customer: Customer,
+    customEntries?: any[],
+    customStats?: { totalPurchased: number; totalPaid: number },
+    customMonthLabel?: string
+  ) => {
+    setActiveStatementPrintData({
+      customer,
+      entries: customEntries || ledgerEntries,
+      stats: customStats || customerStats,
+      monthLabel: customMonthLabel || 'كشف الحساب الكامل'
+    });
+    setStatementPrintModalOpen(true);
+  };
 
-              if (entry.entryType === 'sale') {
-                let itemNames = '';
-                if (entry.items) {
-                  try {
-                    const parsed = typeof entry.items === 'string' ? JSON.parse(entry.items) : entry.items;
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                      itemNames = parsed.map((i: any) => `${i.name}${i.quantity > 1 ? ` (×${i.quantity})` : ''}`).join('، ');
-                    }
-                  } catch (e) {}
-                }
-                title = 'فاتورة مشتريات #' + entry.id + (itemNames ? `<br/><small style="color:#555;font-size:11px;">(الأصناف: ${itemNames})</small>` : '');
-                debit = entry.total_amount;
-              } else {
-                if (entry.amount === 0) {
-                  title = entry.notes || 'ملاحظة عامة';
-                } else if (entry.type === 'purchase') {
-                  title = entry.notes ? `زيادة مديونية: ${entry.notes}` : 'زيادة مديونية';
-                  debit = entry.amount;
-                } else {
-                  title = entry.notes ? `دفعة: ${entry.notes}` : 'تسديد مبلغ';
-                  credit = entry.amount;
-                }
-              }
+  const handleQuickPrintCustomerStatement = async (customer: Customer) => {
+    try {
+      const customerSales = await db.sales
+        .where('customer_id')
+        .equals(customer.id!)
+        .reverse()
+        .toArray();
+      
+      const saleIds = customerSales.map(s => s.id!).filter(Boolean);
+      const allItems = saleIds.length > 0
+        ? await db.saleItems.where('sale_id').anyOf(saleIds).toArray()
+        : [];
 
-              return `
-                <tr>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${formatDateWithDay(entry.created_at)}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${title}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${debit}</td>
-                  <td style="border: 1px solid #000; padding: 8px; text-align: right;">${credit}</td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-        <div style="margin-top: 30px; float: left; width: 250px;">
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المشتريات:</span> <span>${customerStats.totalPurchased} ${currency}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #eee;"><span>إجمالي المدفوعات:</span> <span>${customerStats.totalPaid} ${currency}</span></div>
-          <div style="display: flex; justify-content: space-between; padding: 10px 0; border-top: 2px solid #000; margin-top: 10px; font-weight: bold; font-size: 1.2em;"><span>الرصيد المتبقي:</span> <span>${customer.balance} ${currency}</span></div>
-        </div>
-      </div>
-    `;
+      const productIds = Array.from(new Set(allItems.map(si => si.product_id).filter(Boolean)));
+      const relevantProducts = productIds.length > 0
+        ? await db.products.where('id').anyOf(productIds).toArray()
+        : [];
+      const productMap = new Map(relevantProducts.map(p => [p.id, p]));
 
-    executePrint(htmlContent);
+      const itemsBySaleId = new Map<number, any[]>();
+      allItems.forEach(si => {
+        const list = itemsBySaleId.get(si.sale_id) || [];
+        list.push(si);
+        itemsBySaleId.set(si.sale_id, list);
+      });
+
+      const salesWithItems = customerSales.map(s => {
+        const sItems = itemsBySaleId.get(s.id!) || [];
+        return {
+          ...s,
+          entryType: 'sale' as const,
+          items: JSON.stringify(sItems.map(si => ({
+            name: productMap.get(si.product_id)?.name || 'منتج محذوف',
+            quantity: si.quantity,
+            price: si.price_at_sale,
+            unit: productMap.get(si.product_id)?.unit || ''
+          })))
+        };
+      });
+
+      const debts = await db.debts
+        .where('customer_id')
+        .equals(customer.id!)
+        .reverse()
+        .toArray();
+
+      const debtsWithEntryType = debts.map(d => ({
+        ...d,
+        entryType: 'debt' as const
+      }));
+
+      const combined = [...salesWithItems, ...debtsWithEntryType].sort((a, b) => {
+        const timeA = new Date(a.created_at || 0).getTime();
+        const timeB = new Date(b.created_at || 0).getTime();
+        return timeB - timeA;
+      });
+
+      let totalPurchased = 0;
+      let totalPaid = 0;
+      combined.forEach(entry => {
+        if (entry.entryType === 'sale') {
+          totalPurchased += entry.total_amount || 0;
+          if (entry.payment_type === 'cash') {
+            totalPaid += (entry.paid_amount !== undefined ? entry.paid_amount : entry.total_amount) || 0;
+          } else if (entry.paid_amount) {
+            totalPaid += entry.paid_amount || 0;
+          }
+        } else {
+          if (entry.type === 'purchase') {
+            totalPurchased += entry.amount || 0;
+          } else if (entry.type === 'payment' || entry.amount > 0) {
+            totalPaid += entry.amount || 0;
+          }
+        }
+      });
+
+      setActiveStatementPrintData({
+        customer,
+        entries: combined,
+        stats: { totalPurchased, totalPaid },
+        monthLabel: 'كشف الحساب الكامل'
+      });
+      setStatementPrintModalOpen(true);
+    } catch (err) {
+      console.error('Quick print error:', err);
+      showNotification('حدث خطأ أثناء إعداد كشف الحساب للمعاينة والطباعة', 'error');
+    }
   };
 
   const [supplierHistory, setSupplierHistory] = useState<{
@@ -4515,25 +4554,45 @@ export default function App() {
   };
 
   const handlePrintCart = () => {
-    if (cart.length === 0) return showNotification('السلة فارغة', 'error');
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>طباعة السلة - ${storeName}</title>
-          <style>
-            @media print {
-              body { margin: 0; padding: 0; }
-            }
-          </style>
-        </head>
-        <body onload="window.print(); window.close();">
-          ${generateCartHTML()}
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+    if (cart.length === 0) return showNotification('السلة فارغة، يرجى إضافة منتجات أولاً', 'error');
+    
+    const rawTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const total = applyCurrencyRounding(rawTotal);
+
+    let actualPaid: number;
+    if (paidAmountInput !== '' && !isNaN(parseFloat(paidAmountInput))) {
+      actualPaid = applyCurrencyRounding(Math.max(0, parseFloat(paidAmountInput)));
+    } else {
+      actualPaid = paymentType === 'cash' ? total : 0;
+    }
+
+    const customer = selectedCustomer ? customers.find(c => c.id === selectedCustomer) : null;
+    const clientName = customer?.name || (selectedCustomer ? 'عميل محدد' : 'زبون نقدي عام');
+    const clientPhone = customer?.phone || '';
+
+    setActiveReceiptData({
+      sale: {
+        id: 'معاينة-السلة',
+        created_at: new Date().toISOString(),
+        total_amount: total,
+        paid_amount: actualPaid,
+        payment_type: paymentType,
+        customer_id: selectedCustomer,
+        customer_name: clientName,
+        customer_phone: clientPhone,
+        items: cart,
+        notes: saleNotes.trim() ? saleNotes.trim() : undefined
+      },
+      items: cart.map(item => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        unit: item.unit
+      })),
+      customerName: clientName,
+      customerPhone: clientPhone
+    });
+    setReceiptModalOpen(true);
   };
 
   const handleDownloadCartPDF = () => {
@@ -4742,6 +4801,7 @@ export default function App() {
   if (!isActivated && !isInTrial) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-100 font-sans relative overflow-hidden" dir="rtl">
+        {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
         {/* Ambient Decorative Gradients */}
         <div className="absolute -top-40 -left-40 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
@@ -5049,11 +5109,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
       {/* Sidebar Overlay and Drawer */}
       <AnimatePresence>
         {isSidebarOpen && (
-          <>
+          <React.Fragment key="sidebar-nav-fragment">
             <motion.div
+              key="sidebar-nav-backdrop"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -5062,6 +5124,7 @@ export default function App() {
             />
 
             <motion.aside
+              key="sidebar-nav-drawer"
               initial={{ x: '100%' }}
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
@@ -5282,16 +5345,17 @@ export default function App() {
           </button>
         </div>
       </motion.aside>
-    </>
+    </React.Fragment>
   )}
 </AnimatePresence>
 
       {/* لوحة الأقسام التفصيلية الجانبية المرنة */}
       <AnimatePresence>
         {isCategorySidebarOpen && (
-          <>
+          <React.Fragment key="category-sidebar-fragment">
             {/* الخلفية المظلمة */}
             <motion.div
+              key="category-sidebar-backdrop"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -5301,6 +5365,7 @@ export default function App() {
 
             {/* ورقة الأقسام الجانبية */}
             <motion.aside
+              key="category-sidebar-drawer"
               initial={{ x: '100%' }}
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
@@ -5406,7 +5471,7 @@ export default function App() {
                 </p>
               </div>
             </motion.aside>
-          </>
+          </React.Fragment>
         )}
       </AnimatePresence>
 
@@ -5624,6 +5689,7 @@ export default function App() {
               setShowPaymentModal={setShowPaymentModal}
               handleDeleteCustomer={handleDeleteCustomer}
               setEditingCustomer={setEditingCustomer}
+              onPrintCustomerStatement={handleQuickPrintCustomerStatement}
             />
           )}
 
@@ -6675,6 +6741,56 @@ export default function App() {
               storeName={storeName}
               formatPrice={formatPrice}
               currency={currency}
+            />
+          )}
+
+          {receiptModalOpen && (
+            <ReceiptModal
+              key="modal-receipt-print-preview"
+              isOpen={receiptModalOpen}
+              onClose={() => {
+                setReceiptModalOpen(false);
+                setActiveReceiptData(null);
+              }}
+              receiptData={activeReceiptData}
+              storeName={storeName}
+              storePhone={storePhone}
+              formatPrice={formatPrice}
+              currency={currency}
+            />
+          )}
+
+          {statementPrintModalOpen && activeStatementPrintData && (
+            <CustomerStatementPrintModal
+              key="modal-statement-print-preview"
+              isOpen={statementPrintModalOpen}
+              onClose={() => {
+                setStatementPrintModalOpen(false);
+                setActiveStatementPrintData(null);
+              }}
+              customer={activeStatementPrintData.customer}
+              entries={activeStatementPrintData.entries}
+              stats={activeStatementPrintData.stats}
+              monthLabel={activeStatementPrintData.monthLabel}
+              storeName={storeName}
+              storePhone={storePhone}
+              formatPrice={formatPrice}
+              currency={currency}
+              onExportPDF={() => {
+                handleDownloadPDF(
+                  activeStatementPrintData.customer,
+                  activeStatementPrintData.entries,
+                  activeStatementPrintData.stats,
+                  activeStatementPrintData.monthLabel
+                );
+              }}
+              onShareWhatsApp={() => {
+                handleShareWhatsApp(
+                  activeStatementPrintData.customer,
+                  activeStatementPrintData.stats,
+                  activeStatementPrintData.monthLabel
+                );
+              }}
             />
           )}
 

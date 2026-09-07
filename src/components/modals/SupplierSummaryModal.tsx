@@ -205,8 +205,8 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 className="bg-amber-50/60 border border-amber-300 text-slate-800 text-xs font-bold rounded-lg px-2.5 py-1 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer shadow-2xs"
               >
                 <option value="all">🌐 جميع الموردين ({suppliers.length})</option>
-                {supplierList.map((sup) => (
-                  <option key={`sup-modal-opt-${sup.id}`} value={String(sup.id)}>
+                {supplierList.map((sup, idx) => (
+                  <option key={`sup-modal-opt-${sup.id ?? 'noid'}-${idx}`} value={String(sup.id)}>
                     {sup.name} {sup.balance > 0 ? `(مستحق: ${formatPrice(sup.balance)})` : '(خالص)'}
                   </option>
                 ))}
@@ -242,11 +242,11 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
               >
                 الكل
               </button>
-              {supplierList.map((sup) => {
+              {supplierList.map((sup, idx) => {
                 const isSelected = selectedSupplierId === String(sup.id);
                 return (
                   <button
-                    key={`sup-modal-pill-${sup.id}`}
+                    key={`sup-modal-pill-${sup.id ?? 'noid'}-${idx}`}
                     type="button"
                     onClick={() => setSelectedSupplierId(String(sup.id))}
                     className={`px-2 py-0.5 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
@@ -365,11 +365,11 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
               
               <div className="space-y-1.5 max-h-[160px] sm:max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
                 {displayedSuppliers.length > 0 ? (
-                  displayedSuppliers.map((s) => {
+                  displayedSuppliers.map((s, idx) => {
                     const isSelected = selectedSupplierId === String(s.id);
                     return (
                       <div 
-                        key={`supp-sum-${s.id}`} 
+                        key={`supp-sum-${s.id ?? 'noid'}-${idx}`} 
                         onClick={() => setSelectedSupplierId(String(s.id))}
                         className={`p-2 rounded-lg border flex justify-between items-center cursor-pointer transition-all active:scale-[0.99] ${
                           isSelected
@@ -436,7 +436,7 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 {displayedPayments.length > 0 ? (
                   displayedPayments.map((p, idx) => (
                     <div 
-                      key={`supp-pay-item-${p.id ?? idx}`} 
+                      key={`supp-pay-item-${p.id ?? 'pmt'}-${idx}`} 
                       onClick={() => setSelectedSupplierPayment(p)}
                       className="bg-slate-50/80 p-2 rounded-lg border border-slate-100 flex justify-between items-center hover:bg-emerald-50/50 cursor-pointer transition-all active:scale-[0.99] gap-2"
                     >

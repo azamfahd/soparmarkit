@@ -12,6 +12,7 @@ import { Button } from '../../components/ui/Button';
 import { updateLatestAppVersion, type AppVersionConfig } from '../../services/firebase';
 import { embeddingManager, reindexAllKnowledgeDocuments } from '../../services/ai/rag';
 import { FileSpreadsheet } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
 import {
   isFileSystemAccessSupported,
   linkLocalExcelFile,
@@ -292,6 +293,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isReindexing, setIsReindexing] = React.useState(false);
   const [showEditInfo, setShowEditInfo] = React.useState(false);
   const [userRequestedDuration, setUserRequestedDuration] = React.useState(365);
+
+  const isNativeApp = React.useMemo(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        if (Capacitor.isNativePlatform() || (window as any).Capacitor?.isNativePlatform()) {
+          return true;
+        }
+        if (window.location.protocol.includes('capacitor') || window.location.protocol.includes('ionic')) {
+          return true;
+        }
+        const ua = navigator.userAgent || '';
+        if (ua.includes('Android') && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+          return true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  }, []);
+
+  const isPwaApp = React.useMemo(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        return window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  }, []);
 
   // Local fallback states for Custom Developer PIN
   const [localShowPinChangeModal, setLocalShowPinChangeModal] = React.useState(false);
@@ -969,24 +1001,94 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
               <div className="flex justify-between items-center">
                 <span>إصدار النظام:</span>
-                <span className="font-mono font-extrabold text-slate-800">v2.1.0</span>
+                <span className="font-mono font-extrabold text-slate-800">v1.0.3</span>
               </div>
               <div className="flex justify-between items-center">
                 <span>نوع قاعدة البيانات:</span>
-                <span className="font-mono font-bold text-slate-700">IndexedDB (Local)</span>
+                <span className="font-bold text-slate-700">
+                  {isNativeApp ? "التخزين المحلي" : "IndexedDB (Local)"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span>بيئة التشغيل:</span>
+                <span className="font-bold text-slate-800">
+                  {isNativeApp 
+                    ? "تطبيق أندرويد (APK)" 
+                    : isPwaApp 
+                      ? "تطبيق ويب مثبت (PWA)" 
+                      : "متصفح الويب (Online/Offline)"}
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span>حالة التثبيت:</span>
-                <span className={`font-bold ${deferredPrompt ? "text-amber-600" : "text-emerald-600"}`}>
-                  {deferredPrompt ? "جاهز للتثبيت" : "مثبت / متصفح"}
+                <span className={`font-bold ${isNativeApp ? "text-emerald-600" : (deferredPrompt ? "text-amber-600" : "text-emerald-600")}`}>
+                  {isNativeApp 
+                    ? "مثبت كتطبيق أصلي" 
+                    : (deferredPrompt ? "جاهز للتثبيت" : (isPwaApp ? "مثبت PWA" : "متصفح"))}
                 </span>
+              </div>
+
+              {/* System Permissions Matrix */}
+              <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-bold text-slate-700">
+                  <span className="flex items-center gap-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>أذونات وصلاحيات الجهاز:</span>
+                  </span>
+                  <span className="text-[10px] text-emerald-600 font-extrabold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                    مدمجة ونشطة
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-[10px] text-slate-600">
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                    <span className="text-emerald-600 font-bold">✓</span>
+                    <span>الكاميرا والماسح</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                    <span className="text-emerald-600 font-bold">✓</span>
+                    <span>الصور والملفات</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                    <span className="text-emerald-600 font-bold">✓</span>
+                    <span>الإشعارات الفورية</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                    <span className="text-emerald-600 font-bold">✓</span>
+                    <span>طابعات البلوتوث</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                    <span className="text-emerald-600 font-bold">✓</span>
+                    <span>الموقع والملحقات</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                    <span className="text-emerald-600 font-bold">✓</span>
+                    <span>الميكروفون والتسجيل</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          {deferredPrompt && (
-            <Button className="w-full text-xs py-2.5" onClick={handleInstall}>تثبيت التطبيق الآن</Button>
-          )}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined' && (window as any).SmartPosNative?.openAppSettings) {
+                  (window as any).SmartPosNative.openAppSettings();
+                } else {
+                  showNotification('لإدارة الأذونات: اضغط مطولاً على أيقونة التطبيق في شاشة الهاتف واختر (معلومات التطبيق ℹ️) ثم (الأذونات)', 'success');
+                }
+              }}
+              className="w-full text-xs py-2 px-3 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors border border-slate-200"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
+              <span>إدارة الأذونات في إعدادات الهاتف</span>
+            </button>
+
+            {!isNativeApp && deferredPrompt && (
+              <Button className="w-full text-xs py-2.5" onClick={handleInstall}>تثبيت التطبيق الآن</Button>
+            )}
+          </div>
         </Card>
 
         {/* Card 8: Reset Database */}

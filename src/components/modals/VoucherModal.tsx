@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { tafqeetArabic } from '../../utils/tafqeet';
 import { Button } from '../ui/Button';
+import { executeDirectPrint } from '../../utils/printUtils';
 
 export interface VoucherData {
   type: 'receipt' | 'payment'; // receipt = سند قبض, payment = سند صرف
@@ -171,52 +172,7 @@ export const VoucherModal: React.FC<VoucherModalProps> = ({
       </div>
     `;
 
-    // 1. Create a print container
-    const printContainer = document.createElement('div');
-    printContainer.id = 'direct-print-container';
-    printContainer.innerHTML = html;
-    document.body.appendChild(printContainer);
-
-    // 2. Create style element to hide everything else during print
-    const style = document.createElement('style');
-    style.id = 'direct-print-style';
-    style.innerHTML = `
-      @media print {
-        body {
-          background: white !important;
-          color: black !important;
-        }
-        body > :not(#direct-print-container) {
-          display: none !important;
-        }
-        #direct-print-container {
-          position: absolute;
-          left: 0;
-          top: 0;
-          width: 100%;
-          direction: rtl;
-          display: block !important;
-        }
-      }
-    `;
-    document.head.appendChild(style);
-
-    // 3. Trigger printing on main window
-    window.print();
-
-    // 4. Cleanup
-    const cleanup = () => {
-      const container = document.getElementById('direct-print-container');
-      const styleEl = document.getElementById('direct-print-style');
-      if (container) container.remove();
-      if (styleEl) styleEl.remove();
-    };
-
-    if ('onafterprint' in window) {
-      window.addEventListener('afterprint', cleanup, { once: true });
-    } else {
-      setTimeout(cleanup, 1500);
-    }
+    executeDirectPrint(html, voucherTitle);
   };
 
   const handleShareWhatsApp = () => {
@@ -244,7 +200,7 @@ _تم إصدار السند إلكترونياً وبشكل موثق_`;
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto">
+      <div key="voucher-modal-overlay" className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-sm overflow-y-auto">
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}

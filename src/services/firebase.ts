@@ -17,7 +17,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 // Suppress non-critical connection retry warnings in offline/sandbox environments
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch {
   // Ignore if log level setting fails in some environments
 }

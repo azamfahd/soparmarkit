@@ -195,22 +195,20 @@ export default function BarcodeScanner({
       const isHttps = window.location.protocol === 'https:';
       const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
       
-      if (!isHttps && !isLocalhost) {
+      if (!isHttps && !isLocalhost && !window.location.protocol.includes('capacitor')) {
         setErrorMsg("عذراً، استخدام الكاميرا يتطلب اتصالاً آمناً (HTTPS). يرجى التأكد من رابط الموقع في المتصفح.");
         return;
       }
 
-      // Check Permissions API if supported
-      try {
-        if (navigator.permissions && navigator.permissions.query) {
-          const permissionStatus = await navigator.permissions.query({ name: 'camera' as any });
-          if (permissionStatus.state === 'denied') {
-            setErrorMsg("تم رفض الصلاحية مسبقاً. يرجى الذهاب إلى إعدادات الكاميرا في متصفحك والسماح بالوصول ثم إعادة المحاولة.");
-            return;
-          }
+      // Proactively request camera access to trigger native permission prompt if needed
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          const initialStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+          initialStream.getTracks().forEach(t => t.stop());
+        } catch (permErr: any) {
+          console.warn("Initial getUserMedia request notification:", permErr);
+          // Don't abort immediately, let Html5Qrcode or startScanning attempt with fallback
         }
-      } catch (err) {
-        console.warn("Permissions API check skipped or unsupported:", err);
       }
 
       try {
@@ -1029,6 +1027,7 @@ export default function BarcodeScanner({
         <AnimatePresence>
           {isCustomerSearchOpen && setSelectedCustomer && (
             <div 
+              key="scanner-customer-search-overlay"
               className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-3 sm:p-4 backdrop-blur-xs"
               onClick={(e) => {
                 if (e.target === e.currentTarget) setIsCustomerSearchOpen(false);

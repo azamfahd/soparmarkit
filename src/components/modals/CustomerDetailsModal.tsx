@@ -9,9 +9,9 @@ export interface CustomerDetailsModalProps {
   setShowCustomerDetails: (val: any) => void;
   customerStats: { totalPurchased: number; totalPaid: number };
   ledgerEntries: any[];
-  printStatement: (customer: any) => void;
-  handleDownloadPDF: (customer: any) => void;
-  handleShareWhatsApp: (customer: any) => void;
+  printStatement: (customer: any, entries?: any[], stats?: any, monthLabel?: string) => void;
+  handleDownloadPDF: (customer: any, entries?: any[], stats?: any, monthLabel?: string) => void;
+  handleShareWhatsApp: (customer: any, stats?: any, monthLabel?: string) => void;
   printReceipt: (entry: any) => void;
   formatPrice: (amount: number) => string;
   formatDateTimeWithDay: (dateStr: string) => string;
@@ -221,7 +221,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                 <span>كشف الحساب التفصيلي</span>
                 <span className="text-xs font-normal text-slate-400">({currentMonthLabel})</span>
               </h4>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5 items-center">
                 <button 
                   type="button"
                   onClick={() => setShowCardImageModal(true)}
@@ -231,26 +231,46 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                   <ImageIcon className="w-3.5 h-3.5 text-emerald-400" />
                   <span>بطاقة صورة 🖼️</span>
                 </button>
+
+                {selectedMonth !== 'ALL' && (
+                  <button 
+                    type="button"
+                    onClick={() => printStatement(showCustomerDetails, filteredEntries, periodStats, currentMonthLabel)}
+                    className="text-xs bg-white border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded-xl flex items-center gap-1 hover:bg-slate-50 shadow-sm transition-all cursor-pointer font-bold"
+                    title={`طباعة كشف حركات شهر ${currentMonthLabel}`}
+                  >
+                    <Printer className="w-3.5 h-3.5 text-slate-500" /> طباعة ({currentMonthLabel})
+                  </button>
+                )}
+
                 <button 
                   type="button"
-                  onClick={() => printStatement(showCustomerDetails)}
-                  className="text-xs bg-white border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded-xl flex items-center gap-1 hover:bg-slate-50 shadow-sm transition-all cursor-pointer font-bold"
+                  onClick={() => printStatement(showCustomerDetails, ledgerEntries, customerStats, 'كشف الحساب الكامل')}
+                  className="text-xs bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-sm transition-all cursor-pointer font-bold"
+                  title="طباعة كشف الحساب الكامل لجميع الحركات"
                 >
-                  <Printer className="w-3.5 h-3.5 text-slate-500" /> طباعة
+                  <Printer className="w-3.5 h-3.5 text-white" />
+                  <span>طباعة الكشف كاملاً</span>
                 </button>
+
                 <button 
                   type="button"
-                  onClick={() => handleDownloadPDF(showCustomerDetails)}
-                  className="text-xs bg-white border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded-xl flex items-center gap-1 hover:bg-slate-50 shadow-sm transition-all cursor-pointer font-bold"
+                  onClick={() => handleDownloadPDF(showCustomerDetails, selectedMonth === 'ALL' ? ledgerEntries : filteredEntries, selectedMonth === 'ALL' ? customerStats : periodStats, currentMonthLabel)}
+                  className="text-xs bg-white border border-slate-200 text-slate-700 px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 hover:bg-slate-50 shadow-sm transition-all cursor-pointer font-bold"
+                  title="تصدير كشف الحساب بصيغة PDF"
                 >
-                  <Download className="w-3.5 h-3.5 text-slate-500" /> PDF
+                  <Download className="w-3.5 h-3.5 text-slate-500" />
+                  <span>تصدير PDF</span>
                 </button>
+
                 <button 
                   type="button"
-                  onClick={() => handleShareWhatsApp(showCustomerDetails)}
-                  className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-1.5 rounded-xl flex items-center gap-1 hover:bg-emerald-100 shadow-sm transition-all cursor-pointer font-bold"
+                  onClick={() => handleShareWhatsApp(showCustomerDetails, selectedMonth === 'ALL' ? customerStats : periodStats, currentMonthLabel)}
+                  className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-1.5 rounded-xl flex items-center gap-1.5 hover:bg-emerald-100 shadow-sm transition-all cursor-pointer font-bold"
+                  title="مشاركة كشف الحساب عبر الواتساب"
                 >
-                  <Upload className="w-3.5 h-3.5 text-emerald-600" /> واتساب
+                  <Upload className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>واتساب</span>
                 </button>
               </div>
             </div>
@@ -404,20 +424,28 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                             )) : null;
                           })()}
                         </div>
-                        <div className="flex justify-end pt-0.5">
+                        <div className="flex justify-end pt-1">
                           <button 
-                            onClick={() => printReceipt(entry)}
-                            className="text-[10px] text-emerald-800 bg-white border border-emerald-300 px-2.5 py-1 rounded-md font-bold flex items-center gap-1 hover:bg-emerald-50 cursor-pointer transition-all shadow-2xs"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              printReceipt(entry);
+                            }}
+                            className="text-xs text-emerald-800 bg-white hover:bg-emerald-50 active:scale-95 border border-emerald-300 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+                            title="طباعة إيصال الفاتورة التفصيلي"
                           >
-                            <Printer className="w-3 h-3 text-emerald-600" /> طباعة الإيصال
+                            <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>طباعة الإيصال</span>
                           </button>
                         </div>
                       </div>
                     )}
                     {entry.entryType !== 'sale' && entry.type === 'payment' && onPrintVoucher && (
-                      <div className="flex justify-end pt-1 border-t border-slate-200/50">
+                      <div className="flex justify-end pt-1.5 border-t border-slate-200/50">
                         <button 
-                          onClick={() => {
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
                             const entryAmount = Math.abs(Number(entry.amount) || 0);
                             const prevBal = entry.previous_balance !== undefined ? Number(entry.previous_balance) : (Number(showCustomerDetails.balance || 0) + entryAmount);
                             const newBal = entry.new_balance !== undefined ? Number(entry.new_balance) : Number(showCustomerDetails.balance || 0);
@@ -435,9 +463,11 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
                               paymentMethod: 'cash'
                             });
                           }}
-                          className="text-[10px] text-emerald-800 bg-white border border-emerald-300 px-2.5 py-1 rounded-md font-bold flex items-center gap-1 hover:bg-emerald-50 cursor-pointer transition-all shadow-2xs"
+                          className="text-xs text-emerald-800 bg-white hover:bg-emerald-50 active:scale-95 border border-emerald-300 px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+                          title="طباعة سند قبض رسمي للدفعة"
                         >
-                          <Printer className="w-3 h-3 text-emerald-600" /> طباعة سند القبض
+                          <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>طباعة سند القبض</span>
                         </button>
                       </div>
                     )}

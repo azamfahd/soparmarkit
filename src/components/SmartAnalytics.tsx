@@ -2695,7 +2695,7 @@ export default function SmartAnalytics
       {/* MODAL: Comprehensive Supplier Analytics Details Modal */}
       <AnimatePresence>
         {selectedSupplierForDetails && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm" dir="rtl">
+          <div key="modal-supplier-analytics-details" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm" dir="rtl">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -3019,7 +3019,7 @@ export default function SmartAnalytics
       {/* Modal 1: Stages Analysis Modal */}
       <AnimatePresence>
         {isStagesModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md" dir="rtl">
+          <div key="modal-stages-analysis" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md" dir="rtl">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -3159,7 +3159,7 @@ export default function SmartAnalytics
       {/* Modal 2: Question Bank Modal */}
       <AnimatePresence>
         {isQuestionBankModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md" dir="rtl">
+          <div key="modal-question-bank" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md" dir="rtl">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}

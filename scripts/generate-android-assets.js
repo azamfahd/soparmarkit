@@ -112,20 +112,36 @@ async function run() {
 `;
   fs.writeFileSync(path.join(RES_DIR, 'drawable/ic_launcher_background.xml'), drawableBgXml, 'utf-8');
 
-  // 3. Generate Splash Screens
+  // 3. Generate Professional Splash Screens with Logo and App Name
   for (const s of splashScreens) {
     const splashDir = path.join(RES_DIR, s.dir);
     if (!fs.existsSync(splashDir)) fs.mkdirSync(splashDir, { recursive: true });
 
-    // Logo should occupy about 25-35% of shortest screen dimension
     const minDim = Math.min(s.width, s.height);
-    const logoSize = Math.min(Math.round(minDim * 0.4), 384);
-    const topPos = Math.round((s.height - logoSize) / 2);
-    const leftPos = Math.round((s.width - logoSize) / 2);
+    const isPortrait = s.height >= s.width;
+
+    // Logo size calculation (balanced and proportionate)
+    const logoSize = Math.min(Math.round(minDim * (isPortrait ? 0.32 : 0.26)), 240);
+    const titleFontSize = Math.max(Math.round(logoSize * 0.16), 16);
+    const subFontSize = Math.max(Math.round(titleFontSize * 0.52), 10);
+    const gap = Math.round(logoSize * 0.12);
+
+    const totalHeight = logoSize + gap + titleFontSize + 8 + subFontSize;
+    const startY = Math.round((s.height - totalHeight) / 2);
+    const logoTop = startY;
+    const logoLeft = Math.round((s.width - logoSize) / 2);
+    const textTop = logoTop + logoSize + gap;
 
     const splashLogo = await sharp(SRC_ICON)
       .resize(logoSize, logoSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
       .toBuffer();
+
+    const textSvg = Buffer.from(`
+      <svg width="${s.width}" height="${Math.round(titleFontSize * 3.5)}" xmlns="http://www.w3.org/2000/svg">
+        <text x="${s.width / 2}" y="${titleFontSize}" font-family="DejaVu Sans, Cairo, Arial, sans-serif" font-weight="900" font-size="${titleFontSize}" fill="#ffffff" text-anchor="middle">النظام المحاسبي الذكي</text>
+        <text x="${s.width / 2}" y="${titleFontSize + 8 + subFontSize}" font-family="DejaVu Sans, Cairo, Arial, sans-serif" font-weight="500" font-size="${subFontSize}" fill="#94a3b8" text-anchor="middle">إدارة متكاملة للمبيعات والمخزون والديون</text>
+      </svg>
+    `);
 
     await sharp({
       create: {
@@ -135,7 +151,10 @@ async function run() {
         background: BG_COLOR,
       },
     })
-      .composite([{ input: splashLogo, top: topPos, left: leftPos }])
+      .composite([
+        { input: splashLogo, top: logoTop, left: logoLeft },
+        { input: textSvg, top: textTop, left: 0 }
+      ])
       .png()
       .toFile(path.join(splashDir, 'splash.png'));
 

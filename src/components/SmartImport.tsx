@@ -1777,6 +1777,7 @@ export default function SmartImport(props: SmartImportHubProps) {
       <AnimatePresence>
         {isLoading && (
           <motion.div 
+            key="smart-import-loading-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -1800,6 +1801,7 @@ export default function SmartImport(props: SmartImportHubProps) {
 
         {errorMessage && (
           <motion.div 
+            key="smart-import-error-banner"
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 15 }}
@@ -1815,6 +1817,7 @@ export default function SmartImport(props: SmartImportHubProps) {
 
         {successInfo && (
           <motion.div 
+            key="smart-import-success-banner"
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 15 }}

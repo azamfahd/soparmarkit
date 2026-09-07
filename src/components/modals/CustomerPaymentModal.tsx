@@ -34,7 +34,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
   if (!showPaymentModal) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
+    <div className="fixed inset-0 bg-black/60 z-[80] flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
       <motion.div 
         initial={{ scale: 0.9, opacity: 0, y: 20 }} 
         animate={{ scale: 1, opacity: 1, y: 0 }} 
@@ -143,7 +143,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
                     setPaymentAmount('50');
                     setPaymentNotes('إيداع سلفة / دفعة مقدّمة بقيمة 50');
                   }}
-                  className="py-3 px-2 bg-emerald-50 text-emerald-750 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-150 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                  className="py-3 px-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-200 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
                 >
                   +50 {currency}
                 </button>
@@ -153,7 +153,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
                     setPaymentAmount('100');
                     setPaymentNotes('إيداع سلفة / دفعة مقدّمة بقيمة 100');
                   }}
-                  className="py-3 px-2 bg-emerald-50 text-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-150 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                  className="py-3 px-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-200 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
                 >
                   +100 {currency}
                 </button>
@@ -163,7 +163,7 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
                     setPaymentAmount('200');
                     setPaymentNotes('إيداع سلفة / دفعة مقدّمة بقيمة 200');
                   }}
-                  className="py-3 px-2 bg-emerald-50 text-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-150 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                  className="py-3 px-2 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 rounded-xl transition-all font-extrabold text-[12px] border border-emerald-200 flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
                 >
                   +200 {currency}
                 </button>
@@ -180,6 +180,18 @@ export const CustomerPaymentModal: React.FC<CustomerPaymentModalProps> = ({
               onChange={e => setPaymentNotes(e.target.value)} 
             />
           </div>
+
+          {/* Receipt Voucher Toggle */}
+          <label className="flex items-center gap-2 cursor-pointer bg-slate-50 hover:bg-slate-100 p-3 rounded-2xl border border-slate-200 transition-colors">
+            <input
+              type="checkbox"
+              checked={showReceiptVoucher}
+              onChange={(e) => setShowReceiptVoucher(e.target.checked)}
+              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+            />
+            <Receipt className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span className="text-xs font-bold text-slate-700">فتح وطباعة سند قبض رسمي فور حفظ العملية</span>
+          </label>
 
           {/* Actions */}
           <div className="flex flex-col sm:flex-row gap-2 pt-2">
