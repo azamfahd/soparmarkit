@@ -195,9 +195,9 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
               <div className="flex items-center justify-between">
                 <span className="font-bold text-xs text-slate-700 flex items-center gap-1.5">
                   <Upload className="w-3.5 h-3.5 text-slate-500" />
-                  <span>استرجاع نسخة احتياطية سابقة:</span>
+                  <span>استرجاع واستيراد قاعدة بيانات:</span>
                 </span>
-                <span className="text-[10px] text-slate-400 font-medium">ملفات .json فقط</span>
+                <span className="text-[10px] text-slate-400 font-medium">ملفات JSON و Excel (.xlsx)</span>
               </div>
 
               {window.pywebview && window.pywebview.api ? (
@@ -210,13 +210,13 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
                   className="w-full flex items-center justify-center gap-1.5 text-xs py-2 text-slate-700 border-slate-300 hover:bg-white"
                 >
                   <Upload className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>استيراد ملف نسخة احتياطية من الجهاز</span>
+                  <span>استيراد ملف قاعدة بيانات من الجهاز</span>
                 </Button>
               ) : (
                 <div className="relative">
                   <input
                     type="file"
-                    accept=".json"
+                    accept=".json,.xlsx,.xls"
                     onChange={(e) => {
                       importData(e);
                       onClose();
@@ -228,7 +228,7 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
                     className="w-full flex items-center justify-center gap-1.5 text-xs py-2 text-slate-700 border-slate-300 hover:bg-white cursor-pointer"
                   >
                     <Upload className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>اختيار واسترجاع ملف JSON من جهازك</span>
+                    <span>اختيار ملف JSON أو Excel لاسترجاعه وتدقيقه تلقائياً</span>
                   </Button>
                 </div>
               )}

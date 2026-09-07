@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import * as XLSX from 'xlsx';
 import html2pdf from 'html2pdf.js';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import BarcodeScanner from './components/BarcodeScanner';
@@ -42,7 +43,10 @@ import { CustomerStatementPrintModal } from './components/modals/CustomerStateme
 import { ExpensesModal } from './components/modals/ExpensesModal';
 import { ExcelSyncCenterModal } from './components/modals/ExcelSyncCenterModal';
 import { BackupOptionsModal } from './components/modals/BackupOptionsModal';
+import { DataAuditReportModal } from './components/modals/DataAuditReportModal';
 import { checkFileModifiedAndSync } from './services/excelSync';
+import { saveFileToDevice } from './utils/fileSaver';
+import { importAndRepairDatabaseOffline, convertJsonDatabaseToExcel, convertExcelToDatabaseJson, AuditReport } from './services/dataSanitizer';
 import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } from './utils/printUtils';
 import { InstallAppModal } from './components/InstallAppModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
@@ -198,6 +202,8 @@ export default function App() {
   const [showExpensesModal, setShowExpensesModal] = useState(false);
   const [showExcelSyncModal, setShowExcelSyncModal] = useState(false);
   const [showBackupOptionsModal, setShowBackupOptionsModal] = useState(false);
+  const [auditReport, setAuditReport] = useState<AuditReport | null>(null);
+  const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
   
   const excelNameSetting = useLiveQuery(() => db.settings.where('key').equals('excel_file_name').first());
   const excelSyncLinked = !!excelNameSetting?.value;
@@ -3581,26 +3587,8 @@ export default function App() {
     const jsonString = JSON.stringify(data, null, 2);
     const fileName = `${storeName}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
 
-    if (window.pywebview && window.pywebview.api) {
-      try {
-        const success = await window.pywebview.api.save_file(fileName, jsonString);
-        if (success) {
-          showNotification('تم حفظ النسخة الاحتياطية بنجاح عبر النظام');
-        } else {
-          showNotification('تم إلغاء حفظ الملف أو فشلت العملية', 'error');
-          return;
-        }
-      } catch (err) {
-        console.error("Pywebview save failed:", err);
-      }
-    } else {
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-    }
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    await saveFileToDevice(blob, fileName, 'application/json');
     
     // Update last backup date
     const now = new Date().toISOString();
@@ -3611,10 +3599,7 @@ export default function App() {
       await db.settings.add({ key: 'lastBackupDate', value: now });
     }
     setLastBackupDate(now);
-    
-    if (!(window.pywebview && window.pywebview.api)) {
-      showNotification('تم تصدير نسخة احتياطية بنجاح');
-    }
+    showNotification('تم تصدير نسخة احتياطية بنجاح وحفظها على جهازك');
   };
 
   const handleImportPython = async () => {
@@ -3634,31 +3619,14 @@ export default function App() {
           return;
         }
 
-        await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
-          await db.products.clear();
-          await db.customers.clear();
-          await db.suppliers.clear();
-          await db.supplierPayments.clear();
-          await db.sales.clear();
-          await db.saleItems.clear();
-          await db.debts.clear();
-          await db.inventoryLogs.clear();
-          await db.settings.clear();
-          await db.notes.clear();
-
-          if (data.products) await db.products.bulkAdd(data.products);
-          if (data.customers) await db.customers.bulkAdd(data.customers);
-          if (data.suppliers) await db.suppliers.bulkAdd(data.suppliers);
-          if (data.supplierPayments) await db.supplierPayments.bulkAdd(data.supplierPayments);
-          if (data.sales) await db.sales.bulkAdd(data.sales);
-          if (data.saleItems) await db.saleItems.bulkAdd(data.saleItems);
-          if (data.debts) await db.debts.bulkAdd(data.debts);
-          if (data.inventoryLogs) await db.inventoryLogs.bulkAdd(data.inventoryLogs);
-          if (data.settings) await db.settings.bulkAdd(data.settings);
-          if (data.notes) await db.notes.bulkAdd(data.notes);
-        });
-        showNotification('تم استيراد البيانات بنجاح');
-        setTimeout(() => window.location.reload(), 1000);
+        const { report, success } = await importAndRepairDatabaseOffline(data, 'replace');
+        if (success) {
+          setAuditReport(report);
+          setShowAuditModal(true);
+          showNotification('تم استيراد ومعالجة قاعدة البيانات بنجاح!');
+        } else {
+          showNotification('فشل استيراد قاعدة البيانات', 'error');
+        }
       } catch (err) {
         console.error("Pywebview import failed:", err);
         showNotification('خطأ في استيراد البيانات', 'error');
@@ -3669,40 +3637,44 @@ export default function App() {
   const importData = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const data = JSON.parse(event.target?.result as string);
-        await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
-          await db.products.clear();
-          await db.customers.clear();
-          await db.suppliers.clear();
-          await db.supplierPayments.clear();
-          await db.sales.clear();
-          await db.saleItems.clear();
-          await db.debts.clear();
-          await db.inventoryLogs.clear();
-          await db.settings.clear();
-          await db.notes.clear();
 
-          if (data.products) await db.products.bulkAdd(data.products);
-          if (data.customers) await db.customers.bulkAdd(data.customers);
-          if (data.suppliers) await db.suppliers.bulkAdd(data.suppliers);
-          if (data.supplierPayments) await db.supplierPayments.bulkAdd(data.supplierPayments);
-          if (data.sales) await db.sales.bulkAdd(data.sales);
-          if (data.saleItems) await db.saleItems.bulkAdd(data.saleItems);
-          if (data.debts) await db.debts.bulkAdd(data.debts);
-          if (data.inventoryLogs) await db.inventoryLogs.bulkAdd(data.inventoryLogs);
-          if (data.settings) await db.settings.bulkAdd(data.settings);
-          if (data.notes) await db.notes.bulkAdd(data.notes);
-        });
-        showNotification('تم استيراد البيانات بنجاح');
-        setTimeout(() => window.location.reload(), 1000);
-      } catch (err) {
-        showNotification('خطأ في استيراد البيانات', 'error');
+    try {
+      if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+        // Import from Excel workbook into Database
+        const buffer = await file.arrayBuffer();
+        const wb = XLSX.read(buffer, { type: 'array' });
+        const rawJson = convertExcelToDatabaseJson(wb);
+        const { report, success } = await importAndRepairDatabaseOffline(rawJson, 'replace');
+        if (success) {
+          setAuditReport(report);
+          setShowAuditModal(true);
+          showNotification('تم تحويل واستيراد ملف Excel إلى قاعدة البيانات ومعالجة الأخطاء بنجاح!', 'success');
+        } else {
+          showNotification('فشل تحويل ملف Excel', 'error');
+        }
+      } else {
+        // Import from JSON database file
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const data = JSON.parse(event.target?.result as string);
+            const { report, success } = await importAndRepairDatabaseOffline(data, 'replace');
+            if (success) {
+              setAuditReport(report);
+              setShowAuditModal(true);
+              showNotification('تم استيراد وتدقيق قاعدة البيانات بنجاح!', 'success');
+            } else {
+              showNotification('فشل استيراد الملف', 'error');
+            }
+          } catch (err) {
+            showNotification('صيغة ملف JSON غير صحيحة', 'error');
+          }
+        };
+        reader.readAsText(file);
       }
-    };
-    reader.readAsText(file);
+    } catch (err: any) {
+      showNotification('خطأ في استيراد الملف: ' + err.message, 'error');
+    }
   };
 
   const forceLocalDiskBackup = async () => {
@@ -6816,6 +6788,18 @@ export default function App() {
               onOpenSmartImportHub={() => {
                 setActiveTab('smart-import');
                 setIsSidebarOpen(false);
+              }}
+            />
+          )}
+
+          {showAuditModal && (
+            <DataAuditReportModal
+              key="modal-data-audit-report"
+              isOpen={showAuditModal}
+              onClose={() => setShowAuditModal(false)}
+              report={auditReport}
+              onComplete={() => {
+                setTimeout(() => window.location.reload(), 300);
               }}
             />
           )}

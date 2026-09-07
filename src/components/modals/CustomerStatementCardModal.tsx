@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Image as ImageIcon, Download, Copy, Share2, MessageCircle, X, Check, Store, Calendar, ShieldCheck, User, Phone, Layers } from 'lucide-react';
 import html2canvas from 'html2canvas-pro';
+import { saveCanvasImageToDevice } from '../../utils/fileSaver';
 
 export interface CustomerStatementCardModalProps {
   isOpen: boolean;
@@ -553,11 +554,8 @@ export const CustomerStatementCardModal: React.FC<CustomerStatementCardModalProp
     setIsGenerating(true);
     try {
       const canvas = await safeHtml2Canvas(cardRef.current);
-      const image = canvas.toDataURL('image/png', 1.0);
-      const link = document.createElement('a');
-      link.href = image;
-      link.download = `كشف_حساب_${customer.name}_${monthLabel.replace(/\s+/g, '_')}.png`;
-      link.click();
+      const fileName = `كشف_حساب_${customer.name}_${monthLabel.replace(/\s+/g, '_')}.png`;
+      await saveCanvasImageToDevice(canvas, fileName);
     } catch (err) {
       console.error('Failed to generate image:', err);
     } finally {

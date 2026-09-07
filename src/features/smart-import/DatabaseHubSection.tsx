@@ -16,10 +16,16 @@ import {
   FileText, 
   DollarSign,
   Activity,
-  Layers
+  Layers,
+  ArrowRightLeft,
+  FileSpreadsheet,
+  FileJson,
+  Wrench
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { db } from '../../db';
+import { convertJsonDatabaseToExcel } from '../../services/dataSanitizer';
+import { downloadWorkbook } from '../../utils/fileSaver';
 
 interface DatabaseHubSectionProps {
   exportData?: () => void;
@@ -118,6 +124,21 @@ export const DatabaseHubSection: React.FC<DatabaseHubSectionProps> = ({
       showNotification?.(err.message || 'حدث خطأ أثناء التصفير', 'error');
     } finally {
       setIsResetting(false);
+    }
+  };
+
+  const handleConvertJsonToExcelFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const jsonData = JSON.parse(text);
+      const wb = convertJsonDatabaseToExcel(jsonData);
+      const fileName = `تحويل_نسخة_JSON_إلى_Excel_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      await downloadWorkbook(wb, fileName);
+      showNotification?.('تم تحويل ملف JSON إلى مصنف Excel بنجاح وفتحه للحفظ 📊', 'success');
+    } catch (err: any) {
+      showNotification?.('فشل تحويل ملف JSON: ' + err.message, 'error');
     }
   };
 
@@ -275,10 +296,60 @@ export const DatabaseHubSection: React.FC<DatabaseHubSectionProps> = ({
             {importData && (
               <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs">
                 <Upload className="w-4 h-4 text-slate-600" />
-                <span>استرجاع ملف JSON 📂</span>
+                <span>استرجاع ملف (JSON أو Excel) 📂</span>
                 <input 
                   type="file" 
-                  accept=".json" 
+                  accept=".json,.xlsx,.xls" 
+                  onChange={importData} 
+                  className="hidden" 
+                />
+              </label>
+            )}
+          </div>
+        </div>
+
+        {/* Card 2: JSON <-> Excel Conversion Tool */}
+        <div className="bg-gradient-to-br from-indigo-50/50 via-white to-purple-50/30 rounded-2xl border border-indigo-150 p-5 shadow-2xs space-y-4 flex flex-col justify-between">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-indigo-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-100 text-indigo-700 rounded-xl">
+                  <ArrowRightLeft className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-slate-800">تحويل الصيغ أوفلاين (JSON ⇄ Excel)</h3>
+                  <p className="text-[11px] text-slate-500">تحويل النسخ الاحتياطية وتدقيق البيانات فورياً</p>
+                </div>
+              </div>
+              <span className="text-[10px] font-black bg-indigo-100 text-indigo-800 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                بدون إنترنت ⚡
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-600 font-medium leading-relaxed">
+              تستطيع تحويل أي ملف نسخة احتياطية JSON إلى ملف إكسل منسق بصفحات متعددة (أصناف، عملاء، ديون، مبيعات)، أو استيراد ملف إكسل وتحويله تلقائياً لقاعدة بيانات النظام مع معالجة وتدقيق الأخطاء!
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl transition-all cursor-pointer shadow-xs">
+              <FileSpreadsheet className="w-4 h-4" />
+              <span>تحويل ملف JSON إلى Excel 📊</span>
+              <input 
+                type="file" 
+                accept=".json" 
+                onChange={handleConvertJsonToExcelFile} 
+                className="hidden" 
+              />
+            </label>
+
+            {importData && (
+              <label className="flex items-center justify-center gap-2 px-3 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl transition-all cursor-pointer shadow-xs">
+                <FileJson className="w-4 h-4" />
+                <span>تحويل Excel واستيراده للنظام 📥</span>
+                <input 
+                  type="file" 
+                  accept=".xlsx,.xls" 
                   onChange={importData} 
                   className="hidden" 
                 />

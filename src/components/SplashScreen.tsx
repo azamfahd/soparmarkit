@@ -82,19 +82,10 @@ export default function SplashScreen({ onFinish, minDuration = 1800 }: SplashScr
                   className="w-full h-full object-contain rounded-2xl drop-shadow-lg"
                   referrerPolicy="no-referrer"
                   onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).src = '/icon.svg';
+                    (e.currentTarget as HTMLImageElement).src = '/icons/icon-512.png';
                   }}
                 />
               </div>
-
-              {/* Micro Subtle Sparkle Badge */}
-              <motion.div
-                animate={{ rotate: [0, 15, -15, 0], scale: [1, 1.15, 1] }}
-                transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}
-                className="absolute -top-1.5 -right-1.5 p-1.5 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 shadow-lg shadow-amber-500/30 border border-amber-200"
-              >
-                <Sparkles className="w-3.5 h-3.5 fill-slate-950 stroke-slate-950" />
-              </motion.div>
             </motion.div>
 
             {/* App Title */}

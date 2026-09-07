@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { db, Expense } from '../../db';
 import { Button } from '../ui/Button';
+import { saveFileToDevice } from '../../utils/fileSaver';
 
 export interface ExpensesModalProps {
   isOpen: boolean;
@@ -161,7 +162,7 @@ export const ExpensesModal: React.FC<ExpensesModalProps> = ({
   };
 
   // Export to Excel / CSV
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (filteredExpenses.length === 0) return;
     const headers = ['المعرف', 'البند', 'التصنيف', 'المبلغ', 'التاريخ', 'طريقة الدفع', 'الملاحظات'];
     const rows = filteredExpenses.map(item => {
@@ -180,13 +181,8 @@ export const ExpensesModal: React.FC<ExpensesModalProps> = ({
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `مصروفات_${storeName}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const fileName = `مصروفات_${storeName}_${new Date().toISOString().split('T')[0]}.csv`;
+    await saveFileToDevice(blob, fileName, 'text/csv;charset=utf-8;');
   };
 
   // Print Report

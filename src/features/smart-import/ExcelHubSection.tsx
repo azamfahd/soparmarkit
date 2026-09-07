@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import { downloadWorkbook } from '../../utils/fileSaver';
 import { 
   FileSpreadsheet, 
   RefreshCw, 
@@ -277,7 +278,7 @@ export const ExcelHubSection: React.FC<ExcelHubSectionProps> = ({
   };
 
   // Download Individual Template Helper
-  const handleDownloadCustomTemplate = (type: 'all' | 'products' | 'customers' | 'suppliers' | 'expenses') => {
+  const handleDownloadCustomTemplate = async (type: 'all' | 'products' | 'customers' | 'suppliers' | 'expenses') => {
     try {
       const wb = XLSX.utils.book_new();
       const rtlView = [{ Reels: { RightToLeft: true } }];
@@ -327,8 +328,8 @@ export const ExcelHubSection: React.FC<ExcelHubSectionProps> = ({
         ? `قالب_إكسل_محاسبي_شامل_${new Date().toISOString().slice(0, 10)}.xlsx`
         : `قالب_استيراد_${type === 'products' ? 'المنتجات' : type === 'customers' ? 'العملاء' : type === 'suppliers' ? 'الموردين' : 'المصروفات'}.xlsx`;
 
-      XLSX.writeFile(wb, fileName);
-      showNotification?.(`تم تحميل ${fileName} بنجاح!`, 'success');
+      await downloadWorkbook(wb, fileName);
+      showNotification?.(`تم حفظ ${fileName} بنجاح!`, 'success');
     } catch (err: any) {
       showNotification?.('فشل تحميل القالب: ' + err.message, 'error');
     }

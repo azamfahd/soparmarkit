@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { db, Product, Customer, Supplier, Sale, Expense } from '../db';
+import { downloadWorkbook } from '../utils/fileSaver';
 
 export interface ExcelSyncStatus {
   isLinked: boolean;
@@ -642,7 +643,7 @@ export async function downloadExcelTemplate(): Promise<void> {
   XLSX.utils.book_append_sheet(wb, wsSuppliers, 'الموردين_والحسابات');
   XLSX.utils.book_append_sheet(wb, wsExpenses, 'المصروفات_التشغيلية');
 
-  XLSX.writeFile(wb, `قالب_محاسبي_إكسل_جاهز_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  await downloadWorkbook(wb, `قالب_محاسبي_إكسل_جاهز_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 /**
@@ -650,7 +651,7 @@ export async function downloadExcelTemplate(): Promise<void> {
  */
 export async function downloadExcelBackupManual(): Promise<void> {
   const wb = await generateWorkbookFromDatabase();
-  XLSX.writeFile(wb, `قاعدة_البيانات_المحاسبية_إكسل_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  await downloadWorkbook(wb, `قاعدة_البيانات_المحاسبية_إكسل_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 
 /**
