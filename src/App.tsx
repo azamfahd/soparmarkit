@@ -50,7 +50,6 @@ import { importAndRepairDatabaseOffline, convertJsonDatabaseToExcel, convertExce
 import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } from './utils/printUtils';
 import { InstallAppModal } from './components/InstallAppModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
-import SplashScreen from './components/SplashScreen';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { Scan, QrCode, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { 
@@ -4773,7 +4772,6 @@ export default function App() {
   if (!isActivated && !isInTrial) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 text-slate-100 font-sans relative overflow-hidden" dir="rtl">
-        {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
         {/* Ambient Decorative Gradients */}
         <div className="absolute -top-40 -left-40 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl pointer-events-none" />
@@ -5081,7 +5079,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {showSplash && <SplashScreen onFinish={() => setShowSplash(false)} />}
       {/* Sidebar Overlay and Drawer */}
       <AnimatePresence>
         {isSidebarOpen && (

@@ -1,17 +1,34 @@
 import * as XLSX from 'xlsx';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 /**
- * Universal File Saver for Mobile (APK / Android WebView) and Web.
- * 100% Offline Capable.
- * Uses Web Share API (native Android share sheet to save directly to Files/Downloads/Drive)
- * with automatic fallback to Data URLs and Blob Object URLs.
+ * Helper to convert Blob to Base64 string
+ */
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Universal High-Reliability File Saver for Android APK, Capacitor, WebViews, and Web Browsers.
+ * Guarantees file exporting/downloading on Android devices without permission blocks.
  */
 export async function saveFileToDevice(
   blob: Blob,
   fileName: string,
   mimeType: string = 'application/octet-stream'
 ): Promise<{ success: boolean; method: string }> {
-  // 1. Check if PyWebView API exists (Desktop App Wrapper)
+  // 1. PyWebView API (Desktop Wrapper)
   if ((window as any).pywebview && (window as any).pywebview.api) {
     try {
       const text = await blob.text();
@@ -22,10 +39,54 @@ export async function saveFileToDevice(
     }
   }
 
-  // 2. Prepare a File object for Web Share API (Supported in Android APK / WebView / Mobile Browsers)
-  const file = new File([blob], fileName, { type: mimeType });
+  // 2. Capacitor Native APK FileSystem & Share Plugin (Primary method for Android APK)
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const base64Data = await blobToBase64(blob);
+      
+      // Write file directly to Documents or Cache
+      let fileUri: string = '';
+      try {
+        const result = await Filesystem.writeFile({
+          path: fileName,
+          data: base64Data,
+          directory: Directory.Documents,
+          recursive: true
+        });
+        fileUri = result.uri;
+      } catch (docErr) {
+        // Fallback to Cache directory
+        const cacheResult = await Filesystem.writeFile({
+          path: fileName,
+          data: base64Data,
+          directory: Directory.Cache,
+          recursive: true
+        });
+        fileUri = cacheResult.uri;
+      }
 
-  // Try Web Share API (Android WebShare opens system share sheet: "Save to Files / Downloads", WhatsApp, Drive, etc.)
+      // Trigger Native Android Share / Save Sheet
+      if (fileUri) {
+        try {
+          await Share.share({
+            title: fileName,
+            text: `تصدير ملف: ${fileName}`,
+            url: fileUri,
+            dialogTitle: 'حفظ وتصدير الملف إلى الهاتف'
+          });
+        } catch (shareErr) {
+          console.warn('Capacitor native share notice:', shareErr);
+        }
+      }
+
+      return { success: true, method: 'capacitor_native' };
+    } catch (capErr) {
+      console.warn('Capacitor native export failed, falling back to WebShare / DataURL:', capErr);
+    }
+  }
+
+  // 3. Web Share API (Android WebViews / Mobile Chrome / TWAs)
+  const file = new File([blob], fileName, { type: mimeType });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try {
       await navigator.share({
@@ -33,53 +94,50 @@ export async function saveFileToDevice(
         title: fileName,
         text: `تصدير ملف: ${fileName}`
       });
-      return { success: true, method: 'share' };
+      return { success: true, method: 'web_share' };
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        // User explicitly dismissed the share sheet - treat as completed
         return { success: true, method: 'share_dismissed' };
       }
-      console.warn('Web Share failed, falling back to direct download:', err);
+      console.warn('Web Share failed, attempting direct Data URL fallback:', err);
     }
   }
 
-  // 3. Data URL Fallback (Works in Android WebViews that ignore blob: URLs)
+  // 4. Data URL Direct Download (Works in WebViews & browsers)
   try {
-    const reader = new FileReader();
-    const dataUrlPromise = new Promise<string>((resolve, reject) => {
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    const dataUrl = await dataUrlPromise;
-
+    const dataUrl = `data:${mimeType};base64,${await blobToBase64(blob)}`;
+    
     const a = document.createElement('a');
     a.href = dataUrl;
     a.download = fileName;
     a.target = '_blank';
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
+    
     setTimeout(() => {
       if (document.body.contains(a)) document.body.removeChild(a);
-    }, 1000);
+    }, 1500);
 
     return { success: true, method: 'data_url' };
   } catch (err) {
     console.warn('Data URL download failed, trying Blob URL:', err);
   }
 
-  // 4. Standard Blob URL Fallback
+  // 5. Standard Blob URL Fallback
   try {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = fileName;
+    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
+
     setTimeout(() => {
       if (document.body.contains(a)) document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    }, 1000);
+    }, 1500);
 
     return { success: true, method: 'blob_url' };
   } catch (err) {
@@ -101,7 +159,6 @@ export async function downloadWorkbook(wb: XLSX.WorkBook, fileName: string): Pro
     return res.success;
   } catch (err) {
     console.error('Error in downloadWorkbook:', err);
-    // Fallback to XLSX.writeFile
     try {
       XLSX.writeFile(wb, fileName);
       return true;
