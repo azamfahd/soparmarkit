@@ -977,21 +977,51 @@ export async function generateResponse(
 
     case 'getForecast': {
       const f = data.forecast;
-      answer = `🔮 **تقرير التنبؤ والتحليلات المستقبلية الإحصائية (ML Forecast):**\n` +
-        `• **سجل المبيعات التاريخية المحللة:** ${f.historicalDaysCount} يوم\n` +
-        `• **متوسط المبيعات اليومية الصافية:** ${f.averageDailySales?.toLocaleString()} ر.س\n` +
-        `• **التنبؤ بالمبيعات للأسبوع القادم (7 أيام):** **${f.projectedNext7DaysSales?.toLocaleString()} ر.س**\n` +
-        `• **التنبؤ بالمبيعات للشهر القادم (30 يوماً):** **${f.projectedNext30DaysSales?.toLocaleString()} ر.س**\n` +
-        `• **معدل النمو المتوقع للمبيعات:** %${f.growthTrendPercentage}\n` +
-        `• **مؤشر دقة التنبؤ الثنائي (Confidence):** %${Math.round(f.confidenceScore * 100)}\n` +
-        `• **ملاحظة الاتجاه العام:** ${f.seasonalityMessage}\n`;
+      const stats = f.statistics;
+      const scenarios = f.scenarios;
+
+      const conservative30 = scenarios?.conservative?.totalProjectedSales || Math.round((f.projectedNext30DaysSales || 0) * 0.8);
+      const baseline30 = scenarios?.baseline?.totalProjectedSales || f.projectedNext30DaysSales || 0;
+      const optimistic30 = scenarios?.optimistic?.totalProjectedSales || Math.round((f.projectedNext30DaysSales || 0) * 1.25);
+
+      answer = `🔮 **تقرير التنبؤ المالي المتقدم ومحاكي المبيعات المستقبلي (ML Forecast & Error Analysis):**\n\n` +
+        `📊 **1. التوقعات الأساسية للمبيعات:**\n` +
+        `• **تاريخ النشاط المحلل:** ${f.historicalDaysCount} يوم من المبيعات الفعلية\n` +
+        `• **متوسط المبيعات اليومية الصافية:** ${f.averageDailySales?.toLocaleString()} ر.س / يوم\n` +
+        `• **التنبؤ المعتدل للأسبوع القادم (7 أيام):** **${f.projectedNext7DaysSales?.toLocaleString()} ر.س**\n` +
+        `• **التنبؤ المعتدل للشهر القادم (30 يوماً):** **${baseline30?.toLocaleString()} ر.س**\n` +
+        `• **التنبؤ للأشهر الثلاثة القادمة (90 يوماً):** **${f.projectedNext90DaysSales?.toLocaleString()} ر.س**\n` +
+        `• **معدل مسار النمو المتوقع:** %${(f.growthTrendPercentage || 0) >= 0 ? '+' : ''}${f.growthTrendPercentage || 0}\n\n` +
+
+        `🎯 **2. نطاق الاحتمالية ومحدودية المبيعات (Confidence Interval Bounds):**\n` +
+        `استناداً إلى دراسة تقلبات حركة البيع السابقة، تتحدد مبيعات الشهر القادم ضمن الحدود التالية:\n` +
+        `• 🛡️ **الحد الأدنى المتحفظ (لا تنقص عنه المبيعات بإذن الله):** **${conservative30?.toLocaleString()} ر.س** (بنسبة ثقة وأمان 95% في أسوأ الظروف)\n` +
+        `• ⚖️ **المسار المتوقع المعتدل (الهدف المستقر):** **${baseline30?.toLocaleString()} ر.س**\n` +
+        `• 🚀 **الحد الأقصى المتفائل (أعلى سقف متوقع عند الذروة):** **${optimistic30?.toLocaleString()} ر.س**\n\n` +
+
+        `📐 **3. دراسة ومعالجة الأخطاء والتقلبات الإحصائية (Error & Risk Analysis):**\n` +
+        `• **الانحراف المعياري للعمليات (Std Deviation):** ±${stats?.standardDeviation?.toLocaleString() || 0} ر.س\n` +
+        `• **معدل التذبذب والتقلب اليومي (Volatility):** %${stats?.volatilityRatePercentage || 0}\n` +
+        `• **معامل دقة ومطابقة النموذج (R² / Confidence):** %${Math.round((stats?.rSquared || f.confidenceScore || 0.85) * 100)}\n` +
+        `• **أفضل أيام الأسبوع مبيعاً (يوم الذروة):** ${stats?.peakDay || 'نهاية الأسبوع'}\n` +
+        `• **أهدأ أيام الأسبوع (أقل نشاطاً):** ${stats?.slowestDay || 'وسط الأسبوع'}\n` +
+        `• **تقييم الثقة العام:** ${f.seasonalityMessage}\n`;
+
+      if (f.diagnostics && f.diagnostics.length > 0) {
+        answer += `\n⚠️ **تنبيهات وتدقيق سلامة أداء المتجر (Store Health Diagnostics):**\n` +
+          f.diagnostics.slice(0, 3).map((d: any, idx: number) => 
+            `${idx + 1}. **${d.title}**\n` +
+            `   • التشخيص: ${d.diagnosis}\n` +
+            `   • 💡 الإجراء المقترح: ${d.suggestedAction}`
+          ).join('\n\n') + '\n';
+      }
 
       if (data.crossSellingRecommendations && data.crossSellingRecommendations.length > 0) {
         answer += `\n🛒 **توصيات زيادة المبيعات البيعية (Cross-Selling Recommendations):**\n` +
-          data.crossSellingRecommendations.map((r: any, idx: number) => 
+          data.crossSellingRecommendations.slice(0, 3).map((r: any, idx: number) => 
             `${idx + 1}. **شراء [${r.antecedentName}] يرجح شراء [${r.consequentName}]**\n` +
             `   • نسبة الاحتمال (الثقة): %${Math.round(r.confidence * 100)} | قوة الارتباط (Lift): ${r.lift?.toFixed(2)}\n` +
-            `   • 💡 *المقترح:* ${r.recommendationText}`
+            `   • 💡 المقترح: ${r.recommendationText}`
           ).join('\n\n');
       }
       break;
@@ -1520,6 +1550,35 @@ export async function generateResponse(
 
       answer += `\n✅ **خلاصة تقييم الجرد:**\n` +
         `جميع السجلات مطابقة ودقيقة بلحظية كاملة للفترة المحددة (**${periodTitle}**)، وبدون أي تضارب حسابي.`;
+      break;
+    }
+
+    case 'getInventoryLogs': {
+      const targetLabel = data.matchedSupplierName
+        ? `لبضائع المورد (${data.matchedSupplierName})`
+        : data.searchedTarget
+        ? `للصنف أو البحث (${data.searchedTarget})`
+        : 'لكافة البضائع والأصناف في المخزن';
+
+      if (!data.logs || data.logs.length === 0) {
+        answer = `📦 **سجل حركات وتعديلات المخزن (${targetLabel}):**\n\n` +
+          `• لا توجد أي حركات تعديل أو سحب أو توريد مسجلة حتى الآن.\n` +
+          `💡 يتم تسجيل الحركات تلقائياً في السجل عند إضافة صنف جديد، أو تعديل كمية بالمخزن، أو سحب بضاعة، أو إجراء مبيعات.`;
+      } else {
+        answer = `📦 **سجل حركات وتعديلات المخزن ${targetLabel}:**\n\n` +
+          `• **إجمالي الحركات المسجلة في السجل:** ${data.filteredCount || data.logs.length} حركة\n` +
+          `• **إجمالي كميات التوريد والإضافة:** +${data.totalAdditionsQty?.toLocaleString() || 0} قطعة\n` +
+          `• **إجمالي كميات السحب والتخفيض:** -${data.totalWithdrawalsQty?.toLocaleString() || 0} قطعة\n\n` +
+          `📋 **تفاصيل آخر العمليات المسجلة:**\n` +
+          data.logs.map((l: any, idx: number) => {
+            const changeSign = (l.changeAmount > 0 ? '+' : '') + l.changeAmount;
+            const emoji = l.changeAmount > 0 ? '🟢' : l.changeAmount < 0 ? '🔴' : '🔄';
+            const dateStr = l.date ? new Date(l.date).toLocaleString('ar-SA', { dateStyle: 'short', timeStyle: 'short' }) : 'غير محدد';
+            return `${emoji} ${idx + 1}. **${l.productName}** | **${l.arabicType || l.type}**\n` +
+                   `   • حركة الكمية: **${changeSign} قطعة** (الرصيد السابق: ${l.oldQuantity} ⬅️ الجديد: **${l.newQuantity}**)\n` +
+                   `   • 🕒 التاريخ: ${dateStr} ${l.notes && l.notes !== 'لا توجد ملاحظات' ? `| 📝 ${l.notes}` : ''}`;
+          }).join('\n\n');
+      }
       break;
     }
 

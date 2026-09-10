@@ -14,6 +14,7 @@ import {
   FileCheck,
   AlertCircle
 } from 'lucide-react';
+import { getApkDownloadUrl } from '../services/updateService';
 
 interface InstallAppModalProps {
   isOpen: boolean;
@@ -34,9 +35,11 @@ export const InstallAppModal: React.FC<InstallAppModalProps> = ({
 
   const handleDownloadAPK = () => {
     setDownloadStarted(true);
+    const downloadUrl = getApkDownloadUrl();
     const link = document.createElement('a');
-    link.href = '/smart_account.apk';
-    link.download = 'smart_account.apk';
+    link.href = downloadUrl;
+    link.target = '_blank';
+    link.download = 'app-release.apk';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

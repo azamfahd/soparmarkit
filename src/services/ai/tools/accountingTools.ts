@@ -2980,32 +2980,75 @@ export async function getSystemDictionaryExplanationTool(nluResult: NLUResult, _
 }
 
 /**
- * Inventory Logs & Movements Tool
+ * Inventory Logs & Movements Tool (سجل حركات وتعديلات المخزن والبضائع)
  */
 export async function getInventoryLogsTool(targetName?: string): Promise<Evidence> {
-  const logs = await db.inventoryLogs.toArray();
-  const products = await db.products.toArray();
-  const productMap = new Map(products.map(p => [p.id, p]));
+  const [logs, products, suppliers] = await Promise.all([
+    db.inventoryLogs.toArray(),
+    db.products.toArray(),
+    db.suppliers.toArray(),
+  ]);
 
+  const productMap = new Map(products.map(p => [p.id, p]));
   const effectiveTarget = targetName?.trim();
 
   let filteredLogs = logs;
+  let matchedSupplierName: string | undefined;
+
   if (effectiveTarget) {
-    const matchedProducts = products.filter(p => p.name.includes(effectiveTarget));
-    const matchedIds = new Set(matchedProducts.map(p => p.id));
-    filteredLogs = logs.filter(l => matchedIds.has(l.product_id) || (l.product_name && l.product_name.includes(effectiveTarget)));
+    // 1. Check if target matches a supplier
+    const matchedSupplier = suppliers.find(s => s.name.includes(effectiveTarget));
+    if (matchedSupplier) {
+      matchedSupplierName = matchedSupplier.name;
+      const supplierProductIds = new Set(products.filter(p => p.supplier_id === matchedSupplier.id).map(p => p.id));
+      filteredLogs = logs.filter(l => supplierProductIds.has(l.product_id));
+    } else {
+      // 2. Check if target matches product name
+      const matchedProducts = products.filter(p => p.name.includes(effectiveTarget));
+      const matchedIds = new Set(matchedProducts.map(p => p.id));
+      filteredLogs = logs.filter(l => matchedIds.has(l.product_id) || (l.product_name && l.product_name.includes(effectiveTarget)));
+    }
   }
 
-  const sortedLogs = filteredLogs.slice().reverse().slice(0, 25).map(l => {
+  const translateActionType = (rawReason?: string, changeAmount?: number) => {
+    const r = (rawReason || '').toLowerCase();
+    if (r === 'manual_update') {
+      return (changeAmount || 0) >= 0 ? 'توريد / إضافة كمية يدوية' : 'سحب يدوي من المخزن';
+    }
+    if (r === 'initial' || r === 'initial_stock') return 'رصيد افتتاحي للمخزون';
+    if (r === 'new_product') return 'إضافة صنف جديد';
+    if (r === 'edit_product') return 'تعديل بيانات الصنف';
+    if (r === 'sale') return 'فاتورة مبيعات';
+    if (r === 'refund' || r === 'return') return 'مرتجع مبيعات';
+    if (r === 'adjustment') return 'تسوية جردية';
+    if (r === 'damage' || r === 'waste') return 'توالف ومفقودات مخزنية';
+    if (r.includes('سحب')) return 'سحب كمية';
+    if (r.includes('تعديل')) return 'تعديل مخزني';
+    if (r.includes('اضافة') || r.includes('توريد')) return 'توريد وإضافة كمية';
+    return rawReason || 'تعديل مخزني';
+  };
+
+  let totalAdditionsQty = 0;
+  let totalWithdrawalsQty = 0;
+  filteredLogs.forEach(l => {
+    const ch = l.change_amount || 0;
+    if (ch > 0) totalAdditionsQty += ch;
+    else if (ch < 0) totalWithdrawalsQty += Math.abs(ch);
+  });
+
+  const sortedLogs = filteredLogs.slice().reverse().slice(0, 30).map(l => {
     const p = productMap.get(l.product_id);
+    const rawReason = l.type || l.reason;
+    const arabicType = translateActionType(rawReason, l.change_amount);
     return {
       productId: l.product_id,
       productName: p ? p.name : (l.product_name || `منتج #${l.product_id}`),
-      type: l.type || l.reason,
-      oldQuantity: l.old_quantity,
-      newQuantity: l.new_quantity,
-      changeAmount: l.change_amount,
-      notes: l.notes || 'لا توجد ملاحظات',
+      type: rawReason,
+      arabicType,
+      oldQuantity: l.old_quantity ?? 0,
+      newQuantity: l.new_quantity ?? 0,
+      changeAmount: l.change_amount ?? 0,
+      notes: l.notes && l.notes.trim() !== '' ? l.notes : 'لا توجد ملاحظات',
       date: l.created_at
     };
   });
@@ -3014,10 +3057,92 @@ export async function getInventoryLogsTool(targetName?: string): Promise<Evidenc
     source: 'INDEXED_DB',
     data: {
       totalLogsCount: logs.length,
+      filteredCount: filteredLogs.length,
+      searchedTarget: effectiveTarget,
+      matchedSupplierName,
+      totalAdditionsQty,
+      totalWithdrawalsQty,
       logs: sortedLogs,
     },
     metadata: { toolName: 'getInventoryLogs' },
   };
+}
+
+/**
+ * Consolidates a live system snapshot across all operational parts
+ */
+export async function getLiveSystemSnapshot(): Promise<any> {
+  try {
+    const [products, customers, suppliers, sales, debts, withdrawals, logs] = await Promise.all([
+      db.products.toArray(),
+      db.customers.toArray(),
+      db.suppliers.toArray(),
+      db.sales.toArray(),
+      db.debts.toArray(),
+      db.cashWithdrawals?.toArray() || Promise.resolve([]),
+      db.inventoryLogs.toArray(),
+    ]);
+
+    const totalProducts = products.length;
+    const lowStockCount = products.filter(p => (p.stock_quantity || 0) <= ((p as any).min_stock_alert || 5)).length;
+    const outOfStockCount = products.filter(p => (p.stock_quantity || 0) <= 0).length;
+
+    const totalInventoryCost = products.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.cost_price || 0)), 0);
+    const totalInventoryRetail = products.reduce((acc, p) => acc + ((p.stock_quantity || 0) * (p.sale_price || 0)), 0);
+
+    const indebtedCustomers = customers.filter(c => (c.balance || 0) > 0);
+    const totalCustomerDebts = indebtedCustomers.reduce((acc, c) => acc + (c.balance || 0), 0);
+
+    const creditorSuppliers = suppliers.filter(s => (s.balance || 0) > 0);
+    const totalSupplierDebts = creditorSuppliers.reduce((acc, s) => acc + (s.balance || 0), 0);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todaySales = sales.filter(s => s.created_at && s.created_at.startsWith(todayStr));
+    const todaySalesTotal = todaySales.reduce((acc, s) => acc + (s.total_amount || 0), 0);
+    const todayCashSales = todaySales.filter(s => s.payment_type === 'cash').reduce((acc, s) => acc + (s.total_amount || 0), 0);
+    const todayDebtSales = todaySales.filter(s => s.payment_type === 'debt').reduce((acc, s) => acc + (s.total_amount || 0), 0);
+
+    const allTimeSalesTotal = sales.reduce((acc, s) => acc + (s.total_amount || 0), 0);
+
+    return {
+      storeOverview: {
+        totalProducts,
+        lowStockCount,
+        outOfStockCount,
+        totalInventoryCost: Math.round(totalInventoryCost),
+        totalInventoryRetail: Math.round(totalInventoryRetail),
+      },
+      customersAndDebts: {
+        totalCustomers: customers.length,
+        indebtedCustomersCount: indebtedCustomers.length,
+        totalCustomerDebts: Math.round(totalCustomerDebts),
+        topDebtors: indebtedCustomers.sort((a, b) => (b.balance || 0) - (a.balance || 0)).slice(0, 3).map(c => ({ name: c.name, balance: c.balance })),
+      },
+      suppliersAndPayables: {
+        totalSuppliers: suppliers.length,
+        creditorSuppliersCount: creditorSuppliers.length,
+        totalSupplierDebts: Math.round(totalSupplierDebts),
+        topCreditors: creditorSuppliers.sort((a, b) => (b.balance || 0) - (a.balance || 0)).slice(0, 3).map(s => ({ name: s.name, balance: s.balance })),
+      },
+      salesMetrics: {
+        todaySalesTotal: Math.round(todaySalesTotal),
+        todayInvoicesCount: todaySales.length,
+        todayCashSales: Math.round(todayCashSales),
+        todayDebtSales: Math.round(todayDebtSales),
+        allTimeSalesTotal: Math.round(allTimeSalesTotal),
+        allTimeInvoicesCount: sales.length,
+      },
+      recentInventoryMovements: logs.slice(-5).reverse().map(l => ({
+        productName: l.product_name,
+        change: l.change_amount,
+        type: l.reason || l.type,
+        date: l.created_at
+      }))
+    };
+  } catch (err) {
+    console.warn('Failed to collect live snapshot:', err);
+    return null;
+  }
 }
 
 

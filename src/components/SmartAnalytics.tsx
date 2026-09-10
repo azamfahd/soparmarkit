@@ -78,8 +78,37 @@ import {
   CheckCircle2,
   AlertCircle,
   DollarSign,
-  Tag
+  Tag,
+  History,
+  PackagePlus,
+  PackageMinus,
+  ArrowUpDown,
+  PlusCircle,
+  MinusCircle
 } from 'lucide-react';
+
+// Arabic translation and formatting helper for inventory log reasons
+const getInventoryLogReasonArabic = (reason?: string, changeAmount?: number, notes?: string): string => {
+  if (!reason) return 'تعديل مخزني';
+  const r = reason.trim().toLowerCase();
+  
+  if (r === 'manual_update') {
+    if (changeAmount !== undefined && changeAmount < 0) return 'سحب يدوي من المخزن';
+    if (changeAmount !== undefined && changeAmount > 0) return 'توريد / إضافة كمية يدوية';
+    return 'تعديل وتحديث بيانات الصنف';
+  }
+  if (r === 'manual_withdraw' || r === 'withdraw') return 'سحب كمية من المخزن';
+  if (r === 'initial' || r === 'initial_stock') return 'رصيد افتتاحي للمخزون';
+  if (r === 'new_product') return 'إضافة صنف جديد ورصيد تأسيسي';
+  if (r === 'edit_product' || r === 'update_product') return 'تعديل بيانات وأسعار الصنف';
+  if (r === 'delete_product') return 'حذف الصنف من النظام';
+  if (r === 'sale') return 'فاتورة مبيعات';
+  if (r === 'refund' || r === 'return') return 'مرتجع مبيعات';
+  if (r === 'adjustment') return 'تسوية جردية';
+  if (r === 'damage') return 'توالف وخسائر مخزنية';
+
+  return reason;
+};
 
 interface SmartAnalyticsProps {
   currency: string;
@@ -511,8 +540,10 @@ export default function SmartAnalytics
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState<string>('all'); // 'all' or supplier.id
   const [supplierFilterType, setSupplierFilterType] = useState<'all' | 'due' | 'settled'>('all');
   const [selectedSupplierForDetails, setSelectedSupplierForDetails] = useState<any | null>(null);
-  const [supplierDetailsTab, setSupplierDetailsTab] = useState<'overview' | 'products' | 'payments'>('overview');
+  const [supplierDetailsTab, setSupplierDetailsTab] = useState<'overview' | 'products' | 'inventory_logs' | 'payments'>('overview');
   const [supplierProductSearch, setSupplierProductSearch] = useState('');
+  const [supplierLogSearch, setSupplierLogSearch] = useState('');
+  const [supplierLogTypeFilter, setSupplierLogTypeFilter] = useState<'all' | 'additions' | 'withdrawals' | 'updates'>('all');
 
   // --- Subscribing to live DB data ---
   const sales = useLiveQuery(() => db.sales.toArray()) || [];
@@ -1099,6 +1130,28 @@ export default function SmartAnalytics
         }
       });
 
+      // Supplier inventory updates and movements (excluding single retail sales transactions as requested)
+      const supplierLogs = inventoryLogs
+        .filter(log => {
+          if (!supplierProductIds.has(log.product_id)) return false;
+          const r = (log.reason || '').toLowerCase();
+          const t = (log.type || '').toLowerCase();
+          if (r === 'sale' || r === 'بيع' || r === 'مبيعات' || t === 'sale') return false;
+          return true;
+        })
+        .map(log => {
+          const prod = productMap.get(log.product_id);
+          return {
+            ...log,
+            productName: log.product_name || prod?.name || `منتج #${log.product_id}`,
+            barcode: prod?.barcode || '',
+            category: prod?.category || 'عام',
+            costPrice: prod?.cost_price || 0,
+            salePrice: prod?.sale_price || 0,
+          };
+        })
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
       // Total supplier capital entitlement = current stock at cost + sold items at cost
       const totalInventoryAndSoldCost = supplierInventoryCostValue + totalSoldCostValue;
       
@@ -1126,7 +1179,8 @@ export default function SmartAnalytics
         totalPaid,
         lastPaymentDate: lastPayment ? lastPayment.payment_date : null,
         totalSoldQuantity,
-        totalSoldValue
+        totalSoldValue,
+        inventoryLogs: supplierLogs
       };
     }).sort((a, b) => (b.balance || 0) - (a.balance || 0));
 
@@ -1178,7 +1232,7 @@ export default function SmartAnalytics
       activeViewMetrics,
       selectedSupplierObj
     };
-  }, [suppliers, products, supplierPayments, saleItems, productMap, selectedSupplierFilter]);
+  }, [suppliers, products, supplierPayments, saleItems, productMap, selectedSupplierFilter, inventoryLogs]);
 
   // Filtered Suppliers for directory search and category
   const filteredSupplierList = useMemo(() => {
@@ -1194,6 +1248,46 @@ export default function SmartAnalytics
       return true;
     });
   }, [supplierAnalytics.supplierList, supplierSearchKey, supplierFilterType]);
+
+  // Active supplier details for modal
+  const activeSupplierDetails = useMemo(() => {
+    if (!selectedSupplierForDetails) return null;
+    return supplierAnalytics.supplierList.find(s => s.id === selectedSupplierForDetails.id) || selectedSupplierForDetails;
+  }, [selectedSupplierForDetails, supplierAnalytics.supplierList]);
+
+  // Filtered supplier inventory logs
+  const filteredSupplierLogs = useMemo(() => {
+    if (!activeSupplierDetails) return [];
+    const logs = activeSupplierDetails.inventoryLogs || [];
+    return logs.filter((log: any) => {
+      const arabicReason = getInventoryLogReasonArabic(log.reason, log.change_amount, log.notes);
+      
+      // Search filter
+      const matchesSearch = !supplierLogSearch.trim() || 
+        (log.productName && log.productName.toLowerCase().includes(supplierLogSearch.toLowerCase())) ||
+        (arabicReason && arabicReason.toLowerCase().includes(supplierLogSearch.toLowerCase())) ||
+        (log.reason && log.reason.toLowerCase().includes(supplierLogSearch.toLowerCase())) ||
+        (log.notes && log.notes.toLowerCase().includes(supplierLogSearch.toLowerCase())) ||
+        (log.barcode && log.barcode.includes(supplierLogSearch));
+
+      if (!matchesSearch) return false;
+
+      // Type filter
+      const change = log.change_amount || 0;
+      const isInitial = log.reason && (log.reason.includes('افتتاحي') || log.reason.includes('إضافة أولى') || log.reason.includes('جديد') || log.reason === 'initial_stock' || log.reason === 'new_product' || log.reason === 'initial');
+      
+      if (supplierLogTypeFilter === 'additions') {
+        return change > 0;
+      }
+      if (supplierLogTypeFilter === 'withdrawals') {
+        return change < 0 || log.reason === 'manual_withdraw';
+      }
+      if (supplierLogTypeFilter === 'updates') {
+        return change === 0 || isInitial || (log.reason && (log.reason.includes('تحديث') || log.reason.includes('تعديل') || log.reason === 'manual_update' || log.reason === 'edit_product'));
+      }
+      return true;
+    });
+  }, [activeSupplierDetails, supplierLogSearch, supplierLogTypeFilter]);
 
   // --- Customers & Debts Overview Analytics ---
   const customerAnalytics = useMemo(() => {
@@ -2694,7 +2788,7 @@ export default function SmartAnalytics
 
       {/* MODAL: Comprehensive Supplier Analytics Details Modal */}
       <AnimatePresence>
-        {selectedSupplierForDetails && (
+        {activeSupplierDetails && (
           <div key="modal-supplier-analytics-details" className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-sm" dir="rtl">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -2711,20 +2805,22 @@ export default function SmartAnalytics
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="text-base sm:text-lg font-black text-white">
-                        {selectedSupplierForDetails.name}
+                        {activeSupplierDetails.name}
                       </h3>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                        selectedSupplierForDetails.balance > 0 
+                        activeSupplierDetails.balance > 0 
                           ? 'bg-amber-500/20 text-amber-300 border-amber-400/30' 
                           : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
                       }`}>
-                        {selectedSupplierForDetails.balance > 0 ? `مستحق: ${formatPrice(selectedSupplierForDetails.balance)}` : 'خالص / مسدد'}
+                        {activeSupplierDetails.balance > 0 ? `مستحق: ${formatPrice(activeSupplierDetails.balance)}` : 'خالص / مسدد'}
                       </span>
                     </div>
                     <p className="text-xs text-amber-200/80 mt-0.5 flex items-center gap-2">
-                      <span>الهاتف: {selectedSupplierForDetails.phone || 'بدون هاتف'}</span>
+                      <span>الهاتف: {activeSupplierDetails.phone || 'بدون هاتف'}</span>
                       <span>•</span>
-                      <span>الأصناف المربوطة: {selectedSupplierForDetails.productsCount} صنف</span>
+                      <span>الأصناف المربوطة: {activeSupplierDetails.productsCount} صنف</span>
+                      <span>•</span>
+                      <span>حركات التحديث: {activeSupplierDetails.inventoryLogs?.length || 0} عملية</span>
                     </p>
                   </div>
                 </div>
@@ -2739,8 +2835,8 @@ export default function SmartAnalytics
               </div>
 
               {/* Modal Interactive Tabs */}
-              <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
-                <div className="flex items-center gap-2">
+              <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <button
                     onClick={() => setSupplierDetailsTab('overview')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -2750,7 +2846,7 @@ export default function SmartAnalytics
                     }`}
                   >
                     <BarChart3 className="w-3.5 h-3.5" />
-                    <span>الموجز المالي الشامل</span>
+                    <span>الموجز المالي</span>
                   </button>
                   <button
                     onClick={() => setSupplierDetailsTab('products')}
@@ -2761,7 +2857,18 @@ export default function SmartAnalytics
                     }`}
                   >
                     <Package className="w-3.5 h-3.5" />
-                    <span>المنتجات والبضائع ({selectedSupplierForDetails.productsCount})</span>
+                    <span>المنتجات والبضائع ({activeSupplierDetails.productsCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setSupplierDetailsTab('inventory_logs')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      supplierDetailsTab === 'inventory_logs' 
+                        ? 'bg-amber-600 text-white shadow-xs' 
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    <span>حركات وتحديثات البضاعة ({activeSupplierDetails.inventoryLogs?.length || 0})</span>
                   </button>
                   <button
                     onClick={() => setSupplierDetailsTab('payments')}
@@ -2772,11 +2879,11 @@ export default function SmartAnalytics
                     }`}
                   >
                     <CreditCard className="w-3.5 h-3.5" />
-                    <span>سجل الدفعات والتسديدات ({selectedSupplierForDetails.payments.length})</span>
+                    <span>الدفعات ({activeSupplierDetails.payments.length})</span>
                   </button>
                 </div>
 
-                <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
+                <span className="text-[11px] font-bold text-slate-400 hidden md:inline">
                   كشف حساب تحليلي فوري
                 </span>
               </div>
@@ -2791,7 +2898,7 @@ export default function SmartAnalytics
                       <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl text-right">
                         <span className="text-[11px] font-bold text-amber-800 block">الرصيد المستحق للتسليم</span>
                         <div className="text-xl font-black text-amber-900 font-mono my-1">
-                          {formatPrice(selectedSupplierForDetails.balance)}
+                          {formatPrice(activeSupplierDetails.balance)}
                         </div>
                         <p className="text-[10px] text-amber-700">الذمة الدائنة القائمة</p>
                       </div>
@@ -2799,17 +2906,17 @@ export default function SmartAnalytics
                       <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl text-right">
                         <span className="text-[11px] font-bold text-slate-500 block">قيمة المخزون الحالي بسعر التكلفة</span>
                         <div className="text-xl font-black text-slate-800 font-mono my-1">
-                          {formatPrice(selectedSupplierForDetails.inventoryCostValue)}
+                          {formatPrice(activeSupplierDetails.inventoryCostValue)}
                         </div>
-                        <p className="text-[10px] text-slate-500">القيمة بسعر البيع: {formatPrice(selectedSupplierForDetails.inventoryRetailValue)}</p>
+                        <p className="text-[10px] text-slate-500">القيمة بسعر البيع: {formatPrice(activeSupplierDetails.inventoryRetailValue)}</p>
                       </div>
 
                       <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-2xl text-right">
                         <span className="text-[11px] font-bold text-emerald-800 block">إجمالي المسدد للمورد تاريخياً</span>
                         <div className="text-xl font-black text-emerald-700 font-mono my-1">
-                          {formatPrice(selectedSupplierForDetails.totalPaid)}
+                          {formatPrice(activeSupplierDetails.totalPaid)}
                         </div>
-                        <p className="text-[10px] text-emerald-700">عدد الدفعات المسجلة: {selectedSupplierForDetails.payments.length}</p>
+                        <p className="text-[10px] text-emerald-700">عدد الدفعات المسجلة: {activeSupplierDetails.payments.length}</p>
                       </div>
                     </div>
 
@@ -2820,25 +2927,25 @@ export default function SmartAnalytics
                         <div className="bg-white p-3 rounded-xl border border-slate-100">
                           <span className="text-[10px] text-slate-400 font-bold block">إجمالي مبيعات منتجاته</span>
                           <span className="text-sm font-black text-indigo-600 font-mono mt-0.5 block">
-                            {formatPrice(selectedSupplierForDetails.totalSoldValue)}
+                            {formatPrice(activeSupplierDetails.totalSoldValue)}
                           </span>
                         </div>
                         <div className="bg-white p-3 rounded-xl border border-slate-100">
                           <span className="text-[10px] text-slate-400 font-bold block">القطع المباعة للعملاء</span>
                           <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">
-                            {selectedSupplierForDetails.totalSoldQuantity} قطعة
+                            {activeSupplierDetails.totalSoldQuantity} قطعة
                           </span>
                         </div>
                         <div className="bg-white p-3 rounded-xl border border-slate-100">
                           <span className="text-[10px] text-slate-400 font-bold block">القطع المتوفرة بالرف</span>
                           <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">
-                            {selectedSupplierForDetails.inventoryStock} قطعة
+                            {activeSupplierDetails.inventoryStock} قطعة
                           </span>
                         </div>
                         <div className="bg-white p-3 rounded-xl border border-slate-100">
                           <span className="text-[10px] text-slate-400 font-bold block">آخر دفعة مسددة</span>
                           <span className="text-xs font-bold text-slate-700 font-mono mt-0.5 block truncate">
-                            {selectedSupplierForDetails.lastPaymentDate ? new Date(selectedSupplierForDetails.lastPaymentDate).toLocaleDateString('ar-SA') : 'لا يوجد'}
+                            {activeSupplierDetails.lastPaymentDate ? new Date(activeSupplierDetails.lastPaymentDate).toLocaleDateString('ar-SA') : 'لا يوجد'}
                           </span>
                         </div>
                       </div>
@@ -2848,7 +2955,28 @@ export default function SmartAnalytics
 
                 {/* TAB 2: PRODUCTS */}
                 {supplierDetailsTab === 'products' && (
-                  <div className="space-y-3">
+                  <div className="space-y-3.5">
+                    {/* Quick Link Banner to Inventory Logs */}
+                    <div className="bg-amber-50/90 border border-amber-200 p-3 rounded-2xl flex flex-wrap items-center justify-between gap-2 shadow-xs">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 bg-amber-200/60 rounded-xl text-amber-800 shrink-0">
+                          <History className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-amber-950 font-bold">سجل التوريدات وتحديثات المخزون والسحب</p>
+                          <p className="text-[11px] text-amber-800/90">يحتوي على تفاصيل زيادة الكميات، التعديلات، والسحب من المخزن ({activeSupplierDetails.inventoryLogs?.length || 0} حركة)</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSupplierDetailsTab('inventory_logs')}
+                        className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <span>عرض سجل الحركات</span>
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
                     <div className="flex justify-between items-center gap-2">
                       <div className="relative w-full sm:w-72">
                         <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2861,7 +2989,7 @@ export default function SmartAnalytics
                         />
                       </div>
                       <span className="text-xs text-slate-500 font-bold">
-                        {selectedSupplierForDetails.products.length} صنف مسجل
+                        {activeSupplierDetails.products.length} صنف مسجل
                       </span>
                     </div>
 
@@ -2879,7 +3007,7 @@ export default function SmartAnalytics
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {selectedSupplierForDetails.products
+                          {activeSupplierDetails.products
                             .filter((p: any) => !supplierProductSearch.trim() || p.name.toLowerCase().includes(supplierProductSearch.toLowerCase()) || (p.barcode && p.barcode.includes(supplierProductSearch)))
                             .map((p: any, idx: number) => {
                               const stockQty = p.stock_quantity || 0;
@@ -2908,17 +3036,209 @@ export default function SmartAnalytics
                   </div>
                 )}
 
-                {/* TAB 3: PAYMENTS */}
+                {/* TAB 3: INVENTORY LOGS (حركات وتحديثات البضاعة والسحب) */}
+                {supplierDetailsTab === 'inventory_logs' && (
+                  <div className="space-y-4">
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-2xl text-right">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-emerald-800">إجمالي كميات التوريد والإضافة</span>
+                          <PackagePlus className="w-4 h-4 text-emerald-600" />
+                        </div>
+                        <div className="text-xl font-black text-emerald-700 font-mono my-1">
+                          +{activeSupplierDetails.inventoryLogs?.filter((l: any) => (l.change_amount || 0) > 0).reduce((acc: number, l: any) => acc + (l.change_amount || 0), 0) || 0} قطعة
+                        </div>
+                        <p className="text-[10px] text-emerald-600">بضائع جديدة وتوريدات واردة للمخزن</p>
+                      </div>
+
+                      <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-right">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-rose-800">إجمالي كميات السحب والتوالف</span>
+                          <PackageMinus className="w-4 h-4 text-rose-600" />
+                        </div>
+                        <div className="text-xl font-black text-rose-700 font-mono my-1">
+                          {activeSupplierDetails.inventoryLogs?.filter((l: any) => (l.change_amount || 0) < 0).reduce((acc: number, l: any) => acc + (l.change_amount || 0), 0) || 0} قطعة
+                        </div>
+                        <p className="text-[10px] text-rose-600">سحب من المخزن أو تالف معتمد</p>
+                      </div>
+
+                      <div className="bg-blue-50 border border-blue-200 p-3.5 rounded-2xl text-right">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-blue-800">إجمالي عمليات التحديث</span>
+                          <History className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div className="text-xl font-black text-blue-700 font-mono my-1">
+                          {activeSupplierDetails.inventoryLogs?.length || 0} حركة
+                        </div>
+                        <p className="text-[10px] text-blue-600">سجل كامل للتوريد والسحب والتعديل (بدون مبيعات التجزئة)</p>
+                      </div>
+                    </div>
+
+                    {/* Search & Filter Bar */}
+                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center">
+                      <div className="relative flex-1">
+                        <Search className="w-3.5 h-3.5 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="ابحث باسم المنتج، السبب، الملاحظة..."
+                          value={supplierLogSearch}
+                          onChange={(e) => setSupplierLogSearch(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl pr-8 pl-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+                        <button
+                          type="button"
+                          onClick={() => setSupplierLogTypeFilter('all')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                            supplierLogTypeFilter === 'all'
+                              ? 'bg-slate-800 text-white'
+                              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          الكل ({activeSupplierDetails.inventoryLogs?.length || 0})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSupplierLogTypeFilter('additions')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                            supplierLogTypeFilter === 'additions'
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50'
+                          }`}
+                        >
+                          🟢 توريد وإضافة ({activeSupplierDetails.inventoryLogs?.filter((l: any) => (l.change_amount || 0) > 0).length || 0})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSupplierLogTypeFilter('withdrawals')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                            supplierLogTypeFilter === 'withdrawals'
+                              ? 'bg-rose-600 text-white'
+                              : 'bg-white text-rose-700 border border-rose-200 hover:bg-rose-50'
+                          }`}
+                        >
+                          🔴 سحب وتوالف ({activeSupplierDetails.inventoryLogs?.filter((l: any) => (l.change_amount || 0) < 0).length || 0})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSupplierLogTypeFilter('updates')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                            supplierLogTypeFilter === 'updates'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
+                          }`}
+                        >
+                          🔵 تحديثات وتعديلات ({activeSupplierDetails.inventoryLogs?.filter((l: any) => (l.change_amount || 0) === 0 || (l.reason && (l.reason.includes('تحديث') || l.reason.includes('تعديل') || l.reason === 'manual_update' || l.reason === 'edit_product' || l.reason === 'initial_stock' || l.reason === 'new_product'))).length || 0})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Logs Table */}
+                    {filteredSupplierLogs.length === 0 ? (
+                      <div className="bg-slate-50 rounded-2xl p-8 text-center text-xs text-slate-400 border border-slate-100">
+                        لا توجد حركات تحديث أو توريد أو سحب مسجلة لبضائع هذا المورد مطابقة للبحث المحدد.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto custom-scrollbar border border-slate-100 rounded-2xl">
+                        <table className="w-full text-right text-xs">
+                          <thead>
+                            <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                              <th className="p-3">التاريخ والوقت</th>
+                              <th className="p-3">المنتج / الصنف</th>
+                              <th className="p-3 text-center">نوع الحركة</th>
+                              <th className="p-3 text-center">الكمية والتغيير</th>
+                              <th className="p-3">البيان والسبب / تفاصيل التعديل</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredSupplierLogs.map((log: any, idx: number) => {
+                              const change = log.change_amount || 0;
+                              const isInitial = log.reason && (log.reason.includes('افتتاحي') || log.reason.includes('إضافة أولى') || log.reason.includes('جديد') || log.reason === 'initial_stock' || log.reason === 'new_product' || log.reason === 'initial');
+                              const isAddition = change > 0 && !isInitial;
+                              const isWithdrawal = change < 0 || log.reason === 'manual_withdraw';
+                              const arabicReason = getInventoryLogReasonArabic(log.reason, log.change_amount, log.notes);
+
+                              return (
+                                <tr key={`sup-log-${log.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors">
+                                  <td className="p-3 font-mono text-slate-600 whitespace-nowrap">
+                                    <div>{new Date(log.created_at).toLocaleDateString('ar-SA')}</div>
+                                    <div className="text-[10px] text-slate-400">{new Date(log.created_at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}</div>
+                                  </td>
+                                  <td className="p-3 font-bold text-slate-800">
+                                    <div>{log.productName}</div>
+                                    <div className="text-[10px] text-slate-400 font-normal font-mono">{log.barcode ? `باركود: ${log.barcode}` : (log.category || 'عام')}</div>
+                                  </td>
+                                  <td className="p-3 text-center whitespace-nowrap">
+                                    {isInitial ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                                        <Package className="w-3 h-3" />
+                                        <span>رصيد افتتاحي / صنف جديد</span>
+                                      </span>
+                                    ) : isAddition ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                        <PackagePlus className="w-3 h-3" />
+                                        <span>توريد / زيادة كمية</span>
+                                      </span>
+                                    ) : isWithdrawal ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                        <PackageMinus className="w-3 h-3" />
+                                        <span>سحب من المخزن / تالف</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                        <RefreshCw className="w-3 h-3" />
+                                        <span>تحديث بيانات / أسعار</span>
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-center whitespace-nowrap font-mono">
+                                    {log.old_quantity !== undefined && log.new_quantity !== undefined ? (
+                                      <div className="flex items-center justify-center gap-1.5 text-xs">
+                                        <span className="text-slate-400">{log.old_quantity}</span>
+                                        <span className="text-slate-300">➔</span>
+                                        <span className="font-bold text-slate-800">{log.new_quantity}</span>
+                                        <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
+                                          isAddition ? 'text-emerald-700 bg-emerald-50' : isWithdrawal ? 'text-rose-700 bg-rose-50' : isInitial ? 'text-purple-700 bg-purple-50' : 'text-slate-600 bg-slate-100'
+                                        }`}>
+                                          ({isAddition ? `+${change}` : change})
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className={`font-bold ${isAddition ? 'text-emerald-600' : isWithdrawal ? 'text-rose-600' : 'text-slate-700'}`}>
+                                        {isAddition ? `+${change}` : change} وحدة
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="p-3 text-slate-700 max-w-xs">
+                                    <div className="font-bold text-slate-800">{arabicReason}</div>
+                                    {log.notes && log.notes !== log.reason && log.notes !== 'manual_update' && log.notes !== 'edit_product' && (
+                                      <div className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-wrap">{log.notes}</div>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 4: PAYMENTS */}
                 {supplierDetailsTab === 'payments' && (
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
                       <h4 className="text-xs font-bold text-slate-800">سجل الدفعات المالية المسلمة للمورد</h4>
                       <span className="text-xs font-bold text-emerald-700">
-                        إجمالي المسدد: {formatPrice(selectedSupplierForDetails.totalPaid)}
+                        إجمالي المسدد: {formatPrice(activeSupplierDetails.totalPaid)}
                       </span>
                     </div>
 
-                    {selectedSupplierForDetails.payments.length === 0 ? (
+                    {activeSupplierDetails.payments.length === 0 ? (
                       <div className="bg-slate-50 rounded-2xl p-8 text-center text-xs text-slate-400">
                         لم يتم تسجيل أي دفعات مالية مسددة لهذا المورد حتى الآن.
                       </div>
@@ -2933,7 +3253,7 @@ export default function SmartAnalytics
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {selectedSupplierForDetails.payments.map((pmt: any, idx: number) => (
+                            {activeSupplierDetails.payments.map((pmt: any, idx: number) => (
                               <tr key={`sup-pmt-${pmt.id || idx}-${idx}`} className="hover:bg-slate-50 transition-colors">
                                 <td className="p-3 font-mono text-slate-700">
                                   {new Date(pmt.payment_date).toLocaleDateString('ar-SA')} {new Date(pmt.payment_date).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
@@ -2957,7 +3277,7 @@ export default function SmartAnalytics
               {/* Modal Footer */}
               <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
                 <span className="text-xs text-slate-500 font-medium">
-                  الرصيد المتبقي: <strong className="font-mono text-amber-900">{formatPrice(selectedSupplierForDetails.balance)}</strong>
+                  الرصيد المتبقي: <strong className="font-mono text-amber-900">{formatPrice(activeSupplierDetails.balance)}</strong>
                 </span>
                 <button
                   type="button"

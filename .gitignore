@@ -7,4 +7,9 @@ coverage/
 .env*
 !.env.example
 *.db
+*.apk
+*.aab
+android/app/build/
+android/.gradle/
+android/.idea/
 قاعدة بيانات النظام.json

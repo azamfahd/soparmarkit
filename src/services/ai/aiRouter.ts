@@ -232,7 +232,7 @@ export async function processUserQuery(
 
   const executionTimeMs = Math.round(performance.now() - startTime);
 
-  // Construct Explicit Multi-Stage Processing Pipeline Steps
+  // Construct Explicit Multi-Stage Processing Pipeline Steps (100% Local & Offline)
   const extractedEntitiesText = primaryNlu.entities.length > 0
     ? primaryNlu.entities.map(e => `${e.type}: ${e.value}`).join(', ')
     : 'لا توجد قيود محددة (استعلام عام)';
@@ -240,35 +240,35 @@ export async function processUserQuery(
   const processingStages: any[] = [
     {
       stageNumber: 1,
-      title: 'فهم القصد وتفكيك الاستعلام (NLU)',
-      description: 'تحليل المعنى اللغوي، تحديد النية المحاسبية، واستخراج الكيانات والمحددات',
+      title: 'فهم القصد وتفكيك الاستعلام (NLU المحلي)',
+      description: 'تحليل المعنى اللغوي، تحديد النية المحاسبية، واستخراج الكيانات عبر القواميس والقواعد المحلية المدمجة',
       status: 'completed',
       badge: `نية: ${primaryNlu.intent.name}`,
-      details: `• النية الميكانيكية: ${primaryNlu.intent.name} (دقة الفهم: ${Math.round(primaryNlu.intent.confidence * 100)}%)\n• المحدّدات والكيانات المستخرجة: [${extractedEntitiesText}]`
+      details: `• النية المحاسبية: ${primaryNlu.intent.name} (دقة الفهم: ${Math.round(primaryNlu.intent.confidence * 100)}%)\n• المحدّدات والكيانات المستخرجة: [${extractedEntitiesText}]`
     },
     {
       stageNumber: 2,
-      title: 'استرجاع البيانات الحقيقية والسياق (RAG & DB)',
-      description: 'الربط المباشر بقاعدة بيانات المتجر واستخراج الأدلة المؤكدة',
+      title: 'استرجاع البيانات الحقيقية من قاعدة البيانات المحلية (Dexie & DB)',
+      description: 'الربط المباشر بذاكرة المتجر المحلية واستخراج الأدلة المؤكدة بدون خوادم خارجية',
       status: 'completed',
       badge: `مسار: ${routeType}`,
-      details: `• مصدر البيانات المستخدم: ${routeType === 'HYBRID' ? 'دعم متقاطع (قاعدة البيانات + قاعدة المعرفة)' : routeType === 'KNOWLEDGE_RAG' ? 'قاعدة المعرفة والتعليمات' : 'دفتر الحسابات والجداول المحلية (IndexedDB)'}\n• عدد السجلات والأدلة الحسابية المعتمدة: ${evidence.length} سجل`
+      details: `• مصدر البيانات المستخدم: ${routeType === 'HYBRID' ? 'دعم متقاطع (قاعدة البيانات المحلية + دليل النظام)' : routeType === 'KNOWLEDGE_RAG' ? 'قاعدة المعرفة والتعليمات المحلية' : 'دفتر الحسابات والجداول المحلية (IndexedDB)'}\n• عدد السجلات والأدلة الحسابية المعتمدة: ${evidence.length} سجل`
     },
     {
       stageNumber: 3,
       title: 'التحليل الذكي، التدقيق، وتطابق الأرقام',
-      description: 'إجراء المقارنات المباشرة، فحص أسباب الفوارق، وتأكيد صحة النتائج',
+      description: 'إجراء المقارنات المباشرة، فحص أسباب الفوارق، وتأكيد صحة الموازنات محلياً',
       status: 'completed',
-      badge: 'تدقيق ذكي',
+      badge: 'محرك محلي 100%',
       details: `• تم مطابقة القيم الحسابية وفحص الموازنات للفترة المحددة.\n• التحقق من عدم وجود تناقض بين السندات المقيدة ورصيد الصندوق والديون.`
     },
     {
       stageNumber: 4,
-      title: 'صياغة الإجابة المباشرة الموثوقة',
-      description: 'إخراج النتيجة بصياغة واضحة ومباشرة تلائم احتياج المستخدم',
+      title: 'صياغة الإجابة المباشرة الموثوقة (Synthesis)',
+      description: 'إخراج التقرير الفوري المعتمد محلياً دون إرسال أي بيانات لخوادم خارجية',
       status: 'completed',
-      badge: `${executionTimeMs} ملي ثانية`,
-      details: `تم إنشاء الرد النهائي بدقة وسرعة معالجة عالية (${executionTimeMs}ms).`
+      badge: 'أمان وخصوصية تامة',
+      details: `• تم إنشاء الرد النهائي بدقة وسرعة معالجة عالية (${executionTimeMs}ms) محلياً بالكامل.`
     }
   ];
 

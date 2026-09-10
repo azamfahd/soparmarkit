@@ -312,7 +312,8 @@ export default function VisualModelsExtension({
           status: riskScore >= 70 ? 'عالي الخطورة' : riskScore >= 40 ? 'متوسط' : 'منخفض',
           color: riskScore >= 70 ? '#ef4444' : riskScore >= 40 ? '#f59e0b' : '#10b981',
         };
-      });
+      })
+      .sort((a, b) => b.riskScore - a.riskScore);
     return data;
   }, [customers, debts]);
 
@@ -753,7 +754,6 @@ export default function VisualModelsExtension({
 
                   <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
                     {customerDebtMatrix
-                      .sort((a, b) => b.riskScore - a.riskScore)
                       .map((c, idx) => (
                         <div key={`vm-cust-${c.id ?? idx}-${idx}`} className="bg-white p-3 rounded-xl border border-slate-200 text-xs flex items-center justify-between">
                           <div>

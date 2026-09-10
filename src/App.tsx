@@ -51,6 +51,7 @@ import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } fr
 import { InstallAppModal } from './components/InstallAppModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
+import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, getApkDownloadUrl } from './services/updateService';
 import { Scan, QrCode, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { 
   LayoutDashboard, 
@@ -981,26 +982,14 @@ export default function App() {
   };
 
   const handleDownloadAPK = () => {
-    const url = remoteAppConfig?.apkUrl || '/smart_account.apk';
-    const link = document.createElement('a');
-    link.href = url;
-    link.target = '_blank';
-    link.download = 'smart_account.apk';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showNotification('جاري بدء تنزيل التحديث...', 'success');
+    const url = remoteAppConfig?.apkUrl || getApkDownloadUrl();
+    downloadDirectAPK(url);
+    showNotification('جاري بدء تنزيل حزمة الـ APK المباشرة... (تثبيت آمن مع الاحتفاظ ببياناتك)', 'success');
   };
 
-  const handleUpdateAppNow = () => {
-    if (typeof window !== 'undefined') {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(regs => {
-          regs.forEach(reg => reg.update());
-        });
-      }
-      window.location.reload();
-    }
+  const handleUpdateAppNow = async () => {
+    showNotification('جاري تحديث واجهة النظام وتحديث الكاش المحلي فوراً...', 'success');
+    await applyOTAUpdate();
   };
 
   const [storeName, setStoreName] = useState<string>(() => {
@@ -1586,8 +1575,24 @@ export default function App() {
     }
   }, []);
 
-  // Subscribe to remote app version in Firebase
+  // Subscribe to remote app version in Firebase & Check Dual In-App Updates
   useEffect(() => {
+    // 1. Dual In-App update check via public/version.json & GitHub Releases
+    checkAppUpdates().then((res) => {
+      if (res.hasUpdate) {
+        setRemoteAppConfig({
+          latestVersion: res.latestVersion,
+          apkUrl: res.updateUrl,
+          updateMessage: res.releaseNotes,
+          mandatory: false,
+          updatedAt: new Date().toISOString()
+        });
+        setUpdateBannerMessage(res.releaseNotes);
+        setShowUpdateBanner(true);
+      }
+    }).catch(console.warn);
+
+    // 2. Fallback / Live Firebase version broadcast
     const unsub = subscribeToAppVersion((config) => {
       if (config) {
         setRemoteAppConfig(config);
@@ -6820,6 +6825,8 @@ export default function App() {
           key="global-update-notification-banner"
           show={showUpdateBanner}
           updateMessage={updateBannerMessage}
+          versionName={remoteAppConfig?.latestVersion}
+          isNativeAndroid={isNativeAndroid}
           onUpdateNow={handleUpdateAppNow}
           onDismiss={() => setShowUpdateBanner(false)}
           onDownloadAPK={handleDownloadAPK}

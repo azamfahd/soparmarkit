@@ -109,6 +109,90 @@ async function startServer() {
     }
   });
 
+  // AI Advisor Smart Chat Assistant Endpoint (الوكيل والمستشار الذكي الشامل للنظام)
+  app.post('/api/gemini/advisor', async (req, res) => {
+    try {
+      const { query, conversationHistory, liveBusinessContext, evidence, customApiKey } = req.body;
+      const apiKeyToUse = customApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKeyToUse) {
+        return res.status(400).json({ success: false, error: 'GEMINI_API_KEY_MISSING' });
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey: apiKeyToUse,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build'
+          }
+        }
+      });
+
+      const systemInstruction = `أنت الوكيل والمستشار المحاسبي والإداري الذكي المعتمد لمحل السوبرماركت والمتجر التجاري.
+تعمل كموظف مالي ومحاسبي محترف وخبير متواجد داخل النظام، مرتبط بكل جزء وعملية وحركة وقسم في البرنامج (المبيعات، المخزون وحركات التعديل والسحب والتوريد، ديون العملاء وسندات القبض، مستحقات الموردين وسندات الصرف، حركة الصندوق، التنبؤ المالي مع دراسة الحدود وهامش الخطأ، وكافة تقارير وإجراءات النظام).
+
+قواعد ومبادئ العمل الصارمة:
+1. الدقة والواقعية 100%: استند دائماً إلى الأرقام والسجلات الفعلية المزودة لك في سياق المتجر أدناه والأدلة المستخرجة من قاعدة البيانات المحلية. لا تخترع أرقاماً غير مسجلة.
+2. إذا سأل المستخدم عن التنبؤ المالي أو توقعات المبيعات للشهر القادم أو غيره:
+   - وضّح التوقع المعتدل
+   - اذكر الحدود الإحصائية بدقة: الحد الأدنى المتحفظ (الذي لا تنقص عنه المبيعات بإذن الله وفق التحليل بنسبة 95%)، والحد الأقصى المتفائل
+   - وضّح دراسة ومعالجة الأخطاء الإحصائية (الانحراف المعياري، معدل التقلب اليومي، دقة النموذج، وأيام الذروة)
+3. إذا سأل عن حركات المخزن أو السحب أو التوريد:
+   - اذكر الحركات المسجلة ونوعها (توريد وإضافة كميات، سحب يدوي، رصيد افتتاحي، تعديل، إلخ) مع الكميات قبل وبعد والتاريخ والملاحظات.
+4. إذا سأل عن كيفية عمل عملية في النظام (مثل إضافة صنف، تسجيل سداد، عمل جرد، طباعة فاتورة):
+   - اشرح له الخطوات المرتبة بوضوح ومباشرة كما في واجهات البرنامج.
+5. أسلوبك في الرد:
+   - لغة عربية فصحى راقية، واضحة، محترفة ومريحة.
+   - استخدم التنسيق المنظم (عناوين، نقاط، خط عريض، رموز تعبيرية هادفة).
+   - قدّم قيمة استشارية عملية وحلولاً مالية وتشغيلية تخدم مصلحة صاحب المتجر.`;
+
+      const contents: any[] = [];
+
+      // Include contextual business summary if provided
+      if (liveBusinessContext) {
+        contents.push({
+          text: `[سياق المتجر اللحظي والبيانات الشاملة للنظام]:\n${typeof liveBusinessContext === 'string' ? liveBusinessContext : JSON.stringify(liveBusinessContext, null, 2)}`
+        });
+      }
+
+      if (evidence && Array.isArray(evidence) && evidence.length > 0) {
+        contents.push({
+          text: `[الأدلة والسجلات المستخرجة من قاعدة البيانات المحلية ذات الصلة بالاستعلام]:\n${JSON.stringify(evidence, null, 2)}`
+        });
+      }
+
+      // Append conversation history (up to last 6 turns)
+      if (Array.isArray(conversationHistory)) {
+        for (const msg of conversationHistory.slice(-6)) {
+          if (msg.role && msg.content) {
+            contents.push({
+              text: `${msg.role === 'user' ? 'المستخدم' : 'المساعد المحاسبي'}: ${msg.content}`
+            });
+          }
+        }
+      }
+
+      // Add current query
+      contents.push({
+        text: `سؤال المستخدم الحالي:\n${query}`
+      });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents,
+        config: {
+          systemInstruction,
+          temperature: 0.25,
+        }
+      });
+
+      const answer = response.text || '';
+      return res.json({ success: true, answer });
+    } catch (err: any) {
+      console.error('Gemini advisor error:', err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
   // Smart Import
   app.post('/api/gemini/smart-import', async (req, res) => {
     try {

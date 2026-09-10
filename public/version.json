@@ -1,6 +1,16 @@
 {
-  "version": "1.0.1",
-  "build": 2,
-  "apkUrl": "/smart_account.apk",
-  "message": "يتوفر تحديث جديد لتطبيق الأندرويد يحتوي على إصلاحات وتحسينات جديدة."
+  "version": "1.0.4",
+  "versionCode": 4,
+  "buildNumber": 4,
+  "releaseDate": "2026-09-10",
+  "appName": "النظام المحاسبي الذكي",
+  "updateUrl": "https://github.com/azamfahd/smart-accounting-system/releases/download/latest/app-release.apk",
+  "minSupportedVersion": "1.0.0",
+  "releaseNotes": "تحديث تلقائي جديد للنظام المحاسبي: تحسينات الأداء، دعم التحديثات المزدوجة، والاحتفاظ الكامل بالبيانات.",
+  "features": [
+    "بناء سحابي أوتوماتيكي ومجاني لحزم الـ APK عبر GitHub Actions",
+    "نظام تحديث داخلي مزدوج (OTA للواجهات + تحديث مباشر لحزمة APK)",
+    "تثبيت مباشر فوق النسخة القديمة بدون مسح البيانات أو الفواتير",
+    "رابط تحميل مباشر ومستقر من GitHub Releases"
+  ]
 }
