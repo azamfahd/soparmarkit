@@ -45,7 +45,7 @@ export function getApkDownloadUrl(fallbackUrl?: string): string {
   if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APK_DOWNLOAD_URL) {
     return import.meta.env.VITE_APK_DOWNLOAD_URL;
   }
-  return fallbackUrl || 'https://github.com/azamfahd/smart-accounting-system/releases/download/latest/app-release.apk';
+  return fallbackUrl || 'https://github.com/azamfahd/soparmarkit/releases/download/latest/app-release.apk';
 }
 
 /**

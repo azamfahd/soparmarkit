@@ -43,6 +43,8 @@ jobs:
 
       - name: 4. Setup Android SDK Tools
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 13.0
 
       - name: 5. Cache Gradle Bundles
         uses: actions/cache@v4
@@ -54,8 +56,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: 6. Install Dependencies
-        run: npm install --legacy-peer-deps
+      - name: 6. Install Dependencies (Clean & Fast)
+        run: npm ci --prefer-offline || npm install --legacy-peer-deps
 
       - name: 7. Generate Version & Update Metadata
         env:
@@ -70,20 +72,22 @@ jobs:
 
       - name: 9. Sync Capacitor Android Project
         run: |
-          npx cap add android || true
           npx cap sync android
 
-      - name: 10. Generate Android Launcher Icons & Splash
+      - name: 10. Check & Generate Android Assets if Missing
         run: |
-          if [ -f scripts/generate-android-assets.js ]; then
+          if [ ! -f "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png" ] && [ -f scripts/generate-android-assets.js ]; then
+            echo "Assets not found, generating..."
             node scripts/generate-android-assets.js
+          else
+            echo "Android launcher & splash assets already prepared."
           fi
 
-      - name: 11. Compile Standalone Android APK (Gradle)
+      - name: 11. Compile Standalone Android APK (Gradle Optimized)
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon || ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon --build-cache --parallel
 
       - name: 12. Locate & Prepare Final APK Package
         id: apk_locator

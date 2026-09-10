@@ -4,7 +4,7 @@
   "buildNumber": 4,
   "releaseDate": "2026-09-10",
   "appName": "النظام المحاسبي الذكي",
-  "updateUrl": "https://github.com/azamfahd/smart-accounting-system/releases/download/latest/app-release.apk",
+  "updateUrl": "https://github.com/azamfahd/soparmarkit/releases/download/latest/app-release.apk",
   "minSupportedVersion": "1.0.0",
   "releaseNotes": "تحديث تلقائي جديد للنظام المحاسبي: تحسينات الأداء، دعم التحديثات المزدوجة، والاحتفاظ الكامل بالبيانات.",
   "features": [
