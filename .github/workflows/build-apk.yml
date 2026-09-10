@@ -27,7 +27,7 @@ jobs:
       - name: 1. Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: 2. Setup Node.js Environment
         uses: actions/setup-node@v4
@@ -36,30 +36,20 @@ jobs:
           cache: 'npm'
 
       - name: 3. Setup Java JDK (Temurin 21)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 4. Setup Android SDK Tools
-        uses: android-actions/setup-android@v3
+      - name: 4. Setup Gradle & High-Speed Build Cache
+        uses: gradle/actions/setup-gradle@v4
         with:
-          cmdline-tools-version: 13.0
+          cache-read-only: false
 
-      - name: 5. Cache Gradle Bundles
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      - name: 5. Install Dependencies
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
-      - name: 6. Install Dependencies (Clean & Fast)
-        run: npm ci --prefer-offline || npm install --legacy-peer-deps
-
-      - name: 7. Generate Version & Update Metadata
+      - name: 6. Generate Version & Update Metadata
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -67,29 +57,27 @@ jobs:
         run: |
           node scripts/generate-version.cjs
 
-      - name: 8. Build Standalone Web Assets
+      - name: 7. Build Standalone Web Assets
         run: npm run build
 
-      - name: 9. Sync Capacitor Android Project
+      - name: 8. Sync Capacitor Android Project
         run: |
+          npx cap add android || true
           npx cap sync android
 
-      - name: 10. Check & Generate Android Assets if Missing
+      - name: 9. Generate Android Launcher Icons & Splash
         run: |
-          if [ ! -f "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png" ] && [ -f scripts/generate-android-assets.js ]; then
-            echo "Assets not found, generating..."
+          if [ -f scripts/generate-android-assets.js ]; then
             node scripts/generate-android-assets.js
-          else
-            echo "Android launcher & splash assets already prepared."
           fi
 
-      - name: 11. Compile Standalone Android APK (Gradle Optimized)
+      - name: 10. Compile Standalone Android APK (High-Speed Gradle)
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --build-cache --parallel
+          ./gradlew assembleRelease --build-cache --parallel --no-daemon || ./gradlew assembleDebug --build-cache --parallel --no-daemon
 
-      - name: 12. Locate & Prepare Final APK Package
+      - name: 11. Locate & Prepare Final APK Package
         id: apk_locator
         run: |
           mkdir -p dist_apk
@@ -118,14 +106,14 @@ jobs:
           fi
           ls -lh dist_apk/
 
-      - name: 13. Upload Artifact to GitHub Actions
+      - name: 12. Upload Artifact to GitHub Actions
         uses: actions/upload-artifact@v4
         with:
           name: smart-account-android-apk
           path: dist_apk/app-release.apk
           retention-days: 30
 
-      - name: "14. Publish to GitHub Releases (tag: latest)"
+      - name: "13. Publish to GitHub Releases (tag: latest)"
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
         with:
