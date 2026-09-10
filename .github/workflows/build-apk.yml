@@ -121,7 +121,7 @@ jobs:
           path: dist_apk/app-release.apk
           retention-days: 30
 
-      - name: 14. Publish to GitHub Releases (tag: latest)
+      - name: "14. Publish to GitHub Releases (tag: latest)"
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
         with:
