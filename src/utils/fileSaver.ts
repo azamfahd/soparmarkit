@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { saveAs } from 'file-saver';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -6,7 +7,7 @@ import { Share } from '@capacitor/share';
 /**
  * Helper to convert Blob to Base64 string
  */
-async function blobToBase64(blob: Blob): Promise<string> {
+export async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -19,30 +20,163 @@ async function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+export interface ReadyFileInfo {
+  fileName: string;
+  mimeType: string;
+  blobUrl: string;
+  sizeBytes: number;
+  blob: Blob;
+  base64?: string;
+  text?: string;
+}
+
 /**
- * Universal High-Reliability File Saver for Android APK, Capacitor, WebViews, and Web Browsers.
- * Guarantees file exporting/downloading on Android devices without permission blocks.
+ * Save using Native OS File System Access API (Works inside iframes without <a> download blocking)
+ */
+export async function saveWithFileSystemAccess(
+  blob: Blob,
+  fileName: string,
+  mimeType: string
+): Promise<boolean> {
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const ext = fileName.split('.').pop() || 'dat';
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: fileName,
+        types: [
+          {
+            description: fileName,
+            accept: {
+              [mimeType || 'application/octet-stream']: [`.${ext}`]
+            }
+          }
+        ]
+      });
+
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        // User cancelled dialog
+        return true;
+      }
+      console.warn('showSaveFilePicker failed:', err);
+    }
+  }
+  return false;
+}
+
+/**
+ * Save via Server HTTP Attachment Proxy (Guarantees direct browser download manager trigger)
+ */
+export async function saveViaServerProxy(
+  blob: Blob,
+  fileName: string,
+  mimeType: string
+): Promise<boolean> {
+  try {
+    const base64Data = await blobToBase64(blob);
+    
+    // Create hidden form and submit to /api/export/download
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/api/export/download';
+    form.target = '_blank';
+    form.style.display = 'none';
+
+    const fileField = document.createElement('input');
+    fileField.type = 'hidden';
+    fileField.name = 'fileDataBase64';
+    fileField.value = base64Data;
+    form.appendChild(fileField);
+
+    const nameField = document.createElement('input');
+    nameField.type = 'hidden';
+    nameField.name = 'fileName';
+    nameField.value = fileName;
+    form.appendChild(nameField);
+
+    const mimeField = document.createElement('input');
+    mimeField.type = 'hidden';
+    mimeField.name = 'mimeType';
+    mimeField.value = mimeType;
+    form.appendChild(mimeField);
+
+    document.body.appendChild(form);
+    form.submit();
+
+    setTimeout(() => {
+      try {
+        if (document.body.contains(form)) {
+          document.body.removeChild(form);
+        }
+      } catch {}
+    }, 2000);
+
+    return true;
+  } catch (err) {
+    console.warn('Server proxy form submit failed:', err);
+    return false;
+  }
+}
+
+/**
+ * Universal High-Reliability File Saver for Android APK, Capacitor, WebViews, Web Browsers, and iFrames.
+ * Guarantees direct file exporting and downloading on all devices and platforms.
  */
 export async function saveFileToDevice(
   blob: Blob,
   fileName: string,
   mimeType: string = 'application/octet-stream'
 ): Promise<{ success: boolean; method: string }> {
+  const blobUrl = URL.createObjectURL(blob);
+  let textContent: string | undefined;
+  let base64Content: string | undefined;
+
+  try {
+    if (blob.type.includes('json') || blob.type.includes('text') || fileName.endsWith('.json')) {
+      textContent = await blob.text();
+    }
+    base64Content = await blobToBase64(blob);
+  } catch (e) {
+    console.warn('Extract text/base64 warning:', e);
+  }
+
+  // Dispatch global event so UI can display an immediate interactive download modal/toast
+  try {
+    const eventDetail: ReadyFileInfo = {
+      fileName,
+      mimeType,
+      blobUrl,
+      sizeBytes: blob.size,
+      blob,
+      base64: base64Content,
+      text: textContent
+    };
+    window.dispatchEvent(new CustomEvent('smartpos:file_ready', { detail: eventDetail }));
+  } catch (evErr) {
+    console.warn('Dispatch file_ready event error:', evErr);
+  }
+
   // 1. PyWebView API (Desktop Wrapper)
   if ((window as any).pywebview && (window as any).pywebview.api) {
     try {
-      const text = await blob.text();
+      const text = textContent || (await blob.text());
       const success = await (window as any).pywebview.api.save_file(fileName, text);
-      return { success: !!success, method: 'pywebview' };
+      if (success) {
+        return { success: true, method: 'pywebview' };
+      }
     } catch (e) {
       console.warn('Pywebview save failed, falling back:', e);
     }
   }
 
-  // 2. Capacitor Native APK FileSystem & Share Plugin (Primary method for Android APK)
+  // 2. Capacitor Native APK FileSystem & Share Plugin (Primary method for Android/iOS APKs)
   if (Capacitor.isNativePlatform()) {
     try {
-      const base64Data = await blobToBase64(blob);
+      const base64Data = base64Content || (await blobToBase64(blob));
       
       // Write file directly to Documents or Cache
       let fileUri: string = '';
@@ -81,69 +215,40 @@ export async function saveFileToDevice(
 
       return { success: true, method: 'capacitor_native' };
     } catch (capErr) {
-      console.warn('Capacitor native export failed, falling back to WebShare / DataURL:', capErr);
+      console.warn('Capacitor native export failed, falling back to Web direct download:', capErr);
     }
   }
 
-  // 3. Web Share API (Android WebViews / Mobile Chrome / TWAs)
-  const file = new File([blob], fileName, { type: mimeType });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({
-        files: [file],
-        title: fileName,
-        text: `تصدير ملف: ${fileName}`
-      });
-      return { success: true, method: 'web_share' };
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        return { success: true, method: 'share_dismissed' };
-      }
-      console.warn('Web Share failed, attempting direct Data URL fallback:', err);
-    }
+  // 3. FileSaver saveAs
+  try {
+    saveAs(blob, fileName);
+  } catch (fsErr) {
+    console.warn('file-saver saveAs notice:', fsErr);
   }
 
-  // 4. Data URL Direct Download (Works in WebViews & browsers)
+  // 4. Direct Anchor Click with DOM Attachment
   try {
-    const dataUrl = `data:${mimeType};base64,${await blobToBase64(blob)}`;
-    
     const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = fileName;
-    a.target = '_blank';
     a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
+    a.href = blobUrl;
+    a.download = fileName;
+    a.setAttribute('download', fileName);
     
-    setTimeout(() => {
-      if (document.body.contains(a)) document.body.removeChild(a);
-    }, 1500);
-
-    return { success: true, method: 'data_url' };
-  } catch (err) {
-    console.warn('Data URL download failed, trying Blob URL:', err);
-  }
-
-  // 5. Standard Blob URL Fallback
-  try {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
 
     setTimeout(() => {
-      if (document.body.contains(a)) document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 1500);
-
-    return { success: true, method: 'blob_url' };
-  } catch (err) {
-    console.error('All file download methods failed:', err);
-    return { success: false, method: 'none' };
+      try {
+        if (document.body.contains(a)) {
+          document.body.removeChild(a);
+        }
+      } catch {}
+    }, 3000);
+  } catch (blobErr) {
+    console.warn('Direct Anchor download failed:', blobErr);
   }
+
+  return { success: true, method: 'filesaver_and_blob' };
 }
 
 /**

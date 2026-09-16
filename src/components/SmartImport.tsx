@@ -27,7 +27,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { ExcelHubSection } from '../features/smart-import/ExcelHubSection';
 import { DatabaseHubSection } from '../features/smart-import/DatabaseHubSection';
-import { CloudSyncSection } from '../features/smart-import/CloudSyncSection';
 import { SmartImportGroup, SmartImportHubProps } from '../features/smart-import/types';
 
 type DataType = 'products' | 'customers' | 'suppliers' | 'mixed';
@@ -52,6 +51,7 @@ export default function SmartImport(props: SmartImportHubProps) {
     resetDatabase,
     showNotification,
     onOpenExcelSyncCenter,
+    onOpenSecureExport,
     deviceID,
     isActivated,
     trialDaysLeft,
@@ -86,12 +86,10 @@ export default function SmartImport(props: SmartImportHubProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadingMessages = [
-    "جاري الاتصال بالعقل الاصطناعي Gemini 3.5 لفك وتدقيق البيانات...",
-    "نقوم بتحليل وقراءة الصورة / المستند بدقة عالية...",
-    "تخمين الأسعار والتكلفة والكميات تلقائياً...",
-    "تحليل وتبويب الأصناف والمبيعات المحاسبية...",
-    "التأكد من سلامة كشوف الحسابات المرفقة...",
-    "بناء جدول مراجعة تفاعلي ذكي..."
+    "جاري تحليل وقراءة الأسطر والبيانات محلياً...",
+    "استخراج وفك الأرقام والأسماء وتصنيفها...",
+    "فحص التكلفة والبيع والكميات والباركود...",
+    "بناء جدول مراجعة وتدقيق البيانات المستخرجة..."
   ];
 
   const triggerClassicAnalysis = () => {
@@ -892,7 +890,7 @@ export default function SmartImport(props: SmartImportHubProps) {
 
         {/* Compact & Fully Visible Top Segmented Navigation Bar */}
         <div className="p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 shadow-2xs">
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {/* Tab 1: Excel */}
             <button
               type="button"
@@ -935,11 +933,11 @@ export default function SmartImport(props: SmartImportHubProps) {
               <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
                 activeGroup === 'database' ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
               }`}>
-                JSON & قرص
+                JSON & Excel
               </span>
             </button>
 
-            {/* Tab 3: OCR & AI */}
+            {/* Tab 3: Local Text & Invoice Parser */}
             <button
               type="button"
               onClick={() => setActiveGroup('ocr_ai')}
@@ -958,30 +956,7 @@ export default function SmartImport(props: SmartImportHubProps) {
               <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
                 activeGroup === 'ocr_ai' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
               }`}>
-                AI & كلاسيك
-              </span>
-            </button>
-
-            {/* Tab 4: Cloud Sync */}
-            <button
-              type="button"
-              onClick={() => setActiveGroup('cloud_sync')}
-              className={`flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                activeGroup === 'cloud_sync'
-                  ? 'bg-white text-blue-800 shadow-xs border border-blue-300 ring-1 ring-blue-400/20'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div className={`p-1.5 rounded-lg shrink-0 ${activeGroup === 'cloud_sync' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200/60 text-slate-500'}`}>
-                  <Cloud className="w-4 h-4" />
-                </div>
-                <span className="whitespace-nowrap font-black">المزامنة والربط السحابي 🌐</span>
-              </div>
-              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 whitespace-nowrap ${
-                activeGroup === 'cloud_sync' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-slate-200/50 text-slate-500 border-slate-300/60'
-              }`}>
-                اختياري
+                محلي أوفلاين
               </span>
             </button>
           </div>
@@ -994,6 +969,7 @@ export default function SmartImport(props: SmartImportHubProps) {
           showNotification={showNotification}
           onOpenExcelSyncCenter={onOpenExcelSyncCenter}
           onImportSuccess={onImported}
+          onOpenSecureExport={onOpenSecureExport}
         />
       )}
 
@@ -1014,6 +990,7 @@ export default function SmartImport(props: SmartImportHubProps) {
           forceLocalDiskBackup={forceLocalDiskBackup}
           resetDatabase={resetDatabase}
           showNotification={showNotification}
+          onOpenSecureExport={onOpenSecureExport}
         />
       )}
 
@@ -1156,77 +1133,12 @@ export default function SmartImport(props: SmartImportHubProps) {
           </div>
 
           {/* Quick tips & Trigger Right */}
-          <div className="md:col-span-5 flex flex-col justify-between space-y-6">
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white space-y-5 shadow-xl relative overflow-hidden">
-              <div className="absolute -top-12 -left-12 opacity-5">
-                <Sparkles className="w-48 h-48 text-violet-500 rotate-12" />
-              </div>
-              
-              {/* عنوان البطاقة الرئيسي */}
-              <div className="flex items-center gap-2.5 border-b border-white/10 pb-4">
-                <div className="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400">
-                  <Sparkles className="w-5 h-5 animate-pulse" />
-                </div>
-                <div>
-                  <h3 className="font-black text-xs text-violet-300">محركات وتقنيات الاستخراج الذكي ⚙️</h3>
-                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">تفاصيل المعالجة الهجينة المتاحة بالنظام ومزايا كل منها</p>
-                </div>
-              </div>
-
-              {/* المحرك الأول: الذكاء الاصطناعي */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-violet-450 animate-ping"></span>
-                  <p className="text-xs font-black text-slate-100 flex items-center gap-1">
-                    <span>1. عقل الذكاء الاصطناعي (Google Gemini 3.5)</span>
-                    <span className="text-[9px] bg-violet-900/60 text-violet-350 border border-violet-800/80 px-1.5 py-0.2 rounded-md font-extrabold">يحتاج إنترنت</span>
-                  </p>
-                </div>
-                <p className="text-[10px] text-slate-400 leading-relaxed pr-4">
-                  **آلية العمل:** يعتمد على الاتصال السحابي الآمن عبر قنوات بيانات مشفرة لإرسال الملفات والصور إلى نماذج اللغات الكبيرة وتحليلها محاسبياً بعمق مهني.
-                </p>
-                <div className="grid grid-cols-2 gap-2 pr-4 text-[10px]">
-                  <div className="bg-slate-800/40 p-2 rounded-xl border border-slate-700/30">
-                    <p className="text-violet-300 font-bold">🎯 قوة التفسير</p>
-                    <p className="text-slate-450 mt-0.5">قادر على فك تعقيدات خط اليد البشري والكشوف والصور الفوضوية للغاية.</p>
-                  </div>
-                  <div className="bg-slate-800/40 p-2 rounded-xl border border-slate-705/30 border-slate-700/30">
-                    <p className="text-violet-300 font-bold">🧠 الفهم الدلالي</p>
-                    <p className="text-slate-450 mt-0.5">يصنف السلعة لفرز المدينات أو الحسابات تلقائياً بدقة خبير محاسبي.</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* المحرك الثاني: المعالج المحلي بدون انترنت */}
-              <div className="space-y-2 pt-1">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                  <p className="text-xs font-black text-slate-100 flex items-center gap-1">
-                    <span>2. المفسر السلوكي المحلي (Offline OCR & Regex Compiler)</span>
-                    <span className="text-[9px] bg-emerald-950/60 text-emerald-400 border border-emerald-900 px-1.5 py-0.2 rounded-md font-extrabold">100% بدون إنترنت</span>
-                  </p>
-                </div>
-                <p className="text-[10px] text-slate-400 leading-relaxed pr-4">
-                  **آلية العمل:** خوارزميات محركات سريعة تجري محلياً داخل جهازك بالكامل دون إرسال أي أرقام أو بيانات خارج نطاق متصفحك، لضمان السرعة والسرية المطبقة.
-                </p>
-                <div className="grid grid-cols-2 gap-2 pr-4 text-[10px]">
-                  <div className="bg-slate-800/40 p-2 rounded-xl border border-slate-700/30">
-                    <p className="text-emerald-400 font-bold">🔒 سرية تامة وسرعة فائقة</p>
-                    <p className="text-slate-450 mt-0.5">أمان مطلق لبيانات عملائك ودفاتر ديونك مع معالجة لحظية بأجزاء من الثانية.</p>
-                  </div>
-                  <div className="bg-slate-800/40 p-2 rounded-xl border border-slate-700/30">
-                    <p className="text-emerald-400 font-bold">⚡ الذكاء الحسابي الوقائي</p>
-                    <p className="text-slate-450 mt-0.5">يفهم ألياً تضارب السعر لفرض (البيع دائماً أكبر من التكلفة) مع فرز فوري للجوال والباركود.</p>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
-            <div className="space-y-4">
-              <div className="bg-emerald-50/70 p-3 rounded-2xl border border-emerald-100/80 text-right animate-fadeIn">
-                <p className="text-[10px] text-emerald-800 font-bold leading-relaxed">
-                  💚 **المعالج الكلاسيكي الذكي**: يعمل محلياً بالكامل وفوراً **بدون اتصال بالإنترنت**. سيقوم بفك وحساب الأرقام، وتحديد أرقام الجوالات والباركود وتفصيل الأقسام بذكاء أوتوماتيكي متطور.
+          <div className="md:col-span-5 flex flex-col justify-between space-y-5">
+            {/* 1. Trigger button (moved to the top before the info card) */}
+            <div className="space-y-3.5">
+              <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-100/80 text-right animate-fadeIn shadow-2xs">
+                <p className="text-xs text-emerald-800 font-bold leading-relaxed">
+                  💚 <strong className="font-black">المعالج الكلاسيكي الذكي:</strong> يعمل محلياً بالكامل وفوراً <strong className="font-black">بدون اتصال بالإنترنت</strong>. يقوم بفك وحساب الأرقام، وتحديد أرقام الجوالات والباركود وتفصيل الأقسام بذكاء أوتوماتيكي متطور.
                 </p>
               </div>
 
@@ -1254,6 +1166,58 @@ export default function SmartImport(props: SmartImportHubProps) {
                 * لن يتم ترحيل أي بيانات إلى نظامك إلا بعد مراجعتك الكاملة للنتائج وتعديلها.
               </p>
             </div>
+
+            {/* 2. Technical engine details card */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 text-white space-y-4 shadow-xl relative overflow-hidden">
+              <div className="absolute -top-12 -left-12 opacity-5">
+                <Sparkles className="w-48 h-48 text-emerald-500 rotate-12" />
+              </div>
+              
+              {/* عنوان البطاقة الرئيسي */}
+              <div className="flex items-center gap-2.5 border-b border-white/10 pb-3.5">
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-xs text-emerald-300">محركات وتقنيات الاستخراج الذكي ⚙️</h3>
+                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">تفاصيل المحرك المحلي فائق السرعة والمزايا المتاحة 100% بدون إنترنت</p>
+                </div>
+              </div>
+
+              {/* المحرك المحلي بدون انترنت */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <p className="text-xs font-black text-slate-100 flex items-center gap-1">
+                    <span>المفسر والمحلل السلوكي المحلي (Offline Smart Parser)</span>
+                    <span className="text-[9px] bg-emerald-950/80 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded-md font-extrabold">100% أوفلاين</span>
+                  </p>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed pr-2">
+                  <strong className="text-white">آلية العمل:</strong> خوارزميات تحليل ونصوص متقدمة تجري محلياً داخل جهازك بالكامل دون إرسال أي أرقام أو بيانات خارج نطاق متصفحك، لضمان السرعة الفائقة والسرية التامة.
+                </p>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 text-[11px]">
+                  <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/50">
+                    <p className="text-emerald-400 font-black mb-1">🔒 سرية تامة وأمان 100%</p>
+                    <p className="text-slate-300 text-[10.5px] leading-relaxed">أمان مطلق لبيانات عملائك ودفاتر ديونك ومبيعاتك مع معالجة لحظية بأجزاء من الثانية.</p>
+                  </div>
+                  <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/50">
+                    <p className="text-emerald-400 font-black mb-1">⚡ الذكاء الحسابي الوقائي</p>
+                    <p className="text-slate-300 text-[10.5px] leading-relaxed">يفهم آلياً تضارب السعر لفرض (البيع دائماً أكبر من التكلفة) مع فرز فوري للجوال والباركود.</p>
+                  </div>
+                  <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/50">
+                    <p className="text-emerald-400 font-black mb-1">📋 كاشف الهيدر والجداول</p>
+                    <p className="text-slate-300 text-[10.5px] leading-relaxed">يتعرف تلقائياً على أعمدة إكسل المنسوخة (اسم، سعر بيع، شراء، مخزون، تصنيف، هاتف).</p>
+                  </div>
+                  <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/50">
+                    <p className="text-emerald-400 font-black mb-1">👑 دعم الاستيراد الخليط</p>
+                    <p className="text-slate-300 text-[10.5px] leading-relaxed">فرز ذكي للأصناف والعملاء والديون والموردين من نص واحد مجمع بضغطة واحدة.</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
           </div>
         </div>
       ) : (
@@ -1268,7 +1232,7 @@ export default function SmartImport(props: SmartImportHubProps) {
             <div>
               <h2 className="text-lg font-black text-slate-800 flex items-center gap-1.5">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                <span>مراجعة وتدقيق البيانات المستخرجة من العقل الاصطناعي</span>
+                <span>مراجعة وتدقيق البيانات المستخرجة محلياً</span>
               </h2>
               <p className="text-slate-400 text-xs font-bold mt-1">
                 الأسطر أدناه تم استخراجها ذكياً. يمكنك مراجعتها، تعديلها، أو إضافة سطور فارغة يدوياً وتدقيقها قبل التثبيت.
@@ -1758,19 +1722,6 @@ export default function SmartImport(props: SmartImportHubProps) {
         </motion.div>
       )}
       </div>
-      )}
-
-      {/* Group 4: Optional Cloud Sync */}
-      {activeGroup === 'cloud_sync' && (
-        <CloudSyncSection
-          deviceID={deviceID}
-          isActivated={isActivated}
-          trialDaysLeft={trialDaysLeft}
-          activationDetails={activationDetails}
-          handleRequestCloudActivation={handleRequestCloudActivation}
-          isSubmittingRequest={isSubmittingRequest}
-          setActiveTab={setActiveTab}
-        />
       )}
 
       {/* Dynamic Notifications */}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Download, 
@@ -12,7 +12,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  FileJson
+  FileJson,
+  Lock,
+  FileText,
+  KeyRound,
+  Shield
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -27,6 +31,7 @@ export interface BackupOptionsModalProps {
   lastBackupDate: string | null;
   isBackupOverdue?: boolean;
   onOpenSmartImportHub?: () => void;
+  onOpenSecureExport?: () => void;
 }
 
 export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
@@ -38,7 +43,10 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
   lastBackupDate,
   isBackupOverdue = false,
   onOpenSmartImportHub,
+  onOpenSecureExport
 }) => {
+  const [activeMode, setActiveMode] = useState<'standard' | 'secure'>('standard');
+
   if (!isOpen) return null;
 
   const handleExportExcel = async () => {
@@ -79,7 +87,7 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
                   )}
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
-                  اختر التنسيق المناسب لحفظ أو تصدير بيانات متجرك محلياً 100%
+                  اختر التنسيق ونوع الحماية لحفظ بيانات متجرك محلياً 100%
                 </p>
               </div>
             </div>
@@ -89,6 +97,46 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
             >
               <X className="w-5 h-5" />
             </button>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div className="px-4 sm:px-5 pt-3">
+            <div className="grid grid-cols-2 p-1 bg-slate-100/90 rounded-2xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setActiveMode('standard')}
+                className={`py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  activeMode === 'standard'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-600" />
+                <span>تصدير عادي وسريع</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenSecureExport) {
+                    onClose();
+                    onOpenSecureExport();
+                  } else {
+                    setActiveMode('secure');
+                  }
+                }}
+                className={`py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  activeMode === 'secure'
+                    ? 'bg-white text-emerald-800 shadow-xs ring-1 ring-emerald-300'
+                    : 'text-emerald-700 hover:text-emerald-900'
+                }`}
+              >
+                <Lock className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="flex items-center gap-1">
+                  تصدير محمي برمز 🔐
+                  <span className="text-[9px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded-full">جديد</span>
+                </span>
+              </button>
+            </div>
           </div>
 
           {/* Body */}
@@ -123,6 +171,28 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
                     })
                   : 'لم يتم أخذ نسخة حتى الآن'}
               </span>
+            </div>
+
+            {/* Special Promo for Protected Export */}
+            <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-indigo-500/10 border border-emerald-200/80 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-600 text-white shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h5 className="font-black text-xs text-slate-800">هل ترغب في قفل ملفاتك برمز سري؟</h5>
+                  <p className="text-[11px] text-slate-500">تشفير AES-256 وقفل ملفات Excel و Word برمز أمان</p>
+                </div>
+              </div>
+              <Button
+                onClick={() => {
+                  onClose();
+                  onOpenSecureExport?.();
+                }}
+                className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl cursor-pointer shrink-0"
+              >
+                تخصيص الرمز 🔒
+              </Button>
             </div>
 
             {/* Main Export Options Cards */}
@@ -195,9 +265,9 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
               <div className="flex items-center justify-between">
                 <span className="font-bold text-xs text-slate-700 flex items-center gap-1.5">
                   <Upload className="w-3.5 h-3.5 text-slate-500" />
-                  <span>استرجاع واستيراد قاعدة بيانات:</span>
+                  <span>استرجاع واستيراد قاعدة بيانات (عادية أو مشفرة):</span>
                 </span>
-                <span className="text-[10px] text-slate-400 font-medium">ملفات JSON و Excel (.xlsx)</span>
+                <span className="text-[10px] text-slate-400 font-medium">ملفات JSON, Excel, Word</span>
               </div>
 
               {window.pywebview && window.pywebview.api ? (
@@ -216,7 +286,7 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
                 <div className="relative">
                   <input
                     type="file"
-                    accept=".json,.xlsx,.xls"
+                    accept=".json,.xlsx,.xls,.doc,.smartpos"
                     onChange={(e) => {
                       importData(e);
                       onClose();
@@ -228,28 +298,11 @@ export const BackupOptionsModal: React.FC<BackupOptionsModalProps> = ({
                     className="w-full flex items-center justify-center gap-1.5 text-xs py-2 text-slate-700 border-slate-300 hover:bg-white cursor-pointer"
                   >
                     <Upload className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>اختيار ملف JSON أو Excel لاسترجاعه وتدقيقه تلقائياً</span>
+                    <span>اختيار ملف JSON أو Excel أو مشفر لاسترجاعه وتدقيقه تلقائياً</span>
                   </Button>
                 </div>
               )}
             </div>
-
-            {/* Hub link */}
-            {onOpenSmartImportHub && (
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenSmartImportHub();
-                }}
-                className="w-full flex items-center justify-between p-3 rounded-2xl bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-100 hover:border-violet-300 text-violet-800 transition-all text-xs font-bold cursor-pointer group"
-              >
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
-                  <span>فتح مركز الاستيراد، مزامنة Excel، وقاعدة البيانات الشامل</span>
-                </div>
-                <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-              </button>
-            )}
           </div>
 
           {/* Footer */}

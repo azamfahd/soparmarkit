@@ -647,11 +647,30 @@ export async function downloadExcelTemplate(): Promise<void> {
 }
 
 /**
+ * Records the current timestamp as lastBackupDate in Dexie settings
+ */
+export async function recordBackupDate(): Promise<string> {
+  const now = new Date().toISOString();
+  try {
+    const existing = await db.settings.where('key').equals('lastBackupDate').first();
+    if (existing && existing.id) {
+      await db.settings.update(existing.id, { value: now });
+    } else {
+      await db.settings.add({ key: 'lastBackupDate', value: now });
+    }
+  } catch (err) {
+    console.error('Failed to update lastBackupDate in db.settings:', err);
+  }
+  return now;
+}
+
+/**
  * Manual Download of full accounting database to Excel (.xlsx)
  */
 export async function downloadExcelBackupManual(): Promise<void> {
   const wb = await generateWorkbookFromDatabase();
   await downloadWorkbook(wb, `قاعدة_البيانات_المحاسبية_إكسل_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  await recordBackupDate();
 }
 
 /**

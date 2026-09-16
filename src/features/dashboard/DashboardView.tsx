@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import { motion } from 'motion/react';
 import { 
   ShoppingCart, 
@@ -17,7 +17,10 @@ import {
   PieChart, 
   Database, 
   AlertCircle, 
-  ChevronLeft 
+  ChevronLeft,
+  Settings,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, CartesianGrid, XAxis, YAxis, Tooltip, Bar, Cell, LabelList } from 'recharts';
 import { Card } from '../../components/ui/Card';
@@ -44,6 +47,8 @@ interface DashboardViewProps {
   onOpenBackupOptions?: () => void;
   isBackupOverdue?: boolean;
   verifyAdminPermission: (action: string, callback: () => void, title: string) => void;
+  permissionsEnabled?: boolean;
+  protectedActions?: Record<string, boolean>;
   setSalesDetailsTab: (tab: 'days' | 'weeks' | 'months') => void;
   setShowMonthlySalesDetailsModal: (show: boolean) => void;
   setShowSalesSummaryModal: (show: boolean) => void;
@@ -70,6 +75,8 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   onOpenBackupOptions,
   isBackupOverdue,
   verifyAdminPermission,
+  permissionsEnabled,
+  protectedActions,
   setSalesDetailsTab,
   setShowMonthlySalesDetailsModal,
   setShowSalesSummaryModal,
@@ -85,6 +92,24 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
   yearlySalesTrend,
   topProducts,
 }) => {
+  const [unlockedSections, setUnlockedSections] = useState<Record<string, boolean>>({});
+
+  const isStatsHidden = Boolean(permissionsEnabled && protectedActions?.hide_dashboard_stats && !unlockedSections['stats']);
+  const isChartsHidden = Boolean(permissionsEnabled && protectedActions?.hide_dashboard_charts && !unlockedSections['charts']);
+  const isAlertsHidden = Boolean(permissionsEnabled && protectedActions?.hide_dashboard_alerts && !unlockedSections['alerts']);
+  const isTopProductsHidden = Boolean(permissionsEnabled && protectedActions?.hide_dashboard_top_products && !unlockedSections['top_products']);
+
+  const handleUnlockSection = (sectionKey: string, actionType: string, title: string, onDone?: () => void) => {
+    verifyAdminPermission(actionType, () => {
+      setUnlockedSections(prev => ({ ...prev, [sectionKey]: true }));
+      if (onDone) onDone();
+    }, title);
+  };
+
+  const renderStatValue = (val: number) => {
+    if (isStatsHidden) return '🔒 *****';
+    return formatPrice(val);
+  };
   return (
     <motion.div 
       key="dashboard"
@@ -103,7 +128,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
           </h2>
         </div>
 
-        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-11 gap-1.5 sm:gap-2 w-full">
+        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-12 gap-1.5 sm:gap-2 w-full">
           {/* 1. المبيعات */}
           <motion.button 
             whileHover={{ y: -1.5 }}
@@ -229,9 +254,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                 setActiveTab('analytics');
               }, '📊 صلاحية التقارير والتحليلات');
             }} 
-            className="p-1.5 sm:p-2 rounded-xl bg-cyan-50/90 hover:bg-cyan-100 border border-cyan-200 border-b-[2.5px] border-b-cyan-400 shadow-2xs flex flex-col items-center justify-center gap-1 active:border-b-cyan-300 active:translate-y-0.5 transition-all group cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-xl bg-cyan-50/90 hover:bg-cyan-100 border border-cyan-200 border-b-[2.5px] border-b-cyan-400 shadow-2xs flex flex-col items-center justify-center gap-1 active:border-b-cyan-300 active:translate-y-0.5 transition-all group cursor-pointer relative"
             title="تحليلات الأرباح والمبيعات والمؤشرات"
           >
+            {Boolean(permissionsEnabled && protectedActions?.analytics) && (
+              <span className="absolute top-1 left-1 bg-amber-100 text-amber-800 rounded p-0.5 border border-amber-300/80 shadow-2xs">
+                <Lock className="w-2.5 h-2.5" />
+              </span>
+            )}
             <div className="w-6 h-6 sm:w-7 sm:h-7 bg-cyan-500/15 rounded-lg flex items-center justify-center group-hover:bg-cyan-600 group-hover:text-white transition-colors">
               <BarChart3 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-cyan-700 group-hover:text-white transition-colors" />
             </div>
@@ -247,9 +277,14 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                 setActiveTab('smart-import');
               }, '✨ صلاحية الاستيراد الذكي (AI)');
             }} 
-            className="p-1.5 sm:p-2 rounded-xl bg-violet-50/90 hover:bg-violet-100 border border-violet-200 border-b-[2.5px] border-b-violet-400 shadow-2xs flex flex-col items-center justify-center gap-1 active:border-b-violet-300 active:translate-y-0.5 transition-all group cursor-pointer"
+            className="p-1.5 sm:p-2 rounded-xl bg-violet-50/90 hover:bg-violet-100 border border-violet-200 border-b-[2.5px] border-b-violet-400 shadow-2xs flex flex-col items-center justify-center gap-1 active:border-b-violet-300 active:translate-y-0.5 transition-all group cursor-pointer relative"
             title="الاستيراد الذكي، ملفات Excel، وإدارة قاعدة البيانات"
           >
+            {Boolean(permissionsEnabled && protectedActions?.smart_import) && (
+              <span className="absolute top-1 left-1 bg-amber-100 text-amber-800 rounded p-0.5 border border-amber-300/80 shadow-2xs">
+                <Lock className="w-2.5 h-2.5" />
+              </span>
+            )}
             <div className="w-6 h-6 sm:w-7 sm:h-7 bg-violet-500/15 rounded-lg flex items-center justify-center group-hover:bg-violet-600 group-hover:text-white transition-colors">
               <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-violet-700 group-hover:text-white transition-colors" />
             </div>
@@ -283,29 +318,87 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               {isBackupOverdue ? 'احتياطية ⚠️' : 'احتياطية'}
             </span>
           </motion.button>
+
+          {/* 12. الإعدادات */}
+          <motion.button 
+            whileHover={{ y: -1.5 }}
+            whileTap={{ scale: 0.96 }}
+            onClick={() => {
+              verifyAdminPermission('settings', () => {
+                setActiveTab('settings');
+              }, '⚙️ صلاحية إعدادات النظام');
+            }} 
+            className="p-1.5 sm:p-2 rounded-xl bg-slate-100/90 hover:bg-slate-200 border border-slate-300 border-b-[2.5px] border-b-slate-400 shadow-2xs flex flex-col items-center justify-center gap-1 active:border-b-slate-300 active:translate-y-0.5 transition-all group cursor-pointer relative"
+            title="إعدادات النظام، التفعيل، وطباعة الفواتير والعملة"
+          >
+            {Boolean(permissionsEnabled && protectedActions?.settings) && (
+              <span className="absolute top-1 left-1 bg-amber-100 text-amber-800 rounded p-0.5 border border-amber-300/80 shadow-2xs">
+                <Lock className="w-2.5 h-2.5" />
+              </span>
+            )}
+            <div className="w-6 h-6 sm:w-7 sm:h-7 bg-slate-500/15 rounded-lg flex items-center justify-center group-hover:bg-slate-700 group-hover:text-white transition-colors">
+              <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-700 group-hover:text-white transition-colors" />
+            </div>
+            <span className="font-black text-[9px] sm:text-[10px] text-slate-950 group-hover:text-slate-950 transition-colors text-center">الإعدادات</span>
+          </motion.button>
         </div>
       </div>
+
+      {isStatsHidden && (
+        <div className="bg-slate-900 text-white p-3.5 sm:p-4 rounded-2xl border border-slate-800 shadow-md flex flex-col sm:flex-row justify-between items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-slate-800 rounded-xl text-emerald-400 border border-slate-700">
+              <Lock className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="font-black text-xs sm:text-sm text-slate-100 block">الإحصائيات والأرقام المالية محجوبة 🔒</span>
+              <span className="text-[10px] sm:text-xs text-slate-400 font-bold block">تم حجب الأرقام المالية بالصفحة الرئيسية لحماية خصوصية المحل</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية')}
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black rounded-xl text-xs transition-all cursor-pointer shadow-md flex items-center gap-1.5 shrink-0"
+          >
+            <Unlock className="w-4 h-4" />
+            <span>عرض الإحصائيات برمز المدير 🔓</span>
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-700 text-white shadow-xs shadow-emerald-200/50 border border-emerald-500 col-span-2 md:col-span-1 cursor-pointer hover:shadow-md transition-all duration-200"
-          onClick={() => setActiveTab('history')}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setActiveTab('history'));
+            } else {
+              setActiveTab('history');
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <ShoppingCart className="w-4 h-4 opacity-90" />
             <span className="text-[9px] sm:text-[10px] font-black bg-white/25 px-1.5 py-0.5 rounded-md text-white shadow-2xs">اليوم</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-emerald-100 mt-0.5">المبيعات اليومية</p>
-          <p className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">{formatPrice(summary.todaySales)}</p>
+          <p className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">{renderStatValue(summary.todaySales)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-white border border-slate-200/90 shadow-2xs cursor-pointer hover:border-indigo-400 hover:shadow-xs transition-all duration-200"
           onClick={() => {
-            setSalesDetailsTab('months');
-            setShowMonthlySalesDetailsModal(true);
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => {
+                setSalesDetailsTab('months');
+                setShowMonthlySalesDetailsModal(true);
+              });
+            } else {
+              setSalesDetailsTab('months');
+              setShowMonthlySalesDetailsModal(true);
+            }
           }}
         >
           <div className="flex justify-between items-start mb-0.5">
@@ -313,89 +406,127 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
             <span className="text-[9px] sm:text-[10px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200 px-1.5 py-0.5 rounded-md">الشهر 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-slate-600 mt-0.5">مبيعات الشهر بسعر البيع</p>
-          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{formatPrice(summary.monthlySales)}</p>
+          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{renderStatValue(summary.monthlySales)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-white border border-slate-200/90 shadow-2xs cursor-pointer hover:border-blue-400 hover:shadow-xs transition-all"
-          onClick={() => setShowSalesSummaryModal(true)}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setShowSalesSummaryModal(true));
+            } else {
+              setShowSalesSummaryModal(true);
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <ShoppingCart className="w-4 h-4 text-blue-600" />
             <span className="text-[9px] sm:text-[10px] font-black bg-blue-100 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded-md">الكلي 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-slate-600 mt-0.5">إجمالي المبيعات بسعر البيع</p>
-          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{formatPrice(summary.totalSales)}</p>
+          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{renderStatValue(summary.totalSales)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-slate-900 text-white shadow-xs cursor-pointer hover:bg-slate-800 hover:border-emerald-500/80 border border-slate-800 hover:shadow-md transition-all duration-200"
-          onClick={() => setShowProfitSummaryModal(true)}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setShowProfitSummaryModal(true));
+            } else {
+              setShowProfitSummaryModal(true);
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <PieChart className="w-4 h-4 text-emerald-400" />
             <span className="text-[9px] sm:text-[10px] font-black bg-emerald-500/20 px-1.5 py-0.5 rounded-md text-emerald-300 border border-emerald-500/30">تفاصيل 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-slate-300 mt-0.5">صافي الأرباح المحققة</p>
-          <p className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">{formatPrice(summary.totalProfit)}</p>
+          <p className="text-lg sm:text-xl font-black text-white tracking-tight mt-0.5">{renderStatValue(summary.totalProfit)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-white border border-slate-200/90 shadow-2xs cursor-pointer hover:border-emerald-400 hover:shadow-xs transition-all"
-          onClick={() => setShowInventoryDetailsModal(true)}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setShowInventoryDetailsModal(true));
+            } else {
+              setShowInventoryDetailsModal(true);
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <Database className="w-4 h-4 text-emerald-600" />
             <span className="text-[9px] sm:text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded-md">تفاصيل كاملة 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-slate-600 mt-0.5">تكلفة المخزون</p>
-          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{formatPrice(summary.totalInventoryCost)}</p>
+          <p className="text-lg sm:text-xl font-black text-slate-900 tracking-tight mt-0.5">{renderStatValue(summary.totalInventoryCost)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-amber-50/90 border border-amber-200 shadow-2xs cursor-pointer hover:bg-amber-100/70 hover:border-amber-400 transition-all"
-          onClick={() => setShowSupplierSummaryModal(true)}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setShowSupplierSummaryModal(true));
+            } else {
+              setShowSupplierSummaryModal(true);
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <Briefcase className="w-4 h-4 text-amber-700" />
             <span className="text-[9px] sm:text-[10px] font-black bg-amber-200/80 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded-md">تسوية 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-amber-800 mt-0.5">مستحق المورد (بالتكلفة)</p>
-          <p className="text-lg sm:text-xl font-black text-amber-950 tracking-tight mt-0.5">{formatPrice(summary.totalCostOfSales)}</p>
+          <p className="text-lg sm:text-xl font-black text-amber-950 tracking-tight mt-0.5">{renderStatValue(summary.totalCostOfSales)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-red-50/90 border border-red-200 shadow-2xs cursor-pointer hover:bg-red-100 hover:border-red-400 transition-colors" 
-          onClick={() => setActiveTab('customers')}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => setActiveTab('customers'));
+            } else {
+              setActiveTab('customers');
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <AlertCircle className="w-4 h-4 text-red-600" />
             <span className="text-[9px] sm:text-[10px] font-black bg-red-200/80 text-red-900 border border-red-300 px-1.5 py-0.5 rounded-md">تراكمي</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-red-800 mt-0.5">إجمالي الديون</p>
-          <p className="text-lg sm:text-xl font-black text-red-950 tracking-tight mt-0.5">{formatPrice(summary.totalDebts)}</p>
+          <p className="text-lg sm:text-xl font-black text-red-950 tracking-tight mt-0.5">{renderStatValue(summary.totalDebts)}</p>
         </motion.div>
 
         <motion.div 
           whileHover={{ scale: 1.015 }} 
           className="p-2.5 sm:p-3 rounded-2xl bg-rose-50/90 border border-rose-200 shadow-2xs cursor-pointer hover:bg-rose-100 hover:border-rose-400 transition-all" 
-          onClick={() => setShowExpensesModal && setShowExpensesModal(true)}
+          onClick={() => {
+            if (isStatsHidden) {
+              handleUnlockSection('stats', 'hide_dashboard_stats', '🔑 إظهار الإحصائيات والأرقام المالية', () => {
+                if (setShowExpensesModal) setShowExpensesModal(true);
+              });
+            } else {
+              if (setShowExpensesModal) setShowExpensesModal(true);
+            }
+          }}
         >
           <div className="flex justify-between items-start mb-0.5">
             <TrendingDown className="w-4 h-4 text-rose-700" />
             <span className="text-[9px] sm:text-[10px] font-black bg-rose-200/80 text-rose-900 border border-rose-300 px-1.5 py-0.5 rounded-md">المصاريف 🛈</span>
           </div>
           <p className="text-[10px] sm:text-xs font-black text-rose-800 mt-0.5">المصروفات التشغيلية</p>
-          <p className="text-lg sm:text-xl font-black text-rose-950 tracking-tight mt-0.5">{formatPrice(summary.totalExpenses || 0)}</p>
+          <p className="text-lg sm:text-xl font-black text-rose-950 tracking-tight mt-0.5">{renderStatValue(summary.totalExpenses || 0)}</p>
         </motion.div>
       </div>
 
-      {summary.lowStock > 0 && (
+      {!isAlertsHidden && summary.lowStock > 0 && (
         <motion.div 
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
@@ -415,7 +546,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
         </motion.div>
       )}
 
-      {summary.expiringStock > 0 && (
+      {!isAlertsHidden && summary.expiringStock > 0 && (
         <motion.div 
           initial={{ x: -20, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
@@ -490,7 +621,26 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
 
         {/* Chart View */}
         <div className="flex-1 min-h-0 relative z-10">
-          {(() => {
+          {isChartsHidden ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-4 space-y-3 bg-slate-900/5 rounded-2xl border border-slate-200/80">
+              <div className="p-3 bg-indigo-100 text-indigo-700 rounded-2xl border border-indigo-200 shadow-2xs">
+                <BarChart3 className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="font-black text-sm text-slate-900">المخططات والرسوم البيانية محجوبة 🔒</h4>
+                <p className="text-xs text-slate-500 font-bold max-w-sm">تم حجب رسم متابعة حركة المبيعات بالصفحة الرئيسية لحماية خصوصية المحل</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleUnlockSection('charts', 'hide_dashboard_charts', '🔑 عرض المخططات والرسوم البيانية')}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+              >
+                <Unlock className="w-4 h-4" />
+                <span>عرض الرسوم البيانية برمز المدير 🔓</span>
+              </button>
+            </div>
+          ) : (
+            (() => {
             const chartData = trendMode === 'daily' ? dailySales : trendMode === 'monthly' ? monthlySalesTrend : yearlySalesTrend;
             const maxVal = Math.max(...chartData.map((d: any) => d.total || 0), 1);
             return (
@@ -590,30 +740,49 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                 </BarChart>
               </ResponsiveContainer>
             );
-          })()}
+          })()
+          )}
         </div>
       </Card>
 
       {topProducts.length > 0 && (
-        <Card className="p-4 sm:p-5 rounded-3xl shadow-2xs border border-slate-200 bg-gradient-to-br from-white to-slate-50/60">
-          <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center mb-4">
-            <div className="flex items-center gap-2">
-              <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200">
-                <BarChart3 className="w-4 h-4" />
+        <Card className="p-4 sm:p-5 rounded-3xl shadow-2xs border border-slate-200 bg-gradient-to-br from-white to-slate-50/60 relative overflow-hidden">
+          {isTopProductsHidden ? (
+            <div className="flex flex-col items-center justify-center text-center py-6 space-y-3 z-10 relative">
+              <div className="p-3 bg-emerald-100 text-emerald-700 rounded-2xl border border-emerald-200 shadow-2xs">
+                <BarChart3 className="w-7 h-7" />
               </div>
-              <div>
-                <h3 className="font-black text-sm sm:text-base text-slate-900">الأصناف الأكثر مبيعاً ونسبة المساهمة</h3>
-                <p className="text-xs font-bold text-slate-500">المنتجات الخمسة الأعلى أداءً وتحقيقاً للإيرادات بالكامل</p>
+              <div className="space-y-1">
+                <h3 className="font-black text-slate-800 text-sm sm:text-base">الأصناف الأكثر مبيعاً ونسبة المساهمة</h3>
+                <p className="text-xs font-bold text-slate-500 max-w-[250px] mx-auto">القائمة محجوبة بناءً على إعدادات الحماية والصلاحيات</p>
               </div>
+              <button
+                onClick={() => handleUnlockSection('top_products', 'hide_dashboard_top_products', '🔑 عرض الأصناف الأكثر مبيعاً')}
+                className="mt-2 bg-slate-800 hover:bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer shadow-md"
+              >
+                فتح وعرض قائمة الأصناف
+              </button>
             </div>
-            <div className="flex items-center gap-1.5 bg-indigo-100 text-indigo-800 text-xs font-black px-2.5 py-1 rounded-full border border-indigo-200 self-start sm:self-auto">
-              تحديث فوري نشط
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {(() => {
-              const maxRevenue = Math.max(...topProducts.map(t => t.revenue || 1));
+          ) : (
+            <>
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200">
+                    <BarChart3 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-sm sm:text-base text-slate-900">الأصناف الأكثر مبيعاً ونسبة المساهمة</h3>
+                    <p className="text-xs font-bold text-slate-500">المنتجات الخمسة الأعلى أداءً وتحقيقاً للإيرادات بالكامل</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 bg-indigo-100 text-indigo-800 text-xs font-black px-2.5 py-1 rounded-full border border-indigo-200 self-start sm:self-auto">
+                  تحديث فوري نشط
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(() => {
+                  const maxRevenue = Math.max(...topProducts.map(t => t.revenue || 1));
               return topProducts.map((item, index) => {
                 const contributionPercent = Math.round((item.revenue / maxRevenue) * 100);
                 const isLowStock = item.product?.stock_quantity <= 5;
@@ -676,6 +845,8 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
               });
             })()}
           </div>
+            </>
+          )}
         </Card>
       )}
     </motion.div>

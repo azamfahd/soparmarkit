@@ -17,6 +17,7 @@ export interface CustomerDetailsModalProps {
   formatDateTimeWithDay: (dateStr: string) => string;
   setShowPaymentModal: (val: any) => void;
   setShowCustomerAdjustmentModal: (val: any) => void;
+  verifyAdminPermission?: (action: string, callback: () => void, title?: string) => void;
   onEditCustomer?: (customer: any) => void;
   storeName?: string;
   storePhone?: string;
@@ -37,6 +38,7 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
   formatDateTimeWithDay,
   setShowPaymentModal,
   setShowCustomerAdjustmentModal,
+  verifyAdminPermission,
   onEditCustomer,
   storeName = 'متجرنا',
   storePhone = '',
@@ -493,8 +495,15 @@ export const CustomerDetailsModal: React.FC<CustomerDetailsModalProps> = ({
               variant="secondary"
               className="w-14 shrink-0 rounded-2xl flex items-center justify-center border border-slate-200 bg-slate-50 hover:bg-slate-100 shadow-sm cursor-pointer"
               onClick={() => {
-                setShowCustomerDetails(null);
-                setShowCustomerAdjustmentModal(showCustomerDetails);
+                const openModal = () => {
+                  setShowCustomerDetails(null);
+                  setShowCustomerAdjustmentModal(showCustomerDetails);
+                };
+                if (verifyAdminPermission) {
+                  verifyAdminPermission('customer_adjustment', openModal, '📝 تعديل وتسوية حساب العميل');
+                } else {
+                  openModal();
+                }
               }}
               title="تعديل الحساب أو ملاحظات"
             >

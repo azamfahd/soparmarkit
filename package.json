@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "tsx server.ts",
+    "start": "node dist/server.cjs",
     "generate:version": "node scripts/generate-version.cjs",
-    "build": "node scripts/generate-version.cjs && vite build",
+    "build": "node scripts/generate-version.cjs && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && node -e \"const fs=require('fs');fs.cpSync('dist','build',{recursive:true})\"",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist build",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -29,6 +29,7 @@
     "dexie-react-hooks": "^4.2.0",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "file-saver": "^2.0.5",
     "firebase": "^12.15.0",
     "html2canvas": "^1.4.1",
     "html2canvas-pro": "^2.3.3",
@@ -50,9 +51,11 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/file-saver": "^2.0.7",
     "@types/jsbarcode": "^3.11.4",
     "@types/node": "^22.14.0",
     "@types/react-is": "^19.2.0",
+    "esbuild": "^0.27.3",
     "sharp": "^0.35.4",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2"

@@ -36,6 +36,7 @@ import { SettleModal } from './components/modals/SettleModal';
 import { CustomerDetailsModal } from './components/modals/CustomerDetailsModal';
 import { PinVerificationModal } from './components/modals/PinVerificationModal';
 import { PermissionsConfigModal } from './components/modals/PermissionsConfigModal';
+import { AppLockScreen } from './components/modals/AppLockScreen';
 import { WithdrawModal } from './components/modals/WithdrawModal';
 import { VoucherModal, type VoucherData } from './components/modals/VoucherModal';
 import { ReceiptModal, type SaleReceiptData } from './components/modals/ReceiptModal';
@@ -43,6 +44,9 @@ import { CustomerStatementPrintModal } from './components/modals/CustomerStateme
 import { ExpensesModal } from './components/modals/ExpensesModal';
 import { ExcelSyncCenterModal } from './components/modals/ExcelSyncCenterModal';
 import { BackupOptionsModal } from './components/modals/BackupOptionsModal';
+import { SecureBackupModal } from './components/modals/SecureBackupModal';
+import { DecryptBackupModal } from './components/modals/DecryptBackupModal';
+import { isEncryptedBackup } from './services/security/encryptedBackup';
 import { DataAuditReportModal } from './components/modals/DataAuditReportModal';
 import { checkFileModifiedAndSync } from './services/excelSync';
 import { saveFileToDevice } from './utils/fileSaver';
@@ -52,6 +56,7 @@ import { InstallAppModal } from './components/InstallAppModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, getApkDownloadUrl } from './services/updateService';
+import { DownloadToast } from './components/DownloadToast';
 import { Scan, QrCode, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { 
   LayoutDashboard, 
@@ -883,7 +888,12 @@ export default function App() {
   const [showAdminLogin, setShowAdminLogin] = useState<boolean>(false);
   const [requestDurations, setRequestDurations] = useState<Record<string, number>>({});
 
-    const [editProfitPercent, setEditProfitPercent] = useState<string>('');
+  // Secure Password-Protected Encrypted Backup States
+  const [showSecureBackupModal, setShowSecureBackupModal] = useState<boolean>(false);
+  const [showDecryptBackupModal, setShowDecryptBackupModal] = useState<boolean>(false);
+  const [encryptedBackupPayload, setEncryptedBackupPayload] = useState<any>(null);
+
+  const [editProfitPercent, setEditProfitPercent] = useState<string>('');
   const [editCostStr, setEditCostStr] = useState<string>('');
   const [editSaleStr, setEditSaleStr] = useState<string>('');
   const [addLastModified, setAddLastModified] = useState<'cost' | 'sale' | 'percent'>('sale');
@@ -940,23 +950,50 @@ export default function App() {
   // Standalone / APK detection
   const isStandaloneMode = React.useMemo(() => {
     if (typeof window === 'undefined') return false;
+    const isCapacitor = Boolean(
+      (window as any).Capacitor?.isNativePlatform?.() || 
+      (window as any).Capacitor?.getPlatform?.() === 'android' || 
+      (window as any).Capacitor?.getPlatform?.() === 'ios' ||
+      (window as any).isAndroidApp === true ||
+      window.location.protocol.includes('capacitor') || 
+      window.location.protocol.includes('ionic')
+    );
     const isStandaloneWindow = window.matchMedia('(display-mode: standalone)').matches ||
                                window.matchMedia('(display-mode: fullscreen)').matches ||
                                window.matchMedia('(display-mode: window-controls-overlay)').matches ||
                                (window.navigator as any).standalone === true;
     const isTwaReferrer = typeof document !== 'undefined' && document.referrer.includes('android-app://');
-    return Boolean(isStandaloneWindow || isTwaReferrer);
+    return Boolean(isCapacitor || isStandaloneWindow || isTwaReferrer);
   }, []);
 
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [remoteAppConfig, setRemoteAppConfig] = useState<AppVersionConfig | null>(null);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>('');
-  const [isNativeAndroid, setIsNativeAndroid] = useState(false);
+  const [isNativeAndroid, setIsNativeAndroid] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(
+      (window as any).Capacitor?.isNativePlatform?.() || 
+      (window as any).Capacitor?.getPlatform?.() === 'android' || 
+      (window as any).isAndroidApp === true ||
+      window.location.protocol.includes('capacitor') || 
+      window.location.protocol.includes('ionic')
+    );
+  });
   const [updateBannerMessage, setUpdateBannerMessage] = useState<string>('');
   const [showBrowserBanner, setShowBrowserBanner] = useState(() => {
     if (typeof window === 'undefined') return false;
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches ||
+    const isCapacitor = Boolean(
+      (window as any).Capacitor?.isNativePlatform?.() || 
+      (window as any).Capacitor?.getPlatform?.() === 'android' || 
+      (window as any).Capacitor?.getPlatform?.() === 'ios' ||
+      (window as any).isAndroidApp === true ||
+      window.location.protocol.includes('capacitor') || 
+      window.location.protocol.includes('ionic')
+    );
+    const isStandalone = isCapacitor ||
+                         window.matchMedia('(display-mode: standalone)').matches ||
+                         window.matchMedia('(display-mode: fullscreen)').matches ||
                          (window.navigator as any).standalone === true ||
                          (typeof document !== 'undefined' && document.referrer.includes('android-app://'));
     if (isStandalone) return false;
@@ -1032,9 +1069,47 @@ export default function App() {
       const [withdrawByWhom, setWithdrawByWhom] = useState('أمين الصندوق');
 
   // States for Security and Permissions / إدارة الصلاحيات والأمان للمدير
-  const [permissionsEnabled, setPermissionsEnabled] = useState(false);
+  const [permissionsEnabled, setPermissionsEnabled] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('cache_permissionsEnabled') === 'true';
+    }
+    return false;
+  });
+  const [isPermissionsPreUnlocked, setIsPermissionsPreUnlocked] = useState(false);
+  const [appLockEnabled, setAppLockEnabled] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('cache_appLockEnabled') === 'true';
+    }
+    return false;
+  });
+  const [isAppLocked, setIsAppLocked] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const lockEnabled = localStorage.getItem('cache_appLockEnabled') === 'true';
+      const permEnabled = localStorage.getItem('cache_permissionsEnabled') === 'true';
+      let unlockedInSession = sessionStorage.getItem('session_app_unlocked') === 'true';
+
+      // Smart reload detection (protects against strict iframes wiping sessionStorage)
+      const tempReload = localStorage.getItem('temp_reload_unlock');
+      if (tempReload) {
+        if (Date.now() - parseInt(tempReload) < 5000) {
+          unlockedInSession = true;
+          sessionStorage.setItem('session_app_unlocked', 'true');
+        }
+        localStorage.removeItem('temp_reload_unlock');
+      }
+
+      return (lockEnabled || permEnabled) && !unlockedInSession;
+    }
+    return false;
+  });
+  const [appLockPin, setAppLockPin] = useState('');
   const [autoLookupBarcode, setAutoLookupBarcode] = useState(false);
-  const [adminPin, setAdminPin] = useState('');
+  const [adminPin, setAdminPin] = useState<string>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('cache_adminPin') || '';
+    }
+    return '';
+  });
   const [protectedActions, setProtectedActions] = useState<Record<string, boolean>>({
     analytics: true,
     settings: true,
@@ -1043,7 +1118,11 @@ export default function App() {
     cash_withdrawal: true,
     settlement: true,
     supplier_payment: true,
-    smart_import: true
+    smart_import: true,
+    debt_sale: false,
+    customer_adjustment: true,
+    discount_application: false,
+    reset_database: true
   });
 
   const [pinModal, setPinModal] = useState<{
@@ -1189,9 +1268,9 @@ export default function App() {
   const [firstLaunchDate, setFirstLaunchDate] = useState<string | null>(null);
   const [backupAlertInterval, setBackupAlertInterval] = useState<string>('7'); // '7' | '30' | '60' | 'off'
 
-  // Check if backup is overdue based on configured interval (7 days, 30 days, 60 days, or off)
+  // Check if backup is overdue based on configured interval (7 days, 14 days, 30 days, 60 days, or disabled/off)
   const isBackupOverdue = React.useMemo(() => {
-    if (backupAlertInterval === 'off') return false;
+    if (backupAlertInterval === 'disabled' || backupAlertInterval === 'off') return false;
     const targetDays = parseInt(backupAlertInterval, 10) || 7;
     
     // Baseline date is either last backup date or first launch / installation date
@@ -1212,8 +1291,18 @@ export default function App() {
   const updateBackupAlertInterval = async (interval: string) => {
     setBackupAlertInterval(interval);
     try {
-      await db.settings.put({ key: 'backupAlertInterval', value: interval });
+      const existingSettings = await db.settings.where('key').equals('backupAlertInterval').toArray();
+      if (existingSettings.length > 0) {
+        await db.settings.update(existingSettings[existingSettings.length - 1].id!, { value: interval });
+        if (existingSettings.length > 1) {
+          const duplicateIds = existingSettings.slice(0, existingSettings.length - 1).map(s => s.id!).filter(Boolean);
+          await db.settings.bulkDelete(duplicateIds);
+        }
+      } else {
+        await db.settings.add({ key: 'backupAlertInterval', value: interval });
+      }
       const label = interval === '7' ? 'أسبوعياً (كل 7 أيام)' :
+                    interval === '14' ? 'كل أسبوعين (كل 14 يوماً)' :
                     interval === '30' ? 'شهرياً (كل 30 يوماً)' :
                     interval === '60' ? 'كل شهرين (كل 60 يوماً)' : 'تم تعطيل التنبيه';
       showNotification(`تم حفظ تكرار تنبيه النسخ الاحتياطي: ${label}`, 'success');
@@ -1327,9 +1416,15 @@ export default function App() {
       db.settings.put({ key: 'firstLaunchDate', value: todayIso });
       setFirstLaunchDate(todayIso);
     }
-    const backupIntervalSetting = appSettings.find(s => s.key === 'backupAlertInterval');
-    if (backupIntervalSetting) {
-      setBackupAlertInterval(backupIntervalSetting.value);
+    const backupIntervalItems = appSettings.filter(s => s.key === 'backupAlertInterval');
+    if (backupIntervalItems.length > 0) {
+      const latestItem = backupIntervalItems[backupIntervalItems.length - 1];
+      setBackupAlertInterval(latestItem.value);
+
+      if (backupIntervalItems.length > 1) {
+        const extraIds = backupIntervalItems.slice(0, backupIntervalItems.length - 1).map(s => s.id!).filter(Boolean);
+        db.settings.bulkDelete(extraIds).catch(console.error);
+      }
     }
     const roundingSetting = appSettings.find(s => s.key === 'roundingFactor');
     if (roundingSetting) {
@@ -1337,7 +1432,11 @@ export default function App() {
     }
     const permSetting = appSettings.find(s => s.key === 'permissionsEnabled');
     if (permSetting) {
-      setPermissionsEnabled(permSetting.value);
+      const isPermOn = !!permSetting.value;
+      setPermissionsEnabled(isPermOn);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('cache_permissionsEnabled', String(isPermOn));
+      }
     }
     const autoLookupSetting = appSettings.find(s => s.key === 'autoLookupBarcode');
     if (autoLookupSetting) {
@@ -1354,14 +1453,30 @@ export default function App() {
             }
           });
           setAdminPin(hashed);
+          if (typeof localStorage !== 'undefined') localStorage.setItem('cache_adminPin', hashed);
         });
       } else {
         setAdminPin(pinSetting.value);
+        if (typeof localStorage !== 'undefined') localStorage.setItem('cache_adminPin', pinSetting.value);
       }
     }
     const protectedSetting = appSettings.find(s => s.key === 'protectedActions');
     if (protectedSetting) {
       setProtectedActions(protectedSetting.value);
+    }
+    const appLockSetting = appSettings.find(s => s.key === 'appLockEnabled');
+    const isLockOn = appLockSetting ? !!appLockSetting.value : false;
+    const isPermOn = permSetting ? !!permSetting.value : false;
+
+    if (appLockSetting) {
+      setAppLockEnabled(isLockOn);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('cache_appLockEnabled', String(isLockOn));
+      }
+    }
+
+    if ((isLockOn || isPermOn) && !sessionStorage.getItem('session_app_unlocked')) {
+      setIsAppLocked(true);
     }
   }, [appSettingsRaw]);
 
@@ -1640,6 +1755,17 @@ export default function App() {
       } catch {}
     }
   }, [activeTab]);
+
+  // Smart Reload Detection: Save unlock state temporarily right before a page refresh
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!isAppLocked) {
+        localStorage.setItem('temp_reload_unlock', Date.now().toString());
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isAppLocked]);
 
   // Screen Wake Lock API: Keep the cashier screen active while inside POS mode
   useEffect(() => {
@@ -3447,6 +3573,32 @@ export default function App() {
       await db.settings.add({ key: 'permissionsEnabled', value: enabled });
     }
     setPermissionsEnabled(enabled);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('cache_permissionsEnabled', String(enabled));
+    }
+    if (enabled) {
+      sessionStorage.setItem('session_app_unlocked', 'true');
+      await updateAppLockEnabled(true);
+    }
+  };
+
+  const updateAppLockEnabled = async (val: boolean) => {
+    setAppLockEnabled(val);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('cache_appLockEnabled', String(val));
+    }
+    const existing = await db.settings.where('key').equals('appLockEnabled').first();
+    if (existing) {
+      await db.settings.update(existing.id!, { value: val });
+    } else {
+      await db.settings.add({ key: 'appLockEnabled', value: val });
+    }
+    if (val) {
+      sessionStorage.setItem('session_app_unlocked', 'true');
+      showNotification('🔐 تم تفعيل قفل النظام (سيطبق عند إعادة فتح البرنامج)', 'success');
+    } else {
+      showNotification('🔓 تم إلغاء قفل فتح البرنامج', 'success');
+    }
   };
 
   const updateAdminPin = async (newPin: string) => {
@@ -3461,6 +3613,9 @@ export default function App() {
       await db.settings.add({ key: 'adminPin', value: pinToStore });
     }
     setAdminPin(pinToStore);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('cache_adminPin', pinToStore);
+    }
   };
 
   const updateProtectedActions = async (actions: Record<string, boolean>) => {
@@ -3474,7 +3629,9 @@ export default function App() {
   };
 
   const verifyAdminPermission = (actionType: string, onSuccess: () => void, title = 'التحقق من صلاحية المدير') => {
-    if (!permissionsEnabled || !protectedActions[actionType]) {
+    const isStrictSecurity = actionType === 'security_settings';
+
+    if (!isStrictSecurity && (!permissionsEnabled || !protectedActions[actionType])) {
       onSuccess();
       return;
     }
@@ -3485,7 +3642,7 @@ export default function App() {
         actionType: 'setup_first',
         onSuccess: onSuccess,
         title: '🔑 إنشاء رمز حماية المدير (لأول مرة)',
-        description: 'الرجاء تعيين رمز مرور رقمي خاص بالمدير لحماية الإجراءات الحساسة والنظام. يرجى حفظ هذا الرمز جيداً.',
+        description: 'الرجاء تعيين رمز مرور أو كلمة سر خاصة بالمدير لحماية الإجراءات الحساسة والنظام. يرجى حفظ هذا الرمز جيداً.',
         inputVal: '',
         error: ''
       });
@@ -3493,7 +3650,8 @@ export default function App() {
     }
 
     let actionDesc = 'الرجاء إدخال رمز الأمان للمتابعة';
-    if (actionType === 'analytics') actionDesc = 'رؤية الأرباح والتقارير المالية والتحليلات الذكية';
+    if (actionType === 'security_settings') actionDesc = 'الوصول لتهيئة إعدادات الأمان وتغيير الرمز';
+    else if (actionType === 'analytics') actionDesc = 'رؤية الأرباح والتقارير المالية والتحليلات الذكية';
     else if (actionType === 'settings') actionDesc = 'الوصول لإعدادات النظام والنسخ الاحتياطي وإعادة الضبط';
     else if (actionType === 'delete_sale') actionDesc = 'تأكيد صلاحية حذف أو تعديل فاتورة بيع من السجل';
     else if (actionType === 'edit_product') actionDesc = 'تأكيد صلاحية تعديل أسعار المنتجات أو حذف السلع من المخزن';
@@ -3501,6 +3659,14 @@ export default function App() {
     else if (actionType === 'settlement') actionDesc = 'صلاحية تصفية وردية الكاش وتسوية المبيعات اليومية';
     else if (actionType === 'supplier_payment') actionDesc = 'تسجيل دفعة مالية جديدة للمورد أو تسوية حسابه المالي';
     else if (actionType === 'smart_import') actionDesc = 'الوصول لأداة الاستيراد الذكية لرفع أو استيراد البيانات بالفاتورة والباركود';
+    else if (actionType === 'debt_sale') actionDesc = 'الموافقة على إتمام عملية البيع بالآجل / الدَّيْن للزبون';
+    else if (actionType === 'customer_adjustment') actionDesc = 'تعديل وتصفية رصيد مديونية العميل بشكل استثنائي';
+    else if (actionType === 'discount_application') actionDesc = 'تأكيد صلاحية تطبيق خصم أو تغيير أسعار الفاتورة';
+    else if (actionType === 'reset_database') actionDesc = 'تأكيد صلاحية تصفية ومسح بيانات القاعدة بالكامل';
+    else if (actionType === 'hide_dashboard_stats') actionDesc = 'عرض وفك حجب بطاقات الإحصائيات والأرقام المالية بالصفحة الرئيسية';
+    else if (actionType === 'hide_dashboard_charts') actionDesc = 'عرض وفك حجب الرسوم والمخططات البيانية بالصفحة الرئيسية';
+    else if (actionType === 'hide_dashboard_alerts') actionDesc = 'عرض وفك حجب شريط تنبيهات النواقص وتواريخ الانتهاء بالواجهة الرئيسية';
+    else if (actionType === 'hide_dashboard_top_products') actionDesc = 'عرض وفك حجب قائمة الأصناف الأكثر مبيعاً ونسبة المساهمة بالواجهة الرئيسية';
 
     setPinModal({
       isOpen: true,
@@ -3518,11 +3684,14 @@ export default function App() {
     if (!pinModal.isOpen) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key >= '0' && e.key <= '9') {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault();
         setPinModal(p => {
           const newVal = p.inputVal + e.key;
-          if (newVal.length > 8) return p;
+          if (newVal.length > 32) return p;
           
           // Instant auto-unlock upon correct PIN match
           if (p.actionType !== 'setup_first') {
@@ -3545,7 +3714,7 @@ export default function App() {
         e.preventDefault();
         if (pinModal.actionType === 'setup_first') {
           if (pinModal.inputVal.length < 4) {
-            setPinModal(p => ({ ...p, error: 'يجب أن يكون الرمز من 4 أرقام على الأقل' }));
+            setPinModal(p => ({ ...p, error: 'يجب أن تكون كلمة السر أو الرمز من 4 خانات على الأقل' }));
             return;
           }
           updateAdminPin(pinModal.inputVal);
@@ -3576,34 +3745,44 @@ export default function App() {
   }, [pinModal.isOpen, pinModal.inputVal, pinModal.actionType, pinModal.onSuccess, adminPin]);
 
   const exportData = async () => {
-    const data = {
-      products: await db.products.toArray(),
-      customers: await db.customers.toArray(),
-      suppliers: await db.suppliers.toArray(),
-      supplierPayments: await db.supplierPayments.toArray(),
-      sales: await db.sales.toArray(),
-      saleItems: await db.saleItems.toArray(),
-      debts: await db.debts.toArray(),
-      inventoryLogs: await db.inventoryLogs.toArray(),
-      settings: await db.settings.toArray(),
-      notes: await db.notes.toArray(),
-    };
-    const jsonString = JSON.stringify(data, null, 2);
-    const fileName = `${storeName}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
+    try {
+      const data = {
+        products: await db.products.toArray(),
+        customers: await db.customers.toArray(),
+        suppliers: await db.suppliers.toArray(),
+        supplierPayments: await db.supplierPayments.toArray(),
+        sales: await db.sales.toArray(),
+        saleItems: await db.saleItems.toArray(),
+        debts: await db.debts.toArray(),
+        inventoryLogs: await db.inventoryLogs.toArray(),
+        settings: await db.settings.toArray(),
+        notes: await db.notes.toArray(),
+        expenses: db.expenses ? await db.expenses.toArray() : [],
+      };
+      const jsonString = JSON.stringify(data, null, 2);
+      const fileName = `${storeName || 'المتجر'}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
 
-    const blob = new Blob([jsonString], { type: 'application/json' });
-    await saveFileToDevice(blob, fileName, 'application/json');
-    
-    // Update last backup date
-    const now = new Date().toISOString();
-    const existing = await db.settings.where('key').equals('lastBackupDate').first();
-    if (existing) {
-      await db.settings.update(existing.id!, { value: now });
-    } else {
-      await db.settings.add({ key: 'lastBackupDate', value: now });
+      const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+      const res = await saveFileToDevice(blob, fileName, 'application/json');
+      
+      if (res.success) {
+        // Update last backup date
+        const now = new Date().toISOString();
+        const existing = await db.settings.where('key').equals('lastBackupDate').first();
+        if (existing && existing.id) {
+          await db.settings.update(existing.id, { value: now });
+        } else {
+          await db.settings.add({ key: 'lastBackupDate', value: now });
+        }
+        setLastBackupDate(now);
+        showNotification('تم تصدير نسخة احتياطية (JSON) بنجاح وحفظها على جهازك 📥', 'success');
+      } else {
+        showNotification('تعذر حفظ ملف النسخة الاحتياطية على جهازك', 'error');
+      }
+    } catch (err: any) {
+      console.error('Export Data error:', err);
+      showNotification('حدث خطأ أثناء تصدير البيانات: ' + (err.message || ''), 'error');
     }
-    setLastBackupDate(now);
-    showNotification('تم تصدير نسخة احتياطية بنجاح وحفظها على جهازك');
   };
 
   const handleImportPython = async () => {
@@ -3662,6 +3841,14 @@ export default function App() {
         reader.onload = async (event) => {
           try {
             const data = JSON.parse(event.target?.result as string);
+            
+            // Check if this is a secure password-protected backup
+            if (isEncryptedBackup(data)) {
+              setEncryptedBackupPayload(data);
+              setShowDecryptBackupModal(true);
+              return;
+            }
+
             const { report, success } = await importAndRepairDatabaseOffline(data, 'replace');
             if (success) {
               setAuditReport(report);
@@ -3716,10 +3903,11 @@ export default function App() {
 
 
   const resetDatabase = async () => {
-    setConfirmAction({
-      title: 'إعادة ضبط البرنامج',
-      message: 'هل أنت متأكد من مسح جميع البيانات؟ لا يمكن التراجع عن هذه الخطوة وسيتم حذف كل المنتجات والزبائن والمبيعات.',
-      onConfirm: async () => {
+    verifyAdminPermission('reset_database', () => {
+      setConfirmAction({
+        title: 'إعادة ضبط البرنامج',
+        message: 'هل أنت متأكد من مسح جميع البيانات؟ لا يمكن التراجع عن هذه الخطوة وسيتم حذف كل المنتجات والزبائن والمبيعات.',
+        onConfirm: async () => {
         await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
           await db.products.clear();
           await db.customers.clear();
@@ -3736,7 +3924,8 @@ export default function App() {
         setTimeout(() => window.location.reload(), 1000);
       }
     });
-  };
+  }, '⚠️ تصفية وإعادة ضبط البيانات');
+};
 
   const executePrint = (htmlContent: string, title?: string) => {
     executeDirectPrint(htmlContent, title || 'طباعة');
@@ -4773,6 +4962,31 @@ export default function App() {
     }
   };
 
+  if (appSettingsRaw === undefined) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  let finalIsAppLocked = isAppLocked;
+  if (appSettingsRaw !== undefined) {
+    const s = (Array.isArray(appSettingsRaw) ? appSettingsRaw.reduce((acc, curr) => ({ ...acc, [curr.key]: curr.value }), {}) : appSettingsRaw) as Record<string, any>;
+    const isLockOn = s?.appLockEnabled || false;
+    const isPermOn = s?.permissionsEnabled || false;
+    let unlockedInSession = typeof window !== 'undefined' ? sessionStorage.getItem('session_app_unlocked') === 'true' : false;
+    const tempReload = typeof window !== 'undefined' ? localStorage.getItem('temp_reload_unlock') : null;
+    if (tempReload) {
+      if (Date.now() - parseInt(tempReload) < 5000) {
+        unlockedInSession = true;
+      }
+    }
+    if ((isLockOn || isPermOn) && !unlockedInSession) {
+      finalIsAppLocked = true;
+    }
+  }
+
   // --- Beautiful Activation Lock Screen ---
   if (!isActivated && !isInTrial) {
     return (
@@ -5082,6 +5296,24 @@ export default function App() {
     );
   }
 
+  if (finalIsAppLocked) {
+    return (
+      <AppLockScreen
+        key="app-lock-screen-standalone"
+        isLocked={true}
+        onUnlock={() => {
+          setIsAppLocked(false);
+          sessionStorage.setItem('session_app_unlocked', 'true');
+          showNotification('🔓 مرحباً بك! تم فك قفل النظام بنجاح', 'success');
+        }}
+        storeName={storeName}
+        adminPin={adminPin}
+        appLockPin={appLockPin}
+        verifyPinMatches={verifyPinMatches}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Sidebar Overlay and Drawer */}
@@ -5139,6 +5371,7 @@ export default function App() {
               label="التحليل البصري الذكي Power BI" 
               badge="تقارير"
               badgeColor="emerald"
+              isLocked={Boolean(permissionsEnabled && protectedActions?.analytics)}
             />
           </div>
 
@@ -5229,6 +5462,7 @@ export default function App() {
               label="الاستيراد الذكي (AI) ✨" 
               badge="محاسب ذكي"
               badgeColor="violet"
+              isLocked={Boolean(permissionsEnabled && protectedActions?.smart_import)}
             />
           </div>
 
@@ -5259,8 +5493,13 @@ export default function App() {
               }`}>
                 <Settings className={`w-3.5 h-3.5 ${activeTab === 'settings' ? 'rotate-45' : 'group-hover:rotate-45 transition-transform duration-350'}`} />
               </div>
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1 flex items-center justify-between gap-1">
                 <span className="text-[10px] font-black block truncate leading-tight">الإعدادات</span>
+                {Boolean(permissionsEnabled && protectedActions?.settings) && (
+                  <span className="text-[8px] font-black px-1 py-0.2 bg-amber-100 text-amber-800 rounded border border-amber-300 flex items-center gap-0.5 shrink-0">
+                    <Lock className="w-2.5 h-2.5" />
+                  </span>
+                )}
               </div>
             </button>
 
@@ -5291,32 +5530,30 @@ export default function App() {
             </button>
           </div>
           
-          {/* زر تثبيت البرنامج وتحميل APK بجانب الإعدادات */}
-          <button 
-            onClick={() => setShowInstallModal(true)} 
-            className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl transition-all mt-2 cursor-pointer shadow-sm ${
-              isStandaloneMode 
-                ? 'bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800'
-                : 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white border border-emerald-500 font-bold'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <div className={`p-1 rounded-lg ${isStandaloneMode ? 'bg-emerald-100 text-emerald-700' : 'bg-white/20 text-white'}`}>
-                <Smartphone className="w-3.5 h-3.5" />
+          {/* زر تثبيت البرنامج وتحميل APK بجانب الإعدادات - يظهر فقط لمتصفح الويب والـ PWA ويختفي داخل تطبيق الـ APK */}
+          {!isStandaloneMode && !isNativeAndroid && (
+            <button 
+              onClick={() => setShowInstallModal(true)} 
+              className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl transition-all mt-2 cursor-pointer shadow-sm bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white border border-emerald-500 font-bold"
+            >
+              <div className="flex items-center gap-2">
+                <div className="p-1 rounded-lg bg-white/20 text-white">
+                  <Smartphone className="w-3.5 h-3.5" />
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-black block leading-none">
+                    تثبيت البرنامج (APK / PWA)
+                  </span>
+                  <span className="text-[8px] block font-medium mt-0.5 text-emerald-100">
+                    تنزيل APK أو التثبيت السريع
+                  </span>
+                </div>
               </div>
-              <div className="text-right">
-                <span className="text-[10px] font-black block leading-none">
-                  {isStandaloneMode ? 'تطبيق مستقل (APK)' : 'تثبيت البرنامج (APK / PWA)'}
-                </span>
-                <span className={`text-[8px] block font-medium mt-0.5 ${isStandaloneMode ? 'text-emerald-600' : 'text-emerald-100'}`}>
-                  {isStandaloneMode ? 'يعمل بدون متصفح بكامل الصلاحيات' : 'تنزيل APK أو التثبيت السريع'}
-                </span>
-              </div>
-            </div>
-            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${isStandaloneMode ? 'bg-emerald-200 text-emerald-800' : 'bg-white text-emerald-700'}`}>
-              {isStandaloneMode ? 'مثبت ✓' : 'تحميل'}
-            </span>
-          </button>
+              <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-white text-emerald-700">
+                تحميل
+              </span>
+            </button>
+          )}
         </div>
       </motion.aside>
     </React.Fragment>
@@ -5482,6 +5719,22 @@ export default function App() {
                 <span className="sm:hidden">احتياطية ⚠️</span>
               </motion.button>
             )}
+            {(permissionsEnabled || appLockEnabled) && (
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.removeItem('session_app_unlocked');
+                  localStorage.removeItem('temp_reload_unlock');
+                  setIsAppLocked(true);
+                  showNotification('🔒 تم قفل الشاشة لحماية النظام', 'success');
+                }}
+                className="p-2 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 rounded-xl transition-all border border-slate-200/80 cursor-pointer flex items-center gap-1 text-xs font-bold"
+                title="قفل الشاشة فوراً (تأمين النظام)"
+              >
+                <Lock className="w-4 h-4 text-emerald-600" />
+                <span className="hidden sm:inline">قفل</span>
+              </button>
+            )}
             <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
               <TrendingUp className="text-emerald-600 w-5 h-5" />
             </div>
@@ -5572,6 +5825,8 @@ export default function App() {
               onOpenBackupOptions={() => setShowBackupOptionsModal(true)}
               isBackupOverdue={isBackupOverdue}
               verifyAdminPermission={verifyAdminPermission}
+              permissionsEnabled={permissionsEnabled}
+              protectedActions={protectedActions}
               setSalesDetailsTab={setSalesDetailsTab}
               setShowMonthlySalesDetailsModal={setShowMonthlySalesDetailsModal}
               setShowSalesSummaryModal={setShowSalesSummaryModal}
@@ -5739,6 +5994,7 @@ export default function App() {
                   resetDatabase={resetDatabase}
                   showNotification={showNotification}
                   onOpenExcelSyncCenter={() => setShowExcelSyncModal(true)}
+                  onOpenSecureExport={() => setShowSecureBackupModal(true)}
                   deviceID={deviceID}
                   isActivated={isActivated}
                   trialDaysLeft={trialDaysLeft}
@@ -5767,6 +6023,10 @@ export default function App() {
                 roundingFactor={roundingFactor}
                 updateRoundingFactor={updateRoundingFactor}
                 permissionsEnabled={permissionsEnabled}
+                appLockEnabled={appLockEnabled}
+                updateAppLockEnabled={updateAppLockEnabled}
+                protectedActions={protectedActions}
+                setIsPermissionsPreUnlocked={setIsPermissionsPreUnlocked}
                 verifyAdminPermission={verifyAdminPermission}
                 setShowPermissionsConfigModal={setShowPermissionsConfigModal}
                 exportData={exportData}
@@ -5832,6 +6092,7 @@ export default function App() {
                 handleChangeDeveloperPIN={handleChangeDeveloperPIN}
                 handleResetDeveloperPIN={handleResetDeveloperPIN}
                 onOpenExcelSyncCenter={() => setShowExcelSyncModal(true)}
+                onOpenSecureExport={() => setShowSecureBackupModal(true)}
               />
             </Suspense>
           )}
@@ -6626,6 +6887,7 @@ export default function App() {
               formatDateTimeWithDay={formatDateTimeWithDay}
               setShowPaymentModal={setShowPaymentModal}
               setShowCustomerAdjustmentModal={setShowCustomerAdjustmentModal}
+              verifyAdminPermission={verifyAdminPermission}
               onEditCustomer={(c) => setEditingCustomer(c)}
               storeName={storeName}
               storePhone={storePhone}
@@ -6656,14 +6918,20 @@ export default function App() {
             <PermissionsConfigModal
               key="modal-permissions-config"
               showPermissionsConfigModal={showPermissionsConfigModal}
-              setShowPermissionsConfigModal={setShowPermissionsConfigModal}
+              setShowPermissionsConfigModal={(val) => {
+                setShowPermissionsConfigModal(val);
+                if (!val) setIsPermissionsPreUnlocked(false);
+              }}
               permissionsEnabled={permissionsEnabled}
               updatePermissionsEnabled={updatePermissionsEnabled}
+              appLockEnabled={appLockEnabled}
+              updateAppLockEnabled={updateAppLockEnabled}
               protectedActions={protectedActions}
               updateProtectedActions={updateProtectedActions}
               adminPin={adminPin}
               updateAdminPin={updateAdminPin}
               showNotification={showNotification}
+              isPreUnlocked={isPermissionsPreUnlocked}
             />
           )}
 
@@ -6791,6 +7059,47 @@ export default function App() {
                 setActiveTab('smart-import');
                 setIsSidebarOpen(false);
               }}
+              onOpenSecureExport={() => {
+                setShowBackupOptionsModal(false);
+                setShowSecureBackupModal(true);
+              }}
+            />
+          )}
+
+          {showSecureBackupModal && (
+            <SecureBackupModal
+              key="modal-secure-backup-export"
+              isOpen={showSecureBackupModal}
+              onClose={() => setShowSecureBackupModal(false)}
+              storeName={storeName}
+              adminPin={adminPin}
+              onSuccessNotification={showNotification}
+            />
+          )}
+
+          {showDecryptBackupModal && (
+            <DecryptBackupModal
+              key="modal-decrypt-backup-import"
+              isOpen={showDecryptBackupModal}
+              onClose={() => {
+                setShowDecryptBackupModal(false);
+                setEncryptedBackupPayload(null);
+              }}
+              encryptedContainer={encryptedBackupPayload}
+              onSuccessDecrypted={async (decryptedData) => {
+                try {
+                  const { report, success } = await importAndRepairDatabaseOffline(decryptedData, 'replace');
+                  if (success) {
+                    setAuditReport(report);
+                    setShowAuditModal(true);
+                    showNotification('تم فك التشفير واستيراد قاعدة البيانات بنجاح تام!', 'success');
+                  } else {
+                    showNotification('فشل استيراد البيانات بعد فك التشفير', 'error');
+                  }
+                } catch (err: any) {
+                  showNotification('حدث خطأ أثناء معالجة البيانات: ' + err.message, 'error');
+                }
+              }}
             />
           )}
 
@@ -6807,18 +7116,20 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* راية إشعار تثبيت التطبيق للمتصفح لأول مرة */}
-        <BrowserInstallBanner 
-          key="global-browser-install-banner"
-          show={showBrowserBanner}
-          onOpenInstallModal={() => setShowInstallModal(true)}
-          onDismiss={() => {
-            setShowBrowserBanner(false);
-            if (typeof sessionStorage !== 'undefined') {
-              sessionStorage.setItem('dismiss_browser_install_banner', 'true');
-            }
-          }}
-        />
+        {/* راية إشعار تثبيت التطبيق للمتصفح فقط - تختفي تماماً داخل تطبيق الـ APK والتطبيق المستقل */}
+        {!isStandaloneMode && !isNativeAndroid && (
+          <BrowserInstallBanner 
+            key="global-browser-install-banner"
+            show={showBrowserBanner}
+            onOpenInstallModal={() => setShowInstallModal(true)}
+            onDismiss={() => {
+              setShowBrowserBanner(false);
+              if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.setItem('dismiss_browser_install_banner', 'true');
+              }
+            }}
+          />
+        )}
 
         {/* راية تنبيه التحديثات والإصدارات الجديدة */}
         <UpdateNotificationBanner 
@@ -6841,12 +7152,15 @@ export default function App() {
           onInstallPWA={handleInstallPWA}
           isStandalone={isStandaloneMode}
         />
+
+        {/* إشعار وزر تنزيل الملف الفوري المباشر */}
+        <DownloadToast />
       </main>
     </div>
   );
 }
 
-const SidebarButton = ({ active, onClick, icon, label, badge, badgeColor = 'emerald' }: any) => (
+const SidebarButton = ({ active, onClick, icon, label, badge, badgeColor = 'emerald', isLocked }: any) => (
   <button 
     onClick={onClick}
     className={`w-full flex items-center justify-between p-2 rounded-xl transition-all duration-200 cursor-pointer text-right group ${
@@ -6861,7 +7175,16 @@ const SidebarButton = ({ active, onClick, icon, label, badge, badgeColor = 'emer
       </span>
       <span className="text-[11px] sm:text-xs font-bold leading-none">{label}</span>
     </div>
-    {badge && (
+    {isLocked ? (
+      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shrink-0 ${
+        active 
+          ? 'bg-white/20 text-white' 
+          : 'bg-amber-50 text-amber-700 border border-amber-200/80 shadow-2xs'
+      }`}>
+        <Lock className="w-2.5 h-2.5" />
+        <span>محمي</span>
+      </span>
+    ) : badge ? (
       <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
         active 
           ? 'bg-white/20 text-white' 
@@ -6875,6 +7198,6 @@ const SidebarButton = ({ active, onClick, icon, label, badge, badgeColor = 'emer
       }`}>
         {badge}
       </span>
-    )}
+    ) : null}
   </button>
 );

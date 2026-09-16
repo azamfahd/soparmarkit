@@ -1,4 +1,4 @@
-export type SmartImportGroup = 'excel' | 'database' | 'ocr_ai' | 'cloud_sync';
+export type SmartImportGroup = 'excel' | 'database' | 'ocr_ai';
 
 export interface SmartImportHubProps {
   storeName: string;
@@ -19,6 +19,7 @@ export interface SmartImportHubProps {
   resetDatabase?: () => void;
   showNotification?: (msg: string, type?: 'success' | 'error') => void;
   onOpenExcelSyncCenter?: () => void;
+  onOpenSecureExport?: () => void;
   formatPrice?: (price: number) => string;
   setActiveTab?: (tab: string) => void;
   deviceID?: string;

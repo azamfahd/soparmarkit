@@ -18,7 +18,9 @@ import {
   Check,
   Phone,
   Wallet,
-  MapPin
+  MapPin,
+  LayoutGrid,
+  List
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 
@@ -103,6 +105,142 @@ const PosViewComponent: React.FC<PosViewProps> = ({
   const [isCustomerSearchOpen, setIsCustomerSearchOpen] = useState(false);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
   const [customerFilter, setCustomerFilter] = useState<'all' | 'debtors' | 'cleared'>('all');
+  
+  // حفظ واسترجاع وضع العرض المفضل (شبكة بطاقات أو قائمة سريعة) في localStorage
+  const [productViewMode, setProductViewMode] = useState<'compact' | 'list'>(() => {
+    try {
+      const saved = localStorage.getItem('pos_product_view_mode');
+      if (saved === 'compact' || saved === 'list') {
+        return saved;
+      }
+    } catch {
+      // Ignore localStorage error if any
+    }
+    return 'compact';
+  });
+
+  const handleSetProductViewMode = (mode: 'compact' | 'list') => {
+    setProductViewMode(mode);
+    try {
+      localStorage.setItem('pos_product_view_mode', mode);
+    } catch {
+      // Ignore localStorage error
+    }
+  };
+
+  // Fast lookup for quantity of items currently in cart
+  const cartItemCounts = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const item of cart) {
+      if (item.product_id != null) {
+        map.set(item.product_id, (map.get(item.product_id) || 0) + (item.quantity || 0));
+      }
+    }
+    return map;
+  }, [cart]);
+
+  // دالة متناسقة وأنيقة لتحديد ألوان وتنسيقات بطاقة المنتج الملكية وثلاثية الأبعاد
+  const getCategoryTheme = (categoryName?: string) => {
+    const cat = (categoryName || '').trim();
+    if (cat.includes('مشروب') || cat.includes('عصير') || cat.includes('ماء') || cat.includes('مياه')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-sky-50/80 via-white to-sky-50/30',
+        border: 'border-sky-200/90 hover:border-amber-400/90',
+        iconBg: 'bg-gradient-to-br from-sky-100 to-sky-50 text-sky-600 shadow-inner',
+        priceColor: 'text-sky-700',
+        tagBg: 'bg-sky-100/70 text-sky-800 border border-sky-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/70 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(14,165,233,0.12),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.22),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('خضار') || cat.includes('فواكه') || cat.includes('طازج') || cat.includes('عضوي')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-emerald-50/80 via-white to-emerald-50/30',
+        border: 'border-emerald-200/90 hover:border-amber-400/90',
+        iconBg: 'bg-gradient-to-br from-emerald-100 to-emerald-50 text-emerald-600 shadow-inner',
+        priceColor: 'text-emerald-700',
+        tagBg: 'bg-emerald-100/70 text-emerald-800 border border-emerald-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/70 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(16,185,129,0.12),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.22),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('حلو') || cat.includes('شوكولات') || cat.includes('بسكويت') || cat.includes('كيك') || cat.includes('تسالي')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-amber-50/80 via-white to-amber-50/30',
+        border: 'border-amber-300/80 hover:border-amber-500',
+        iconBg: 'bg-gradient-to-br from-amber-100 to-amber-50 text-amber-700 shadow-inner',
+        priceColor: 'text-amber-800',
+        tagBg: 'bg-amber-100/70 text-amber-900 border border-amber-200/60',
+        goldAccent: 'border-b-2 border-b-amber-400/90 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(245,158,11,0.15),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.28),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('ألبان') || cat.includes('اجبان') || cat.includes('حليب') || cat.includes('جبن') || cat.includes('بيض')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-indigo-50/80 via-white to-indigo-50/30',
+        border: 'border-indigo-200/90 hover:border-amber-400/90',
+        iconBg: 'bg-gradient-to-br from-indigo-100 to-indigo-50 text-indigo-600 shadow-inner',
+        priceColor: 'text-indigo-700',
+        tagBg: 'bg-indigo-100/70 text-indigo-800 border border-indigo-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/70 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(99,102,241,0.12),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.22),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('لحوم') || cat.includes('دواجن') || cat.includes('دجاج') || cat.includes('سمك') || cat.includes('مجمدات')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-rose-50/80 via-white to-rose-50/30',
+        border: 'border-rose-200/90 hover:border-amber-400/90',
+        iconBg: 'bg-gradient-to-br from-rose-100 to-rose-50 text-rose-600 shadow-inner',
+        priceColor: 'text-rose-700',
+        tagBg: 'bg-rose-100/70 text-rose-800 border border-rose-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/70 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(244,63,94,0.12),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.22),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('مخبز') || cat.includes('معجنات') || cat.includes('خبز') || cat.includes('توست')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-orange-50/80 via-white to-orange-50/30',
+        border: 'border-orange-200/90 hover:border-amber-400/90',
+        iconBg: 'bg-gradient-to-br from-orange-100 to-orange-50 text-orange-600 shadow-inner',
+        priceColor: 'text-orange-700',
+        tagBg: 'bg-orange-100/70 text-orange-900 border border-orange-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/70 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(249,115,22,0.12),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.22),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('منظف') || cat.includes('عناية') || cat.includes('صابون') || cat.includes('ورقيات')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-teal-50/80 via-white to-teal-50/30',
+        border: 'border-teal-200/90 hover:border-amber-400/90',
+        iconBg: 'bg-gradient-to-br from-teal-100 to-teal-50 text-teal-600 shadow-inner',
+        priceColor: 'text-teal-700',
+        tagBg: 'bg-teal-100/70 text-teal-800 border border-teal-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/70 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(20,184,166,0.12),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.22),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    if (cat.includes('بهارات') || cat.includes('حبوب') || cat.includes('أرز') || cat.includes('زيت') || cat.includes('معلبات')) {
+      return {
+        cardBg: 'bg-gradient-to-b from-amber-50/70 via-white to-yellow-50/30',
+        border: 'border-yellow-300/80 hover:border-amber-500',
+        iconBg: 'bg-gradient-to-br from-yellow-100 to-amber-50 text-yellow-700 shadow-inner',
+        priceColor: 'text-amber-800',
+        tagBg: 'bg-yellow-100/70 text-yellow-900 border border-yellow-200/50',
+        goldAccent: 'border-b-2 border-b-amber-400/80 hover:border-b-amber-500',
+        cardShadow: 'shadow-[0_4px_12px_-2px_rgba(234,179,8,0.14),0_2px_4px_-1px_rgba(0,0,0,0.04)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.25),0_4px_8px_-2px_rgba(0,0,0,0.06)]'
+      };
+    }
+    // النمط الافتراضي الراقي بحواف ذهبية ملكية وتجسيم ثلاثي الأبعاد
+    return {
+      cardBg: 'bg-gradient-to-b from-slate-50/90 via-white to-amber-50/20',
+      border: 'border-amber-200/70 hover:border-amber-400',
+      iconBg: 'bg-gradient-to-br from-slate-100 to-amber-50/50 text-slate-600 shadow-inner',
+      priceColor: 'text-emerald-700',
+      tagBg: 'bg-slate-100 text-slate-700 border border-slate-200/50',
+      goldAccent: 'border-b-2 border-b-amber-400/60 hover:border-b-amber-500',
+      cardShadow: 'shadow-[0_4px_12px_-2px_rgba(0,0,0,0.05),0_2px_4px_-1px_rgba(0,0,0,0.03)] hover:shadow-[0_10px_20px_-3px_rgba(245,158,11,0.2),0_4px_8px_-2px_rgba(0,0,0,0.05)]'
+    };
+  };
 
   // Handle hardware back button to close customer search sheet first
   useEffect(() => {
@@ -157,34 +295,45 @@ const PosViewComponent: React.FC<PosViewProps> = ({
       key="pos"
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
-      className="space-y-4"
+      className="space-y-2.5"
     >
-      <div className="flex items-center gap-2 mb-4">
-        <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors">
-          <Home className="w-6 h-6" />
-        </button>
-        <h2 className="text-xl font-bold">نقطة البيع</h2>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <div className="flex items-center gap-2">
+          <button onClick={() => setActiveTab('dashboard')} className="text-slate-500 hover:text-emerald-600 hover:bg-slate-100 p-1 rounded-full transition-colors">
+            <Home className="w-5 h-5" />
+          </button>
+          <h2 className="text-lg font-extrabold text-slate-900">نقطة البيع</h2>
+        </div>
       </div>
 
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-1.5">
         <div className="relative flex-1">
-          <Search className="absolute right-3 top-3 text-slate-400 w-5 h-5" />
+          <Search className="absolute right-3 top-2.5 text-slate-400 w-4 h-4" />
           <input 
             type="text" 
-            placeholder="ابحث بالاسم أو السعر..." 
-            className="w-full p-3 pr-10 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+            placeholder="ابحث بالاسم، السعر أو الباركود..." 
+            className="w-full py-2 pr-9 pl-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none text-xs text-slate-800 placeholder:text-slate-400 font-medium"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          {searchTerm && (
+            <button
+              type="button"
+              onClick={() => setSearchTerm('')}
+              className="absolute left-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
         <button 
           type="button"
           onClick={() => { setScannerMode('pos'); setIsScannerOpen(true); }}
-          className="px-4 bg-emerald-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all shadow-md shadow-emerald-500/10 active:scale-95"
+          className="px-3 py-2 bg-emerald-600 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-700 transition-all shadow-xs text-xs active:scale-95"
           title="مسح باركود المنتج بالكاميرا"
         >
-          <Scan className="w-5 h-5" />
-          <span className="hidden sm:inline">قارئ الباركود</span>
+          <Scan className="w-4 h-4" />
+          <span className="hidden sm:inline">مسح باركود</span>
         </button>
       </div>
 
@@ -257,27 +406,63 @@ const PosViewComponent: React.FC<PosViewProps> = ({
         )}
       </AnimatePresence>
 
-      {/* شريط الأقسام الذكي واللوحة الجانبية */}
-      <div className="flex items-center justify-between gap-2 mb-2 bg-slate-100/40 p-2 rounded-2xl border border-slate-100">
-        <div className="flex items-center gap-1 text-slate-700">
+      {/* شريط الأقسام الذكي وأدوات التحكم بنمط العرض */}
+      <div className="flex items-center justify-between gap-2 mb-2 bg-slate-100/60 p-2 rounded-2xl border border-slate-200/60">
+        <div className="flex items-center gap-1.5 text-slate-700">
           <Package className="w-4 h-4 text-emerald-600" />
           <span className="text-xs font-black">أقسام المتجر</span>
-          <span className="text-[10px] bg-slate-200/50 px-1.5 py-0.5 rounded-md font-bold text-slate-600">
+          <span className="text-[10px] bg-slate-200/70 px-1.5 py-0.5 rounded-md font-bold text-slate-600">
             {categories.length - 1} نشط
           </span>
+          <span className="text-[10px] text-slate-400 font-medium mr-1 hidden sm:inline">
+            ({filteredProducts.length} صنف)
+          </span>
         </div>
-        <button 
-          type="button"
-          onClick={() => setIsCategorySidebarOpen(true)}
-          className="flex items-center gap-1 text-[10px] font-black text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-xl transition-all cursor-pointer"
-        >
-          <Menu className="w-3 h-3" />
-          <span>تصفح الأقسام بالتفصيل</span>
-        </button>
+
+        <div className="flex items-center gap-1.5">
+          {/* محول نمط العرض: شبكة بطاقات متجاوبة أو قائمة سريعة (محفوظ تلقائياً في الذاكرة) */}
+          <div className="flex items-center bg-white p-0.5 rounded-xl border border-slate-200/80 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => handleSetProductViewMode('compact')}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-all cursor-pointer text-xs ${
+                productViewMode === 'compact'
+                  ? 'bg-emerald-600 text-white shadow-xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="عرض شبكة بطاقات متجاوبة"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span className="hidden md:inline text-[11px]">بطاقات</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSetProductViewMode('list')}
+              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg transition-all cursor-pointer text-xs ${
+                productViewMode === 'list'
+                  ? 'bg-emerald-600 text-white shadow-xs font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+              title="عرض قائمة عمودية سريعة"
+            >
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden md:inline text-[11px]">قائمة</span>
+            </button>
+          </div>
+
+          <button 
+            type="button"
+            onClick={() => setIsCategorySidebarOpen(true)}
+            className="flex items-center gap-1 text-[10px] font-black text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer"
+          >
+            <Menu className="w-3 h-3" />
+            <span className="hidden xs:inline">الأقسام</span>
+          </button>
+        </div>
       </div>
 
       {/* الشريط الأفقي الافتراضي للأقسام السريعة */}
-      <div className="flex gap-2 overflow-x-auto pb-1.5 mb-3 no-scrollbar">
+      <div className="flex gap-1.5 overflow-x-auto pb-1.5 mb-2.5 no-scrollbar">
         {categories.map((cat, idx) => {
           const itemsCount = categoryCounts[cat] || 0;
           return (
@@ -285,16 +470,16 @@ const PosViewComponent: React.FC<PosViewProps> = ({
               type="button"
               key={`pos-cat-${cat}-${idx}`}
               onClick={() => setSelectedCategory(cat)}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs whitespace-nowrap transition-all duration-150 cursor-pointer ${
                 selectedCategory === cat 
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10 font-bold scale-[1.02]' 
-                  : 'bg-white text-slate-600 border border-slate-200/60 hover:border-slate-350'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/10 font-bold scale-[1.01]' 
+                  : 'bg-white text-slate-600 border border-slate-200/60 hover:border-slate-350 hover:bg-slate-50/60'
               }`}
             >
-              {categoryIcons[cat] || <Package className="w-3.5 h-3.5" />}
-              <span>{cat}</span>
+              <span className="shrink-0">{categoryIcons[cat] || <Package className="w-3.5 h-3.5" />}</span>
+              <span className="font-bold">{cat}</span>
               <span className={`text-[9px] font-black px-1.5 py-0.2 rounded-md ${
-                selectedCategory === cat ? 'bg-white/20 text-white' : 'bg-slate-55/70 text-slate-500'
+                selectedCategory === cat ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
               }`}>
                 {itemsCount}
               </span>
@@ -303,46 +488,183 @@ const PosViewComponent: React.FC<PosViewProps> = ({
         })}
       </div>
 
-      <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto pr-1 pb-4">
-        {filteredProducts.map((p, idx) => (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.15 }}
-            key={`pos-product-${p.id ?? 'no-id'}-${idx}`} 
-            className={`relative p-3 rounded-3xl border-2 transition-all cursor-pointer active:scale-95 ${p.stock_quantity <= 0 ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-slate-100 hover:border-emerald-200 shadow-sm hover:shadow-md'}`}
-            onClick={() => p.stock_quantity > 0 && addToCart(p)}
-          >
-            <div className="aspect-square bg-slate-100 rounded-2xl mb-3 flex items-center justify-center text-slate-400">
-              {categoryIcons[p.category || ''] || <Package className="w-8 h-8 opacity-20" />}
-            </div>
-            
-            <div className="space-y-1">
-              <p className="font-bold text-slate-800 text-sm truncate">{p.name}</p>
-              <div className="flex justify-between items-center">
-                <p className="text-emerald-600 font-bold">{formatPrice(p.sale_price)}</p>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-lg font-bold ${p.stock_quantity <= 0 ? 'bg-red-100 text-red-600' : p.stock_quantity < 5 ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500'}`}>
-                  {p.stock_quantity <= 0 ? 'نفذ' : `${p.stock_quantity} ${p.unit || ''}`}
-                </span>
-              </div>
-            </div>
+      {/* شاشة عرض المنتجات: نمط الشبكة المتجاوبة (Responsive Grid) أو نمط القائمة السريعة */}
+      {filteredProducts.length === 0 ? (
+        <div className="p-8 text-center bg-white rounded-2xl border border-slate-100 my-2">
+          <Package className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+          <p className="text-slate-600 font-bold text-sm">لا توجد منتجات مطابقة للبحث أو القسم المختار</p>
+          <p className="text-xs text-slate-400 mt-1">جرب مسح خانة البحث أو اختيار قسم آخر</p>
+        </div>
+      ) : productViewMode === 'compact' ? (
+        /* شبكة متجاوبة فائقة المرونة: 2-3 أعمدة للهواتف، 4-5 للأجهزة اللوحية، و6-7 للشاشات الكبيرة مع مرونة كاملة */
+        <div className="grid grid-cols-2 xs:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2 sm:gap-2.5 max-h-[64vh] overflow-y-auto pr-0.5 pb-6">
+          {filteredProducts.map((p, idx) => {
+            const inCartQty = cartItemCounts.get(p.id!) || 0;
+            const isOutOfStock = p.stock_quantity <= 0;
+            const isLowStock = p.stock_quantity > 0 && p.stock_quantity < 5;
+            const theme = getCategoryTheme(p.category);
 
-            {p.stock_quantity > 0 && (
-              <div className="absolute top-2 left-2 flex flex-col gap-1">
-                <div className="bg-emerald-500 text-white p-1 rounded-full shadow-lg">
-                  <Plus className="w-3 h-3" />
+            return (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                whileHover={{ y: -2.5, transition: { duration: 0.15 } }}
+                whileTap={{ scale: 0.96 }}
+                key={`pos-product-${p.id ?? 'no-id'}-${idx}`} 
+                className={`group relative p-2 sm:p-2.5 rounded-2xl border transition-all cursor-pointer select-none flex flex-col justify-between ${theme.goldAccent} ${
+                  isOutOfStock 
+                    ? 'bg-slate-50/90 border-slate-200/60 opacity-60 shadow-xs' 
+                    : inCartQty > 0
+                      ? 'bg-emerald-50/60 border-emerald-500 ring-2 ring-emerald-500/40 shadow-[0_8px_16px_-2px_rgba(16,185,129,0.25)]'
+                      : `${theme.cardBg} ${theme.border} ${theme.cardShadow}`
+                }`}
+                onClick={() => !isOutOfStock && addToCart(p)}
+              >
+                {/* حافة علوية مذهبة رفيعة جداً تعطي انعكاساً ملكياً ضوئياً */}
+                <div className="absolute inset-x-2 top-0 h-[1.5px] bg-gradient-to-r from-transparent via-amber-300/80 to-transparent rounded-t-full opacity-70 group-hover:opacity-100 transition-opacity pointer-events-none" />
+
+                {/* شارة عداد السلة العلوية بنمط بارز وأنيق مع إطار ذهبي */}
+                {inCartQty > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 z-10 bg-emerald-600 text-white font-black text-[10px] min-w-[20px] h-[20px] px-1 rounded-full flex items-center justify-center shadow-md ring-2 ring-amber-300">
+                    {inCartQty}
+                  </span>
+                )}
+
+                {/* رأس البطاقة: أيقونة الصنف بحاوية ثلاثية الأبعاد ناعمة منسجمة الألوان */}
+                <div className={`h-11 sm:h-12 w-full rounded-xl mb-1.5 flex items-center justify-center transition-all ${
+                  isOutOfStock 
+                    ? 'bg-slate-100 text-slate-400' 
+                    : `${theme.iconBg} group-hover:scale-[1.03] transition-transform`
+                }`}>
+                  <div className="scale-80 sm:scale-90 drop-shadow-xs">
+                    {categoryIcons[p.category || ''] || <Package className="w-5 h-5 opacity-70" />}
+                  </div>
                 </div>
+                
+                {/* محتوى البطاقة: الاسم والسعر والمخزون بتنسيق احترافي موفر للمساحة */}
+                <div className="flex-1 flex flex-col justify-between space-y-1">
+                  {/* اسم المنتج */}
+                  <h4 
+                    className="font-bold text-slate-800 text-[11px] sm:text-xs leading-tight line-clamp-2 min-h-[1.75rem]" 
+                    title={p.name}
+                  >
+                    {p.name}
+                  </h4>
+
+                  {/* السعر والمخزون بتناغم لوني راقٍ وحواف ذهبية خفيفة */}
+                  <div className="pt-1 border-t border-amber-100/60 flex items-baseline justify-between gap-1">
+                    <span className={`font-black text-[11px] sm:text-xs tabular-nums tracking-tight ${
+                      isOutOfStock ? 'text-slate-400 line-through' : theme.priceColor
+                    }`}>
+                      {formatPrice(p.sale_price)}
+                    </span>
+                    <span className={`text-[8.5px] sm:text-[9px] px-1.5 py-0.2 rounded-md font-bold shrink-0 tabular-nums ${
+                      isOutOfStock 
+                        ? 'bg-red-50 text-red-600 border border-red-200/60' 
+                        : isLowStock 
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200/60' 
+                          : theme.tagBg
+                    }`}>
+                      {isOutOfStock ? 'نفذ' : `${p.stock_quantity}`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* زر عرض تفاصيل/سجل الصنف عند الرغبة */}
                 <button 
                   onClick={(e) => { e.stopPropagation(); fetchProductHistory(p); }}
-                  className="bg-white/90 backdrop-blur-sm text-slate-400 p-1 rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                  className="absolute top-1.5 left-1.5 opacity-0 group-hover:opacity-100 bg-white/95 hover:bg-white text-slate-400 hover:text-amber-600 p-1 rounded-lg shadow-xs border border-amber-200/50 transition-all cursor-pointer"
+                  title="سجل الصنف ومواصفاته"
                 >
                   <AlertCircle className="w-3 h-3" />
                 </button>
-              </div>
-            )}
-          </motion.div>
-        ))}
-      </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      ) : (
+        /* نمط القائمة السريعة (Fast List View) للكاشير السريع مع الألوان المتناسقة والمرونة العالية */
+        <div className="space-y-1.5 max-h-[64vh] overflow-y-auto pr-0.5 pb-6">
+          {filteredProducts.map((p, idx) => {
+            const inCartQty = cartItemCounts.get(p.id!) || 0;
+            const isOutOfStock = p.stock_quantity <= 0;
+            const isLowStock = p.stock_quantity > 0 && p.stock_quantity < 5;
+            const theme = getCategoryTheme(p.category);
+
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: 3 }}
+                animate={{ opacity: 1, y: 0 }}
+                whileHover={{ x: -2, transition: { duration: 0.12 } }}
+                whileTap={{ scale: 0.99 }}
+                key={`pos-product-list-${p.id ?? 'no-id'}-${idx}`}
+                className={`flex items-center justify-between p-2 rounded-xl border transition-all cursor-pointer select-none ${theme.goldAccent} ${
+                  isOutOfStock
+                    ? 'bg-slate-50/70 border-slate-200/60 opacity-60 shadow-2xs'
+                    : inCartQty > 0
+                      ? 'bg-emerald-50/60 border-emerald-500 ring-1 ring-emerald-500/40 shadow-xs'
+                      : `${theme.cardBg} ${theme.border} ${theme.cardShadow}`
+                }`}
+                onClick={() => !isOutOfStock && addToCart(p)}
+              >
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${theme.iconBg}`}>
+                    <div className="scale-75">
+                      {categoryIcons[p.category || ''] || <Package className="w-4 h-4" />}
+                    </div>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-bold text-slate-800 text-xs truncate" title={p.name}>
+                        {p.name}
+                      </p>
+                      {inCartQty > 0 && (
+                        <span className="bg-emerald-600 text-white font-black text-[9px] px-1.5 py-0.2 rounded-full shrink-0 shadow-2xs">
+                          {inCartQty} بالسلة
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium truncate">
+                      {p.category} {p.barcode ? `• باركود: ${p.barcode}` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                    isOutOfStock 
+                      ? 'bg-red-50 text-red-600 border border-red-200/60' 
+                      : isLowStock 
+                        ? 'bg-amber-50 text-amber-700 border border-amber-200/60' 
+                        : theme.tagBg
+                  }`}>
+                    {isOutOfStock ? 'نفذ' : `${p.stock_quantity} ${p.unit || ''}`}
+                  </span>
+                  <span className={`font-black text-xs min-w-[60px] text-left ${
+                    isOutOfStock ? 'text-slate-400 line-through' : theme.priceColor
+                  }`}>
+                    {formatPrice(p.sale_price)}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); fetchProductHistory(p); }}
+                      className="p-1 text-slate-400 hover:text-sky-600 hover:bg-slate-100 rounded-lg transition-colors"
+                      title="سجل الصنف"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5" />
+                    </button>
+                    {!isOutOfStock && (
+                      <div className="bg-emerald-600 text-white p-1 rounded-lg shadow-2xs">
+                        <Plus className="w-3.5 h-3.5" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
 
       {cart.length > 0 && (
         <div className="fixed bottom-6 left-4 right-4 max-w-lg mx-auto z-40">

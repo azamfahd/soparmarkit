@@ -244,6 +244,11 @@ export interface SettingsViewProps {
   roundingFactor: number | null;
   updateRoundingFactor: (factor: number | null) => void;
   permissionsEnabled: boolean;
+  appLockEnabled?: boolean;
+  updateAppLockEnabled?: (val: boolean) => Promise<void>;
+  onLockScreenNow?: () => void;
+  protectedActions?: Record<string, boolean>;
+  setIsPermissionsPreUnlocked?: (val: boolean) => void;
   verifyAdminPermission: (action: string, callback: () => void, title?: string) => void;
   setShowPermissionsConfigModal: (show: boolean) => void;
   exportData: () => void;
@@ -311,6 +316,7 @@ export interface SettingsViewProps {
   handleChangeDeveloperPIN?: (currentPin: string, newPin: string, confirmPin: string) => Promise<boolean>;
   handleResetDeveloperPIN?: (currentPin: string) => void;
   onOpenExcelSyncCenter?: () => void;
+  onOpenSecureExport?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -325,6 +331,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   roundingFactor,
   updateRoundingFactor,
   permissionsEnabled,
+  appLockEnabled = false,
+  updateAppLockEnabled,
+  onLockScreenNow,
+  protectedActions = {},
+  setIsPermissionsPreUnlocked,
   verifyAdminPermission,
   setShowPermissionsConfigModal,
   exportData,
@@ -336,6 +347,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   importData,
   isBackupSyncing,
   onOpenExcelSyncCenter,
+  onOpenSecureExport,
   autoBackupFileStatus,
   forceLocalDiskBackup,
   resetDatabase,
@@ -814,24 +826,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs">
-              <span className="font-bold text-slate-600">حالة التقييد والأمان:</span>
-              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${permissionsEnabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-500'}`}>
-                {permissionsEnabled ? 'نشط ومحمي 🔒' : 'معطل (مفتوح)'}
-              </span>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs">
+                <span className="font-bold text-slate-600">حالة التقييد والأمان:</span>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${permissionsEnabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-amber-50 text-amber-600 border border-amber-200'}`}>
+                  {permissionsEnabled ? 'نشط ومحمي 🔒' : 'معطل (مفتوح)'}
+                </span>
+              </div>
+
+              {permissionsEnabled && (
+                <div className="text-[10px] text-slate-500 font-bold bg-slate-50/70 px-2.5 py-1.5 rounded-lg border border-slate-100 flex justify-between items-center">
+                  <span>الإجراءات المحمية بالرمز:</span>
+                  <span className="font-mono text-emerald-600 font-black">
+                    {Object.values(protectedActions).filter(Boolean).length} إجراء
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
-          <Button 
-            onClick={() => {
-              verifyAdminPermission('settings', () => {
-                setShowPermissionsConfigModal(true);
-              }, '⚙️ تهيئة إعدادات الأمان والصلاحيات');
-            }}
-            className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold flex items-center justify-center gap-2 rounded-xl transition-all text-xs py-2.5"
-          >
-            <span>🔑 إعداد الصلاحيات وتغيير الرمز</span>
-          </Button>
+          <div className="pt-1">
+            <Button 
+              onClick={() => {
+                verifyAdminPermission('security_settings', () => {
+                  if (setIsPermissionsPreUnlocked) setIsPermissionsPreUnlocked(true);
+                  setShowPermissionsConfigModal(true);
+                }, '⚙️ تهيئة إعدادات الأمان والصلاحيات');
+              }}
+              className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold flex items-center justify-center gap-2 rounded-xl transition-all text-xs py-2.5 cursor-pointer shadow-2xs"
+            >
+              <span>🔑 إعداد الصلاحيات وتغيير الرمز</span>
+            </Button>
+          </div>
         </Card>
 
         {/* Card 3: Unified Data & Import Hub Banner */}
@@ -881,7 +907,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 تنبيه النسخ الدوري:
               </span>
               <span className="text-[10px] font-black text-indigo-700 bg-white px-2 py-0.5 rounded-md border border-indigo-100 shadow-2xs">
-                {backupAlertInterval === '7' ? 'أسبوعياً' : backupAlertInterval === '30' ? 'شهرياً' : backupAlertInterval === '60' ? 'كل شهرين' : 'معطل'}
+                {backupAlertInterval === '7' ? 'أسبوعياً' : backupAlertInterval === '14' ? 'كل أسبوعين' : backupAlertInterval === '30' ? 'شهرياً' : backupAlertInterval === '60' ? 'كل شهرين' : 'معطل'}
               </span>
             </div>
           </div>
@@ -894,18 +920,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Sparkles className="w-3.5 h-3.5 text-amber-300" />
               <span>فتح مركز الاستيراد والبيانات</span>
             </Button>
-            <Button 
-              variant={isBackupOverdue ? "danger" : "outline"} 
-              className={`flex items-center justify-center gap-1.5 text-xs py-2.5 cursor-pointer ${
-                isBackupOverdue 
-                  ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-extrabold shadow-[0_0_16px_rgba(239,68,68,0.65)] border-red-400 animate-pulse' 
-                  : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'
-              }`} 
-              onClick={exportData}
-            >
-              <Download className={`w-3.5 h-3.5 ${isBackupOverdue ? 'text-white animate-bounce' : 'text-indigo-600'}`} />
-              <span>{isBackupOverdue ? 'تصدير نسخة فورية ⚠️' : 'تصدير نسخة سريعة'}</span>
-            </Button>
+            {onOpenSecureExport ? (
+              <Button 
+                variant="outline"
+                className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold flex items-center justify-center gap-1.5 rounded-xl transition-all text-xs py-2.5 cursor-pointer"
+                onClick={onOpenSecureExport}
+              >
+                <Lock className="w-3.5 h-3.5 text-indigo-600" />
+                <span>تصدير مؤمن بكلمة سر 🔒</span>
+              </Button>
+            ) : (
+              <Button 
+                variant={isBackupOverdue ? "danger" : "outline"} 
+                className={`flex items-center justify-center gap-1.5 text-xs py-2.5 cursor-pointer ${
+                  isBackupOverdue 
+                    ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white font-extrabold shadow-[0_0_16px_rgba(239,68,68,0.65)] border-red-400 animate-pulse' 
+                    : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'
+                }`} 
+                onClick={exportData}
+              >
+                <Download className={`w-3.5 h-3.5 ${isBackupOverdue ? 'text-white animate-bounce' : 'text-indigo-600'}`} />
+                <span>{isBackupOverdue ? 'تصدير نسخة فورية ⚠️' : 'تصدير نسخة سريعة'}</span>
+              </Button>
+            )}
           </div>
         </Card>
 

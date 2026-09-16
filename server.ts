@@ -2,12 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
@@ -310,6 +306,30 @@ async function startServer() {
     }
   });
 
+  // Universal Download Proxy Endpoint (bypasses iframe blob download restrictions via native HTTP Content-Disposition)
+  app.post('/api/export/download', (req, res) => {
+    try {
+      const { fileName, fileDataBase64, mimeType, textContent } = req.body;
+      const rawName = fileName || 'export.dat';
+      const encodedName = encodeURIComponent(rawName);
+      
+      res.setHeader('Content-Type', mimeType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${encodedName}"; filename*=UTF-8''${encodedName}`);
+      
+      if (textContent) {
+        return res.send(Buffer.from(textContent, 'utf8'));
+      }
+      if (fileDataBase64) {
+        const buffer = Buffer.from(fileDataBase64, 'base64');
+        return res.send(buffer);
+      }
+      return res.status(400).send('No file content');
+    } catch (err: any) {
+      console.error('Download proxy error:', err);
+      return res.status(500).send(err.message || 'Download error');
+    }
+  });
+
   // Vite middleware
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -318,7 +338,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = fs.existsSync(path.join(process.cwd(), 'dist'))
+      ? path.join(process.cwd(), 'dist')
+      : path.join(process.cwd(), 'build');
     app.use(express.static(distPath));
     app.use((req, res, next) => {
       if (req.method === 'GET' && !req.path.startsWith('/api')) {
@@ -329,7 +351,7 @@ async function startServer() {
     });
   }
 
-  const PORT = parseInt(process.env.PORT || '3000', 10);
+  const PORT = 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

@@ -341,10 +341,15 @@ export const SupplierSummaryModal: React.FC<SupplierSummaryModalProps> = ({
                 {formatPrice(metrics.totalInventoryAndSoldCost)}
               </p>
             </div>
-            <div className="text-[8.5px] text-purple-800 font-mono font-bold flex justify-between items-center pt-0.5 border-t border-purple-200/60">
-              <span className="truncate">المخزن: {formatPrice(metrics.inventoryCostValue)}</span>
-              <span>•</span>
-              <span className="truncate">المباع: {formatPrice(metrics.soldCostValue)}</span>
+            <div className="pt-1 mt-0.5 border-t border-purple-200/70 space-y-0.5">
+              <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
+                <span className="text-purple-800/90 shrink-0">المخزن:</span>
+                <span className="font-mono text-purple-950 font-black">{formatPrice(metrics.inventoryCostValue)}</span>
+              </div>
+              <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
+                <span className="text-purple-800/90 shrink-0">المباع:</span>
+                <span className="font-mono text-purple-950 font-black">{formatPrice(metrics.soldCostValue)}</span>
+              </div>
             </div>
           </div>
         </div>

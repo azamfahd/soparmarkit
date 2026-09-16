@@ -2620,10 +2620,15 @@ export default function SmartAnalytics
                     {formatPrice(supplierAnalytics.activeViewMetrics.totalInventoryAndSoldCost)}
                   </div>
                 </div>
-                <div className="text-[9px] text-indigo-900 flex justify-between items-center font-mono">
-                  <span>المخزون: {formatPrice(supplierAnalytics.activeViewMetrics.inventoryCostValue)}</span>
-                  <span>•</span>
-                  <span>المباع: {formatPrice(supplierAnalytics.activeViewMetrics.soldCostValue)}</span>
+                <div className="pt-1 mt-0.5 border-t border-indigo-200/70 space-y-0.5">
+                  <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
+                    <span className="text-indigo-800/90 shrink-0">المخزون:</span>
+                    <span className="font-mono text-indigo-950 font-black">{formatPrice(supplierAnalytics.activeViewMetrics.inventoryCostValue)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px] sm:text-[10.5px] font-bold">
+                    <span className="text-indigo-800/90 shrink-0">المباع:</span>
+                    <span className="font-mono text-indigo-950 font-black">{formatPrice(supplierAnalytics.activeViewMetrics.soldCostValue)}</span>
+                  </div>
                 </div>
               </div>
             </div>
