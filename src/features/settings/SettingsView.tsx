@@ -22,215 +22,7 @@ import {
   importExcelBackupManual
 } from '../../services/excelSync';
 import { subscribeToAppVersion } from '../../services/firebase';
-import { 
-  checkAppUpdates, 
-  downloadDirectAPK, 
-  getApkDownloadUrl, 
-  applyOTAUpdate, 
-  fetchRemoteVersionInfo,
-  UPDATE_SAFETY_NOTICE,
-  type UpdateCheckResult,
-  type VersionInfo 
-} from '../../services/updateService';
 import { embeddingManager } from '../../services/ai/rag/embeddings';
-
-const ApkUpdateManager: React.FC = () => {
-  const [config, setConfig] = React.useState<AppVersionConfig | null>(null);
-  const [version, setVersion] = React.useState('');
-  const [apkUrl, setApkUrl] = React.useState('');
-  const [updateMessage, setUpdateMessage] = React.useState('');
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [successMsg, setSuccessMsg] = React.useState('');
-  
-  // Dynamic in-app update state
-  const [remoteMetadata, setRemoteMetadata] = React.useState<VersionInfo | null>(null);
-  const [checkingUpdate, setCheckingUpdate] = React.useState(false);
-  const [checkResult, setCheckResult] = React.useState<UpdateCheckResult | null>(null);
-
-  React.useEffect(() => {
-    // Fetch version.json info
-    fetchRemoteVersionInfo().then(info => {
-      if (info) {
-        setRemoteMetadata(info);
-        if (!apkUrl) setApkUrl(getApkDownloadUrl(info.updateUrl));
-        if (!version) setVersion(info.version);
-      }
-    });
-
-    const unsub = subscribeToAppVersion((cfg) => {
-      if (cfg) {
-        setConfig(cfg);
-        if (cfg.latestVersion) setVersion(cfg.latestVersion);
-        if (cfg.apkUrl) setApkUrl(cfg.apkUrl);
-        if (cfg.updateMessage) setUpdateMessage(cfg.updateMessage);
-      }
-    });
-    return () => unsub();
-  }, []);
-
-  const handleManualCheck = async () => {
-    setCheckingUpdate(true);
-    try {
-      const res = await checkAppUpdates();
-      setCheckResult(res);
-      if (res.hasUpdate) {
-        setSuccessMsg(`🚀 يتوفر إصدار جديد (${res.latestVersion})! جاهز للتحميل والتحديث.`);
-      } else {
-        setSuccessMsg('✅ تطبيقك محدث إلى أحدث إصدار متوفر حالياً.');
-      }
-    } catch (e) {
-      console.warn(e);
-      setSuccessMsg('تم فحص التحديثات بنجاح.');
-    } finally {
-      setCheckingUpdate(false);
-      setTimeout(() => setSuccessMsg(''), 6000);
-    }
-  };
-
-  const handlePublish = async () => {
-    setIsSubmitting(true);
-    setSuccessMsg('');
-    try {
-      await updateLatestAppVersion({
-        latestVersion: version,
-        apkUrl: apkUrl || getApkDownloadUrl(),
-        updateMessage,
-        mandatory: false
-      });
-      setSuccessMsg('تم نشر إشعار التحديث لجميع الأجهزة بنجاح! 🚀');
-      setTimeout(() => setSuccessMsg(''), 5000);
-    } catch (e) {
-      console.error(e);
-      alert('فشل نشر التحديث');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const directDownloadUrl = getApkDownloadUrl(apkUrl || remoteMetadata?.updateUrl);
-
-  return (
-    <div className="space-y-5 text-right">
-      {/* 1. Header & Live Status Card */}
-      <div className="bg-gradient-to-l from-slate-900 via-slate-900 to-emerald-950 text-white p-5 rounded-2xl border border-emerald-500/30 space-y-4 shadow-lg">
-        <div className="flex items-start justify-between">
-          <button
-            onClick={handleManualCheck}
-            disabled={checkingUpdate}
-            className="px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center gap-1.5 cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${checkingUpdate ? 'animate-spin' : ''}`} />
-            <span>{checkingUpdate ? 'جاري الفحص...' : 'فحص التحديثات الآن'}</span>
-          </button>
-          <div className="text-right space-y-1">
-            <div className="flex items-center justify-end gap-2">
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold">
-                نظام مزدوج (OTA + APK)
-              </span>
-              <h4 className="text-white font-extrabold text-sm flex items-center gap-1.5 justify-end">
-                <span>إدارة التحديثات والبناء الآلي</span>
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-              </h4>
-            </div>
-            <p className="text-xs text-slate-300">
-              الإصدار الحالي: <span className="font-mono text-emerald-400 font-bold">{remoteMetadata?.version || '1.0.4'}</span> (Build #{remoteMetadata?.versionCode || 4})
-            </p>
-          </div>
-        </div>
-
-        {/* Safety Banner */}
-        <div className="bg-emerald-900/30 border border-emerald-500/30 p-2.5 rounded-xl flex items-center justify-end gap-2 text-xs text-emerald-200">
-          <span>{UPDATE_SAFETY_NOTICE}</span>
-          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-        </div>
-
-        {/* Direct Action Buttons */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-          <button
-            onClick={() => downloadDirectAPK(directDownloadUrl)}
-            className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>تنزيل حزمة APK المباشرة (GitHub Release)</span>
-          </button>
-          <button
-            onClick={() => applyOTAUpdate()}
-            className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 active:scale-95 text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>تحديث الواجهة الفوري (OTA Reload)</span>
-          </button>
-        </div>
-
-        {/* Release URL reference */}
-        <div className="pt-1 text-[11px] text-slate-400 break-all text-left font-mono dir-ltr bg-slate-950/60 p-2 rounded-lg border border-slate-800">
-          <span className="text-slate-500 text-[10px] block text-right font-sans mb-0.5">رابط التحميل المباشر الثابت:</span>
-          {directDownloadUrl}
-        </div>
-      </div>
-
-      {successMsg && (
-        <div className="p-3 bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-bold rounded-xl text-center shadow-sm">
-          {successMsg}
-        </div>
-      )}
-
-      {/* 2. Admin Broadcast Form (Firebase Broadcast) */}
-      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 text-right">
-        <h5 className="font-extrabold text-xs text-slate-800 flex items-center gap-1.5 justify-end">
-          <span>بث إشعار تحديث فوري للأجهزة (Firebase Broadcast)</span>
-          <Cloud className="w-4 h-4 text-indigo-600" />
-        </h5>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          يمكنك تغيير رقم الإصدار هنا لإظهار راية التحديث تلقائياً لجميع مستخدمي الهواتف والأجهزة فور فتحهم للبرنامج.
-        </p>
-
-        <div className="space-y-3 pt-2">
-          <div className="space-y-1 text-right">
-            <label className="text-[11px] font-bold text-slate-600 block">رقم الإصدار الجديد</label>
-            <input 
-              type="text" 
-              value={version} 
-              onChange={e => setVersion(e.target.value)}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:border-indigo-500 outline-none transition-all text-sm font-mono text-left"
-              placeholder="1.0.4"
-            />
-          </div>
-
-          <div className="space-y-1 text-right">
-            <label className="text-[11px] font-bold text-slate-600 block">رابط تحميل الـ APK المباشر</label>
-            <input 
-              type="text" 
-              value={apkUrl} 
-              onChange={e => setApkUrl(e.target.value)}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:border-indigo-500 outline-none transition-all text-xs font-mono text-left"
-              placeholder={directDownloadUrl}
-            />
-          </div>
-
-          <div className="space-y-1 text-right">
-            <label className="text-[11px] font-bold text-slate-600 block">رسالة وملاحظات التحديث للمستخدمين</label>
-            <textarea 
-              value={updateMessage} 
-              onChange={e => setUpdateMessage(e.target.value)}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:border-indigo-500 outline-none transition-all text-xs resize-none custom-scrollbar"
-              rows={2}
-              placeholder="ما الجديد في هذا التحديث؟"
-            />
-          </div>
-
-          <Button 
-            onClick={handlePublish} 
-            disabled={isSubmitting || !version.trim()}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5"
-          >
-            {isSubmitting ? 'جاري البث...' : 'بث وتعميم التحديث على الأجهزة 📡'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 export interface SettingsViewProps {
   isAutoBackupEnabled: boolean;
@@ -292,8 +84,8 @@ export interface SettingsViewProps {
   developerPinError: string;
   setDeveloperPinError: (val: string) => void;
   handleVerifyDeveloperPIN: () => void;
-  activeDevTab: 'generator' | 'requests' | 'updates';
-  setActiveDevTab: (tab: 'generator' | 'requests' | 'updates') => void;
+  activeDevTab: 'generator' | 'requests';
+  setActiveDevTab: (tab: 'generator' | 'requests') => void;
   allCloudRequests: any[];
   requestDurations: Record<string, number>;
   setRequestDurations: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -1549,7 +1341,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             
             <div className="space-y-4">
               {/* Developer Sub-Tabs */}
-              <div className="grid grid-cols-3 p-1 bg-slate-150 rounded-xl border border-slate-200">
+              <div className="grid grid-cols-2 p-1 bg-slate-150 rounded-xl border border-slate-200">
                 <button 
                   onClick={() => setActiveDevTab('generator')}
                   className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'generator' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
@@ -1567,12 +1359,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       {allCloudRequests.filter(r => r.status === 'pending').length}
                     </span>
                   )}
-                </button>
-                <button 
-                  onClick={() => setActiveDevTab('updates')}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'updates' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
-                >
-                  🔄 التحديثات
                 </button>
               </div>
 
@@ -1747,9 +1533,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </div>
                   )}
                 </div>
-              ) : activeDevTab === 'updates' ? (
-                /* APK Updates Manager */
-                <ApkUpdateManager />
               ) : (
                 /* Manual Direct Generator */
                 <>

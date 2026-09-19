@@ -87,7 +87,7 @@ export const UpdateNotificationBanner: React.FC<UpdateNotificationBannerProps> =
               id="download-apk-update-btn"
               onClick={onDownloadAPK}
               className="py-2 px-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/30 transition-all flex items-center justify-center gap-1 cursor-pointer"
-              title="تحميل حزمة APK كاملة ومباشرة من GitHub Releases"
+              title="تحميل حزمة APK كاملة ومباشرة"
             >
               <Download className="w-3.5 h-3.5" />
               <span>تحميل الـ APK 📲</span>

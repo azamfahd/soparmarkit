@@ -53,6 +53,7 @@ import { saveFileToDevice } from './utils/fileSaver';
 import { importAndRepairDatabaseOffline, convertJsonDatabaseToExcel, convertExcelToDatabaseJson, AuditReport } from './services/dataSanitizer';
 import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } from './utils/printUtils';
 import { InstallAppModal } from './components/InstallAppModal';
+import { CheckUpdatesModal } from './components/modals/CheckUpdatesModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, getApkDownloadUrl } from './services/updateService';
@@ -874,7 +875,7 @@ export default function App() {
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(false);
   const [developerPinInput, setDeveloperPinInput] = useState<string>('');
   const [developerPinError, setDeveloperPinError] = useState<string>('');
-  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests' | 'updates'>('requests');
+  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests'>('requests');
   const [devClickCount, setDevClickCount] = useState<number>(0);
   const [showHiddenAdminInput, setShowHiddenAdminInput] = useState<boolean>(false);
   const [diagnosticAttempts, setDiagnosticAttempts] = useState<number>(0);
@@ -975,6 +976,8 @@ export default function App() {
   }, []);
 
   const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showCheckUpdatesModal, setShowCheckUpdatesModal] = useState(false);
+  const [hasPendingUpdate, setHasPendingUpdate] = useState(false);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [remoteAppConfig, setRemoteAppConfig] = useState<AppVersionConfig | null>(null);
   const [currentAppVersion, setCurrentAppVersion] = useState<string>('');
@@ -1026,7 +1029,11 @@ export default function App() {
     }
   };
 
-  const handleDownloadAPK = () => {
+  const handleDownloadAPK = (force = false) => {
+    if (!force && remoteAppConfig && !hasPendingUpdate) {
+      showNotification(`✨ التطبيق مثبت لديك ومتوافق بأحدث إصدار بالفعل (v${remoteAppConfig.latestVersion || '1.0.0'}) - لا داعي لإعادة التنزيل!`, 'success');
+      return;
+    }
     const url = remoteAppConfig?.apkUrl || getApkDownloadUrl();
     downloadDirectAPK(url);
     showNotification('جاري بدء تنزيل حزمة الـ APK المباشرة... (تثبيت آمن مع الاحتفاظ ببياناتك)', 'success');
@@ -1673,9 +1680,10 @@ export default function App() {
 
   // Subscribe to remote app version in Firebase & Check Dual In-App Updates
   useEffect(() => {
-    // 1. Dual In-App update check via public/version.json & GitHub Releases
+    // 1. Dual In-App update check via GitHub Releases API directly first
     checkAppUpdates().then((res) => {
       if (res.hasUpdate) {
+        setHasPendingUpdate(true);
         setRemoteAppConfig({
           latestVersion: res.latestVersion,
           apkUrl: res.updateUrl,
@@ -1683,7 +1691,7 @@ export default function App() {
           mandatory: false,
           updatedAt: new Date().toISOString()
         });
-        setUpdateBannerMessage(res.releaseNotes);
+        setUpdateBannerMessage(`🎉 يتوفر تحديث جديد v${res.latestVersion}!\n${res.releaseNotes}`);
         setShowUpdateBanner(true);
       }
     }).catch(console.warn);
@@ -1695,6 +1703,7 @@ export default function App() {
         // Compare version if running in APK
         if (isNativeAndroid && currentAppVersion) {
           if (config.latestVersion && config.latestVersion !== currentAppVersion) {
+            setHasPendingUpdate(true);
             setUpdateBannerMessage(config.updateMessage || 'يتوفر تحديث جديد لتطبيق الأندرويد.');
             setShowUpdateBanner(true);
           }
@@ -5484,6 +5493,17 @@ export default function App() {
               badgeColor="violet"
               isLocked={Boolean(permissionsEnabled && protectedActions?.smart_import)}
             />
+            <SidebarButton 
+              active={showCheckUpdatesModal} 
+              onClick={() => {
+                setShowCheckUpdatesModal(true);
+                setIsSidebarOpen(false);
+              }} 
+              icon={<RefreshCw className={`w-4 h-4 ${hasPendingUpdate ? 'text-amber-500 animate-spin' : 'text-emerald-500'}`} />} 
+              label="فحص تحديثات الـ APK 🚀" 
+              badge={hasPendingUpdate ? "إصدار جديد" : undefined}
+              badgeColor={hasPendingUpdate ? "red" : "emerald"}
+            />
           </div>
 
         </nav>
@@ -5550,6 +5570,34 @@ export default function App() {
             </button>
           </div>
           
+          {/* GitHub Update Direct Check Bar */}
+          <button
+            onClick={() => {
+              setShowCheckUpdatesModal(true);
+              setIsSidebarOpen(false);
+            }}
+            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl transition-all mt-2 cursor-pointer shadow-sm bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950 hover:from-slate-800 hover:to-emerald-900 text-white border border-emerald-500/40 font-bold"
+          >
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                <RefreshCw className={`w-3.5 h-3.5 ${hasPendingUpdate ? 'animate-spin text-amber-400' : ''}`} />
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] font-black block leading-none text-white">
+                  فحص تحديثات الـ APK المباشرة
+                </span>
+                <span className="text-[8px] block font-medium mt-0.5 text-emerald-300">
+                  {hasPendingUpdate ? '🚀 يتوفر إصدار جديد جاهز للتحميل' : 'فحص فوري للنسخة وتنزيل الـ APK المباشر'}
+                </span>
+              </div>
+            </div>
+            <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-full ${
+              hasPendingUpdate ? 'bg-amber-400 text-slate-950 animate-pulse' : 'bg-emerald-500/20 text-emerald-300'
+            }`}>
+              {hasPendingUpdate ? 'تحديث' : 'فحص'}
+            </span>
+          </button>
+
           {/* زر تثبيت البرنامج وتحميل APK بجانب الإعدادات - يظهر فقط لمتصفح الويب والـ PWA ويختفي داخل تطبيق الـ APK */}
           {!isStandaloneMode && !isNativeAndroid && (
             <button 
@@ -7171,6 +7219,16 @@ export default function App() {
           deferredPrompt={deferredPrompt}
           onInstallPWA={handleInstallPWA}
           isStandalone={isStandaloneMode}
+        />
+
+        {/* نافذة فحص التحديثات المباشرة من GitHub */}
+        <CheckUpdatesModal
+          key="global-check-updates-modal"
+          isOpen={showCheckUpdatesModal}
+          onClose={() => setShowCheckUpdatesModal(false)}
+          onUpdateDetected={(res) => {
+            setHasPendingUpdate(res.hasUpdate);
+          }}
         />
 
         {/* إشعار وزر تنزيل الملف الفوري المباشر */}
