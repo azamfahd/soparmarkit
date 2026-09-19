@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { db } from '../../db';
 import { saveFileToDevice, downloadWorkbook } from '../../utils/fileSaver';
+import { isSystemLicensingKey } from '../../utils/licensing';
 
 export interface EncryptedBackupContainer {
   format: 'SMARTPOS_ENCRYPTED_BACKUP_V1';
@@ -219,9 +220,17 @@ export async function exportEncryptedJsonBackup(
     saleItems: await db.saleItems.toArray(),
     debts: await db.debts.toArray(),
     inventoryLogs: await db.inventoryLogs.toArray(),
-    settings: await db.settings.toArray(),
+    settings: (await db.settings.toArray()).filter(s => !isSystemLicensingKey(s.key)),
     notes: await db.notes.toArray(),
-    expenses: db.expenses ? await db.expenses.toArray() : []
+    expenses: db.expenses ? await db.expenses.toArray() : [],
+    salesSettlements: db.salesSettlements ? await db.salesSettlements.toArray() : [],
+    cashWithdrawals: db.cashWithdrawals ? await db.cashWithdrawals.toArray() : [],
+    aiConversations: db.aiConversations ? await db.aiConversations.toArray() : [],
+    aiMessages: db.aiMessages ? await db.aiMessages.toArray() : [],
+    knowledgeDocuments: db.knowledgeDocuments ? await db.knowledgeDocuments.toArray() : [],
+    documentChunks: db.documentChunks ? await db.documentChunks.toArray() : [],
+    aiFeedback: db.aiFeedback ? await db.aiFeedback.toArray() : [],
+    aiTrainingData: db.aiTrainingData ? await db.aiTrainingData.toArray() : []
   };
 
   const store = options.storeName || 'المتجر';
@@ -265,12 +274,46 @@ export async function exportProtectedWordDocument(
   const dateStr = new Date().toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
   const timeStr = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
 
-  const [products, customers, suppliers, sales, expenses] = await Promise.all([
+  const [
+    products, 
+    customers, 
+    suppliers, 
+    sales, 
+    expenses,
+    supplierPayments,
+    saleItems,
+    debts,
+    inventoryLogs,
+    settings,
+    notes,
+    salesSettlements,
+    cashWithdrawals,
+    aiConversations,
+    aiMessages,
+    knowledgeDocuments,
+    documentChunks,
+    aiFeedback,
+    aiTrainingData
+  ] = await Promise.all([
     db.products.toArray(),
     db.customers.toArray(),
     db.suppliers.toArray(),
     db.sales.toArray(),
-    db.expenses ? db.expenses.toArray() : Promise.resolve([])
+    db.expenses ? db.expenses.toArray() : Promise.resolve([]),
+    db.supplierPayments ? db.supplierPayments.toArray() : Promise.resolve([]),
+    db.saleItems ? db.saleItems.toArray() : Promise.resolve([]),
+    db.debts ? db.debts.toArray() : Promise.resolve([]),
+    db.inventoryLogs ? db.inventoryLogs.toArray() : Promise.resolve([]),
+    db.settings ? db.settings.toArray() : Promise.resolve([]),
+    db.notes ? db.notes.toArray() : Promise.resolve([]),
+    db.salesSettlements ? db.salesSettlements.toArray() : Promise.resolve([]),
+    db.cashWithdrawals ? db.cashWithdrawals.toArray() : Promise.resolve([]),
+    db.aiConversations ? db.aiConversations.toArray() : Promise.resolve([]),
+    db.aiMessages ? db.aiMessages.toArray() : Promise.resolve([]),
+    db.knowledgeDocuments ? db.knowledgeDocuments.toArray() : Promise.resolve([]),
+    db.documentChunks ? db.documentChunks.toArray() : Promise.resolve([]),
+    db.aiFeedback ? db.aiFeedback.toArray() : Promise.resolve([]),
+    db.aiTrainingData ? db.aiTrainingData.toArray() : Promise.resolve([])
   ]);
 
   const totalSales = sales.reduce((sum, s) => sum + (s.total_amount || 0), 0);
@@ -279,7 +322,28 @@ export async function exportProtectedWordDocument(
   const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
 
   // Generate encrypted payload for embedding inside document for dual-use
-  const rawData = { products, customers, suppliers, sales, expenses, exportDate: new Date().toISOString() };
+  const rawData = { 
+    products, 
+    customers, 
+    suppliers, 
+    sales, 
+    expenses, 
+    supplierPayments,
+    saleItems,
+    debts,
+    inventoryLogs,
+    settings: settings.filter(s => !isSystemLicensingKey(s.key)),
+    notes,
+    salesSettlements,
+    cashWithdrawals,
+    aiConversations,
+    aiMessages,
+    knowledgeDocuments,
+    documentChunks,
+    aiFeedback,
+    aiTrainingData,
+    exportDate: new Date().toISOString() 
+  };
   const encryptedContainer = await encryptBackupData(rawData, pinOrPassword, {
     storeName: store,
     hint: options.hint,
@@ -445,16 +509,57 @@ export async function exportProtectedExcelBackup(
   } = {}
 ): Promise<{ success: boolean; fileName: string }> {
   const store = options.storeName || 'المتجر';
-  const [products, customers, suppliers, sales, expenses] = await Promise.all([
+  const [
+    products, 
+    customers, 
+    suppliers, 
+    sales, 
+    saleItems, 
+    expenses, 
+    debts, 
+    supplierPayments, 
+    salesSettlements, 
+    cashWithdrawals, 
+    inventoryLogs, 
+    notes,
+    settings
+  ] = await Promise.all([
     db.products.toArray(),
     db.customers.toArray(),
     db.suppliers.toArray(),
     db.sales.toArray(),
-    db.expenses ? db.expenses.toArray() : Promise.resolve([])
+    db.saleItems ? db.saleItems.toArray() : Promise.resolve([]),
+    db.expenses ? db.expenses.toArray() : Promise.resolve([]),
+    db.debts ? db.debts.toArray() : Promise.resolve([]),
+    db.supplierPayments ? db.supplierPayments.toArray() : Promise.resolve([]),
+    db.salesSettlements ? db.salesSettlements.toArray() : Promise.resolve([]),
+    db.cashWithdrawals ? db.cashWithdrawals.toArray() : Promise.resolve([]),
+    db.inventoryLogs ? db.inventoryLogs.toArray() : Promise.resolve([]),
+    db.notes ? db.notes.toArray() : Promise.resolve([]),
+    db.settings ? db.settings.toArray() : Promise.resolve([])
   ]);
 
   const wb = XLSX.utils.book_new();
-  const rtlView = [{ Reels: { RightToLeft: true } }];
+
+  const addProtectedSheet = (name: string, rows: any[]) => {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!dir'] = 'rtl';
+    ws['!views'] = [{ rightToLeft: true }];
+    if (rows && rows.length > 0) {
+      const colNames = Object.keys(rows[0]);
+      ws['!cols'] = colNames.map(col => {
+        let maxLen = col.length;
+        for (let i = 0; i < Math.min(rows.length, 100); i++) {
+          const val = rows[i][col];
+          const str = val === undefined || val === null ? '' : String(val);
+          if (str.length > maxLen) maxLen = str.length;
+        }
+        return { wch: Math.min(Math.max(maxLen + 4, 12), 48) };
+      });
+    }
+    (ws as any)['!protect'] = { password: pinOrPassword.trim() };
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  };
 
   // 1. Sheet: Security & Certificate
   const securitySheetData = [
@@ -468,51 +573,163 @@ export async function exportProtectedExcelBackup(
     { 'البيان': 'إجمالي الموردين', 'القيمة والمعلومات': suppliers.length },
     { 'البيان': 'إجمالي فواتير المبيعات', 'القيمة والمعلومات': sales.length }
   ];
-  const wsSec = XLSX.utils.json_to_sheet(securitySheetData);
-  wsSec['!views'] = rtlView as any;
-  // Apply sheet protection
-  (wsSec as any)['!protect'] = { password: pinOrPassword.trim() };
-  XLSX.utils.book_append_sheet(wb, wsSec, 'شهادة_الحماية_والأمان');
+  addProtectedSheet('شهادة_الحماية_والأمان', securitySheetData);
 
   // 2. Sheet: Products
   const productsData = products.map(p => ({
+    'رقم المنتج': p.id || '',
     'اسم المنتج': p.name,
+    'القسم / التصنيف': p.category || 'عام',
     'الباركود': p.barcode || '',
-    'سعر التكلفة (الشراء)': p.cost_price,
+    'سعر التكلفة': p.cost_price,
     'سعر البيع': p.sale_price,
-    'الكمية المتوفرة': p.stock_quantity,
+    'الكمية الحالية': p.stock_quantity,
+    'الحد الأدنى للمخزون': p.min_stock !== undefined ? p.min_stock : 5,
     'الوحدة': p.unit || 'حبة',
-    'التصنيف / القسم': p.category || 'عام',
+    'رقم المورد': p.supplier_id || '',
+    'تاريخ الإنتاج': p.production_date || '',
     'تاريخ الصلاحية': p.expiration_date || ''
   }));
-  const wsProd = XLSX.utils.json_to_sheet(productsData);
-  wsProd['!views'] = rtlView as any;
-  (wsProd as any)['!protect'] = { password: pinOrPassword.trim() };
-  XLSX.utils.book_append_sheet(wb, wsProd, 'المخزون_والمنتجات');
+  addProtectedSheet('المنتجات_المخزون', productsData);
 
-  // 3. Sheet: Customers
+  // 3. Sheet: Sales
+  const salesData = sales.map(s => ({
+    'رقم الفاتورة': s.id || '',
+    'رقم العميل': s.customer_id || '',
+    'اسم العميل': s.customer_name || 'عميل نقدي',
+    'الإجمالي': s.total_amount || 0,
+    'الخصم': s.discount || 0,
+    'المدفوع': s.paid_amount || 0,
+    'المتبقي': s.remaining_amount || 0,
+    'طريقة الدفع': s.payment_type || 'نقدي',
+    'حالة الدفع': s.payment_status || (Number(s.remaining_amount || 0) <= 0 ? 'خالصة' : 'متبقي'),
+    'تاريخ العملية': s.created_at || '',
+    'ملاحظات': s.notes || ''
+  }));
+  addProtectedSheet('سجل_المبيعات', salesData);
+
+  // 4. Sheet: Sale Items
+  const saleItemsData = saleItems.map(item => ({
+    'رقم المعرف': item.id || '',
+    'رقم الفاتورة': item.sale_id || '',
+    'رقم المنتج': item.product_id || '',
+    'الكمية': item.quantity || 1,
+    'سعر البيع': item.price_at_sale || 0
+  }));
+  addProtectedSheet('تفاصيل_أصناف_المبيعات', saleItemsData);
+
+  // 5. Sheet: Customers
   const custData = customers.map(c => ({
+    'رقم العميل': c.id || '',
     'اسم العميل': c.name,
     'رقم الجوال': c.phone || '',
-    'الرصيد / الدين المترتب': c.balance,
+    'العنوان': c.address || '',
+    'الرصيد الحالي (الدين المترتب)': c.balance,
     'ملاحظات': c.notes || ''
   }));
-  const wsCust = XLSX.utils.json_to_sheet(custData);
-  wsCust['!views'] = rtlView as any;
-  (wsCust as any)['!protect'] = { password: pinOrPassword.trim() };
-  XLSX.utils.book_append_sheet(wb, wsCust, 'العملاء_والديون');
+  addProtectedSheet('العملاء_والديون', custData);
 
-  // 4. Sheet: Suppliers
+  // 6. Sheet: Suppliers
   const suppData = suppliers.map(s => ({
+    'رقم المورد': s.id || '',
     'اسم المورد': s.name,
     'رقم الهاتف': s.phone || '',
+    'الشركة': s.company || '',
     'الرصيد المستحق لهم': s.balance || 0,
     'ملاحظات': s.notes || ''
   }));
-  const wsSupp = XLSX.utils.json_to_sheet(suppData);
-  wsSupp['!views'] = rtlView as any;
-  (wsSupp as any)['!protect'] = { password: pinOrPassword.trim() };
-  XLSX.utils.book_append_sheet(wb, wsSupp, 'الموردين_والحسابات');
+  addProtectedSheet('الموردين_والحسابات', suppData);
+
+  // 7. Sheet: Expenses
+  const expData = expenses.map(e => ({
+    'رقم المصروف': e.id || '',
+    'بيان المصروف': e.title || '',
+    'التصنيف': e.category || 'عام',
+    'المبلغ': e.amount || 0,
+    'تاريخ الصرف': e.date || e.created_at || '',
+    'ملاحظات': e.notes || ''
+  }));
+  addProtectedSheet('المصروفات_التشغيلية', expData);
+
+  // 8. Sheet: Debts
+  const debtsData = debts.map(d => ({
+    'رقم المعرف': d.id || '',
+    'رقم العميل': d.customer_id || '',
+    'رقم الفاتورة': d.sale_id || '',
+    'المبلغ': d.amount || 0,
+    'النوع': d.type || '',
+    'الرصيد السابق': d.previous_balance || 0,
+    'الرصيد الجديد': d.new_balance || 0,
+    'التاريخ': d.created_at || '',
+    'ملاحظات': d.notes || ''
+  }));
+  addProtectedSheet('حركة_الديون', debtsData);
+
+  // 9. Sheet: Supplier Payments
+  const suppPayData = supplierPayments.map(p => ({
+    'رقم المعرف': p.id || '',
+    'رقم المورد': p.supplier_id || '',
+    'المبلغ المدفوع': p.amount || 0,
+    'تاريخ الدفع': p.payment_date || '',
+    'ملاحظات': p.notes || ''
+  }));
+  addProtectedSheet('دفعات_الموردين', suppPayData);
+
+  // 10. Sheet: Sales Settlements
+  const settlementsData = salesSettlements.map(s => ({
+    'رقم المعرف': s.id || '',
+    'إجمالي المبيعات': s.total_sales || 0,
+    'المبلغ المسلم': s.delivered_amount || 0,
+    'الفارق': s.difference || 0,
+    'المسحوبات': s.cash_withdrawals || 0,
+    'التاريخ': s.created_at || '',
+    'ملاحظات': s.notes || ''
+  }));
+  addProtectedSheet('تسويات_المبيعات_اليومية', settlementsData);
+
+  // 11. Sheet: Cash Withdrawals
+  const withdrawalsData = cashWithdrawals.map(w => ({
+    'رقم المعرف': w.id || '',
+    'المبلغ': w.amount || 0,
+    'المسحوب لصالحه': w.by_whom || '',
+    'السبب': w.reason || '',
+    'تم السداد': w.is_repaid ? 'نعم' : 'لا',
+    'تاريخ السداد': w.repay_date || '',
+    'التاريخ': w.created_at || ''
+  }));
+  addProtectedSheet('المسحوبات_النقدية', withdrawalsData);
+
+  // 12. Sheet: Inventory Logs
+  const invLogsData = inventoryLogs.map(log => ({
+    'رقم المعرف': log.id || '',
+    'رقم المنتج': log.product_id || '',
+    'اسم المنتج': log.product_name || '',
+    'الكمية السابقة': log.old_quantity || 0,
+    'الكمية الجديدة': log.new_quantity || 0,
+    'مقدار التغيير': log.change_amount || 0,
+    'السبب': log.reason || '',
+    'النوع': log.type || '',
+    'التاريخ': log.created_at || '',
+    'ملاحظات': log.notes || ''
+  }));
+  addProtectedSheet('سجل_حركة_المخزون', invLogsData);
+
+  // 13. Sheet: Notes
+  const notesData = notes.map(n => ({
+    'رقم المعرف': n.id || '',
+    'العنوان': n.title || '',
+    'المحتوى': n.content || '',
+    'مكتمل': n.is_completed ? 'نعم' : 'لا',
+    'التاريخ': n.created_at || ''
+  }));
+  addProtectedSheet('الملاحظات_والمهام', notesData);
+
+  // 14. Sheet: Settings
+  const settingsData = settings.map(s => ({
+    'المفتاح': s.key || '',
+    'القيمة': s.value !== undefined ? s.value : ''
+  }));
+  addProtectedSheet('إعدادات_النظام', settingsData);
 
   const fileName = `${store}_مصنف_إكسل_محمي_${new Date().toISOString().split('T')[0]}.xlsx`;
   const success = await downloadWorkbook(wb, fileName);

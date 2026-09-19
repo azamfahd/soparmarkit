@@ -1,6 +1,9 @@
 import * as XLSX from 'xlsx';
 import { db, Product, Customer, Supplier, Sale, Expense } from '../db';
 import { downloadWorkbook } from '../utils/fileSaver';
+export { downloadWorkbook } from '../utils/fileSaver';
+import { convertExcelToDatabaseJson, importAndRepairDatabaseOffline } from './dataSanitizer';
+import { isSystemLicensingKey } from '../utils/licensing';
 
 export interface ExcelSyncStatus {
   isLinked: boolean;
@@ -136,6 +139,26 @@ export async function getLinkedExcelHandle(): Promise<any | null> {
 }
 
 /**
+ * Applies RTL view and auto-calculates column widths based on cell content
+ */
+export function formatSheetWithAutoCols(ws: XLSX.WorkSheet, rows: any[]) {
+  ws['!dir'] = 'rtl';
+  ws['!views'] = [{ rightToLeft: true }];
+  if (!rows || rows.length === 0) return;
+  const colNames = Object.keys(rows[0]);
+  ws['!cols'] = colNames.map(col => {
+    let maxLen = col.length;
+    const sampleSize = Math.min(rows.length, 120);
+    for (let i = 0; i < sampleSize; i++) {
+      const val = rows[i][col];
+      const str = val === undefined || val === null ? '' : String(val);
+      if (str.length > maxLen) maxLen = str.length;
+    }
+    return { wch: Math.min(Math.max(maxLen + 4, 12), 50) };
+  });
+}
+
+/**
  * Generates an Excel Workbook from the current local database state.
  */
 export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
@@ -145,6 +168,19 @@ export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
   const expenses = await db.expenses.toArray();
   const sales = await db.sales.toArray();
   const saleItems = await db.saleItems.toArray();
+  const debts = db.debts ? await db.debts.toArray() : [];
+  const supplierPayments = db.supplierPayments ? await db.supplierPayments.toArray() : [];
+  const salesSettlements = db.salesSettlements ? await db.salesSettlements.toArray() : [];
+  const cashWithdrawals = db.cashWithdrawals ? await db.cashWithdrawals.toArray() : [];
+  const inventoryLogs = db.inventoryLogs ? await db.inventoryLogs.toArray() : [];
+  const notes = db.notes ? await db.notes.toArray() : [];
+  const settings = db.settings ? await db.settings.toArray() : [];
+  const aiConversations = db.aiConversations ? await db.aiConversations.toArray() : [];
+  const aiMessages = db.aiMessages ? await db.aiMessages.toArray() : [];
+  const knowledgeDocuments = db.knowledgeDocuments ? await db.knowledgeDocuments.toArray() : [];
+  const documentChunks = db.documentChunks ? await db.documentChunks.toArray() : [];
+  const aiFeedback = db.aiFeedback ? await db.aiFeedback.toArray() : [];
+  const aiTrainingData = db.aiTrainingData ? await db.aiTrainingData.toArray() : [];
 
   // 1. Products Sheet
   const productsRows = products.map(p => ({
@@ -155,7 +191,10 @@ export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
     'سعر التكلفة': p.cost_price || 0,
     'سعر البيع': p.sale_price || 0,
     'الكمية الحالية': p.stock_quantity || 0,
+    'الحد الأدنى للمخزون': p.min_stock !== undefined ? p.min_stock : 5,
     'الوحدة': p.unit || 'حبة',
+    'رقم المورد': p.supplier_id || '',
+    'تاريخ الإنتاج': p.production_date || '',
     'تاريخ الصلاحية': p.expiration_date || '',
     'إجمالي قيمة التكلفة': (p.cost_price || 0) * (p.stock_quantity || 0),
     'إجمالي قيمة البيع المتوقعة': (p.sale_price || 0) * (p.stock_quantity || 0)
@@ -166,6 +205,7 @@ export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
     'رقم العميل': c.id || '',
     'اسم العميل': c.name,
     'رقم الجوال': c.phone || '',
+    'العنوان': c.address || '',
     'الرصيد الحالي (الدين المترتب)': c.balance || 0,
     'ملاحظات': c.notes || ''
   }));
@@ -175,6 +215,7 @@ export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
     'رقم المورد': s.id || '',
     'اسم المورد': s.name,
     'رقم الهاتف': s.phone || '',
+    'الشركة': s.company || '',
     'الرصيد المستحق لهم': s.balance || 0,
     'ملاحظات': s.notes || ''
   }));
@@ -185,21 +226,43 @@ export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
     'بيان المصروف': e.title,
     'التصنيف': e.category || 'عام',
     'المبلغ': e.amount || 0,
-    'تاريخ الصرف': e.date || '',
-    'طريقة الدفع': e.payment_method === 'cash' ? 'نقداً من الصندوق' : e.payment_method === 'bank' ? 'حساب بنكي' : 'أخرى',
+    'طريقة الدفع': e.payment_method === 'bank' ? 'حساب بنكي' : 'نقداً من الصندوق',
+    'تاريخ الصرف': e.date || (e.created_at ? e.created_at.slice(0, 10) : ''),
+    'التاريخ الكامل': e.created_at || '',
     'ملاحظات': e.notes || ''
   }));
 
-  // 5. Sales Log Sheet
-  const salesRows = sales.slice(-2000).reverse().map(s => ({
+  // 5. Sales Log Sheet (Full historical sales)
+  const salesRows = sales.map(s => ({
     'رقم الفاتورة': s.id || '',
+    'رقم العميل': s.customer_id || '',
+    'اسم العميل': s.customer_name || 'عميل نقدي',
     'الإجمالي': s.total_amount || 0,
+    'الخصم': s.discount || 0,
+    'المدفوع': s.paid_amount || 0,
+    'المتبقي': s.remaining_amount || 0,
     'طريقة الدفع': s.payment_type === 'cash' ? 'نقدي' : 'آجل / دين',
-    'تاريخ العملية': s.created_at ? new Date(s.created_at).toLocaleString('ar-YE') : '',
+    'حالة الدفع': s.payment_status || (Number(s.remaining_amount || 0) <= 0 ? 'خالصة' : 'متبقي'),
+    'الرصيد السابق للعميل': s.previous_balance || 0,
+    'الرصيد الجديد للعميل': s.new_balance || 0,
+    'تاريخ العملية': s.created_at || '',
     'ملاحظات': s.notes || ''
   }));
 
-  // 6. Financial Overview KPI Sheet
+  // 6. Sale Items Sheet
+  const saleItemsRows = saleItems.map(item => {
+    const matchedProd = products.find(p => p.id === item.product_id);
+    return {
+      'رقم المعرف': item.id || '',
+      'رقم الفاتورة': item.sale_id || '',
+      'رقم المنتج': item.product_id || '',
+      'اسم المنتج': matchedProd?.name || '',
+      'الكمية': item.quantity || 1,
+      'سعر البيع': item.price_at_sale || 0
+    };
+  });
+
+  // 7. Financial Overview KPI Sheet
   const totalSalesRevenue = sales.reduce((sum, s) => sum + (s.total_amount || 0), 0);
   const totalExpensesAmount = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
   const totalInventoryCost = products.reduce((sum, p) => sum + ((p.cost_price || 0) * (p.stock_quantity || 0)), 0);
@@ -226,32 +289,224 @@ export async function generateWorkbookFromDatabase(): Promise<XLSX.WorkBook> {
     { 'البند المحاسبي': 'إجمالي مستحقات الموردين', 'القيمة الإجمالية': totalSupplierDebts, 'ملاحظات': 'مستحقات البضاعة لدى تجار الجملة والموردين' }
   ];
 
+  const debtsRows = debts.map(d => ({
+    'رقم المعرف': d.id || '',
+    'رقم العميل': d.customer_id || '',
+    'رقم الفاتورة': d.sale_id || '',
+    'المبلغ': d.amount || 0,
+    'النوع': d.type || '',
+    'الرصيد السابق': d.previous_balance || 0,
+    'الرصيد الجديد': d.new_balance || 0,
+    'التاريخ': d.created_at || '',
+    'ملاحظات': d.notes || ''
+  }));
+
+  const supplierPaymentsRows = supplierPayments.map(p => ({
+    'رقم المعرف': p.id || '',
+    'رقم المورد': p.supplier_id || '',
+    'المبلغ المدفوع': p.amount || 0,
+    'تاريخ الدفع': p.payment_date || '',
+    'ملاحظات': p.notes || ''
+  }));
+
+  const salesSettlementsRows = salesSettlements.map(s => ({
+    'رقم المعرف': s.id || '',
+    'إجمالي المبيعات': s.total_sales || 0,
+    'المبلغ المسلم': s.delivered_amount || 0,
+    'الفارق': s.difference || 0,
+    'المسحوبات': s.cash_withdrawals || 0,
+    'التاريخ': s.created_at || '',
+    'ملاحظات': s.notes || ''
+  }));
+
+  const cashWithdrawalsRows = cashWithdrawals.map(w => ({
+    'رقم المعرف': w.id || '',
+    'المبلغ': w.amount || 0,
+    'المسحوب لصالحه': w.by_whom || '',
+    'السبب': w.reason || '',
+    'تم السداد': w.is_repaid ? 'نعم' : 'لا',
+    'تاريخ السداد': w.repay_date || '',
+    'التاريخ': w.created_at || ''
+  }));
+
+  const inventoryLogsRows = inventoryLogs.map(log => ({
+    'رقم المعرف': log.id || '',
+    'رقم المنتج': log.product_id || '',
+    'اسم المنتج': log.product_name || '',
+    'الكمية السابقة': log.old_quantity || 0,
+    'الكمية الجديدة': log.new_quantity || 0,
+    'مقدار التغيير': log.change_amount || 0,
+    'السبب': log.reason || '',
+    'النوع': log.type || '',
+    'التاريخ': log.created_at || '',
+    'ملاحظات': log.notes || ''
+  }));
+
+  const notesRows = notes.map(n => ({
+    'رقم المعرف': n.id || '',
+    'العنوان': n.title || '',
+    'المحتوى': n.content || '',
+    'الأولوية': n.priority === 'high' ? 'عالية' : (n.priority === 'warning' ? 'تحذير' : (n.priority === 'info' ? 'تنبيه' : 'عادية')),
+    'تاريخ التذكير': n.reminder_date || '',
+    'مكتمل': n.is_completed ? 'نعم' : 'لا',
+    'التاريخ': n.created_at || ''
+  }));
+
+  const safeSettings = settings.filter(s => !isSystemLicensingKey(s.key));
+  const settingsRows = safeSettings.map(s => ({
+    'المفتاح': s.key || '',
+    'القيمة': typeof s.value === 'object' && s.value !== null ? JSON.stringify(s.value) : (s.value !== undefined ? s.value : '')
+  }));
+
+  const aiConversationsRows = aiConversations.map(c => ({
+    'رقم المعرف': c.id || '',
+    'العنوان': c.title || '',
+    'تاريخ الإنشاء': c.createdAt || '',
+    'تاريخ التحديث': c.updatedAt || ''
+  }));
+
+  const aiMessagesRows = aiMessages.map(m => ({
+    'رقم المعرف': m.id || '',
+    'رقم المحادثة': m.conversationId || '',
+    'الدور': m.role || '',
+    'المحتوى': m.content || '',
+    'الوقت': m.timestamp || '',
+    'النية': m.intent || '',
+    'ملخص التفكير': m.reasoningSummary || ''
+  }));
+
+  const knowledgeDocumentsRows = knowledgeDocuments.map(doc => ({
+    'رقم المعرف': doc.id || '',
+    'العنوان': doc.title || '',
+    'التصنيف': doc.category || '',
+    'المحتوى': doc.content || '',
+    'الوسوم': Array.isArray(doc.tags) ? doc.tags.join(', ') : (doc.tags || ''),
+    'اسم الملف': doc.fileName || '',
+    'نوع الملف': doc.fileType || '',
+    'تاريخ الإنشاء': doc.createdAt || ''
+  }));
+
+  const documentChunksRows = documentChunks.map(chk => ({
+    'رقم المعرف': chk.id || '',
+    'رقم المستند': chk.documentId || '',
+    'رقم المقطع': chk.chunkIndex || 0,
+    'عنوان القسم': chk.sectionTitle || '',
+    'المحتوى': chk.content || '',
+    'عدد الكلمات': chk.wordCount || 0,
+    'تاريخ الإنشاء': chk.createdAt || ''
+  }));
+
+  const aiFeedbackRows = aiFeedback.map(f => ({
+    'رقم المعرف': f.id || '',
+    'رقم الرسالة': f.messageId || '',
+    'سؤال المستخدم': f.userQuery || '',
+    'إجابة المساعد': f.responseAnswer || '',
+    'التقييم': f.rating || 0,
+    'ملاحظة المستخدم': f.userComment || '',
+    'الوقت': f.timestamp || ''
+  }));
+
+  const aiTrainingDataRows = aiTrainingData.map(t => ({
+    'رقم المعرف': t.id || '',
+    'السؤال التجريبي': t.query || '',
+    'النية المتوقعة': t.expectedIntent || '',
+    'الكيانات المتوقعة': typeof t.expectedEntities === 'object' ? JSON.stringify(t.expectedEntities) : (t.expectedEntities || ''),
+    'ملاحظات': t.notes || '',
+    'تاريخ الإنشاء': t.createdAt || ''
+  }));
+
   const wb = XLSX.utils.book_new();
 
-  // Create worksheets
+  // Create worksheets with auto column widths and RTL layout
   const wsOverview = XLSX.utils.json_to_sheet(financialOverviewRows);
+  formatSheetWithAutoCols(wsOverview, financialOverviewRows);
+
   const wsProducts = XLSX.utils.json_to_sheet(productsRows);
+  formatSheetWithAutoCols(wsProducts, productsRows);
+
   const wsCustomers = XLSX.utils.json_to_sheet(customersRows);
+  formatSheetWithAutoCols(wsCustomers, customersRows);
+
   const wsSuppliers = XLSX.utils.json_to_sheet(suppliersRows);
+  formatSheetWithAutoCols(wsSuppliers, suppliersRows);
+
   const wsExpenses = XLSX.utils.json_to_sheet(expensesRows);
+  formatSheetWithAutoCols(wsExpenses, expensesRows);
+
   const wsSales = XLSX.utils.json_to_sheet(salesRows);
+  formatSheetWithAutoCols(wsSales, salesRows);
 
-  // Set Right-To-Left view for Arabic sheets
-  const sheetView = [{ Reels: { RightToLeft: true } }];
-  wsOverview['!views'] = sheetView as any;
-  wsProducts['!views'] = sheetView as any;
-  wsCustomers['!views'] = sheetView as any;
-  wsSuppliers['!views'] = sheetView as any;
-  wsExpenses['!views'] = sheetView as any;
-  wsSales['!views'] = sheetView as any;
+  const wsSaleItems = XLSX.utils.json_to_sheet(saleItemsRows);
+  formatSheetWithAutoCols(wsSaleItems, saleItemsRows);
 
-  // Append sheets
-  XLSX.utils.book_append_sheet(wb, wsOverview, 'الملخص_المالي_والأرباح');
+  const wsDebts = XLSX.utils.json_to_sheet(debtsRows);
+  formatSheetWithAutoCols(wsDebts, debtsRows);
+
+  const wsSupplierPayments = XLSX.utils.json_to_sheet(supplierPaymentsRows);
+  formatSheetWithAutoCols(wsSupplierPayments, supplierPaymentsRows);
+
+  const wsSettlements = XLSX.utils.json_to_sheet(salesSettlementsRows);
+  formatSheetWithAutoCols(wsSettlements, salesSettlementsRows);
+
+  const wsCashWithdrawals = XLSX.utils.json_to_sheet(cashWithdrawalsRows);
+  formatSheetWithAutoCols(wsCashWithdrawals, cashWithdrawalsRows);
+
+  const wsInventoryLogs = XLSX.utils.json_to_sheet(inventoryLogsRows);
+  formatSheetWithAutoCols(wsInventoryLogs, inventoryLogsRows);
+
+  const wsNotes = XLSX.utils.json_to_sheet(notesRows);
+  formatSheetWithAutoCols(wsNotes, notesRows);
+
+  const wsSettings = XLSX.utils.json_to_sheet(settingsRows);
+  formatSheetWithAutoCols(wsSettings, settingsRows);
+
+  // Append sheets in optimal order for both user readability and import reliability
   XLSX.utils.book_append_sheet(wb, wsProducts, 'المنتجات_المخزون');
+  XLSX.utils.book_append_sheet(wb, wsSales, 'سجل_المبيعات');
+  XLSX.utils.book_append_sheet(wb, wsSaleItems, 'تفاصيل_أصناف_المبيعات');
   XLSX.utils.book_append_sheet(wb, wsCustomers, 'العملاء_والديون');
   XLSX.utils.book_append_sheet(wb, wsSuppliers, 'الموردين_والحسابات');
   XLSX.utils.book_append_sheet(wb, wsExpenses, 'المصروفات_التشغيلية');
-  XLSX.utils.book_append_sheet(wb, wsSales, 'سجل_المبيعات');
+  XLSX.utils.book_append_sheet(wb, wsDebts, 'حركة_الديون');
+  XLSX.utils.book_append_sheet(wb, wsSupplierPayments, 'دفعات_الموردين');
+  XLSX.utils.book_append_sheet(wb, wsSettlements, 'تسويات_المبيعات_اليومية');
+  XLSX.utils.book_append_sheet(wb, wsCashWithdrawals, 'المسحوبات_النقدية');
+  XLSX.utils.book_append_sheet(wb, wsInventoryLogs, 'سجل_حركة_المخزون');
+  XLSX.utils.book_append_sheet(wb, wsNotes, 'الملاحظات_والمهام');
+  XLSX.utils.book_append_sheet(wb, wsSettings, 'إعدادات_النظام');
+
+  if (aiConversationsRows.length > 0) {
+    const wsAiConv = XLSX.utils.json_to_sheet(aiConversationsRows);
+    formatSheetWithAutoCols(wsAiConv, aiConversationsRows);
+    XLSX.utils.book_append_sheet(wb, wsAiConv, 'محادثات_المساعد');
+  }
+  if (aiMessagesRows.length > 0) {
+    const wsAiMsg = XLSX.utils.json_to_sheet(aiMessagesRows);
+    formatSheetWithAutoCols(wsAiMsg, aiMessagesRows);
+    XLSX.utils.book_append_sheet(wb, wsAiMsg, 'رسائل_المساعد');
+  }
+  if (knowledgeDocumentsRows.length > 0) {
+    const wsDoc = XLSX.utils.json_to_sheet(knowledgeDocumentsRows);
+    formatSheetWithAutoCols(wsDoc, knowledgeDocumentsRows);
+    XLSX.utils.book_append_sheet(wb, wsDoc, 'قاعدة_المعرفة');
+  }
+  if (documentChunksRows.length > 0) {
+    const wsChk = XLSX.utils.json_to_sheet(documentChunksRows);
+    formatSheetWithAutoCols(wsChk, documentChunksRows);
+    XLSX.utils.book_append_sheet(wb, wsChk, 'أجزاء_المستندات');
+  }
+  if (aiFeedbackRows.length > 0) {
+    const wsFdb = XLSX.utils.json_to_sheet(aiFeedbackRows);
+    formatSheetWithAutoCols(wsFdb, aiFeedbackRows);
+    XLSX.utils.book_append_sheet(wb, wsFdb, 'تقييمات_المساعد');
+  }
+  if (aiTrainingDataRows.length > 0) {
+    const wsTrn = XLSX.utils.json_to_sheet(aiTrainingDataRows);
+    formatSheetWithAutoCols(wsTrn, aiTrainingDataRows);
+    XLSX.utils.book_append_sheet(wb, wsTrn, 'بيانات_تدريب_المساعد');
+  }
+
+  XLSX.utils.book_append_sheet(wb, wsOverview, 'الملخص_المالي_والأرباح');
 
   return wb;
 }
@@ -271,193 +526,20 @@ export async function syncBidirectionalExcel(): Promise<SyncResult> {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: 'array' });
 
+  // Convert and sanitize entire Excel database across all 19 entities
+  const rawDbJson = convertExcelToDatabaseJson(workbook);
+  const importResult = await importAndRepairDatabaseOffline(rawDbJson, 'merge');
+
   const result: SyncResult = {
-    addedProducts: 0,
+    addedProducts: importResult.report?.tablesSummary['المنتجات'] || 0,
     updatedProducts: 0,
-    addedCustomers: 0,
+    addedCustomers: importResult.report?.tablesSummary['العملاء'] || 0,
     updatedCustomers: 0,
-    addedSuppliers: 0,
+    addedSuppliers: importResult.report?.tablesSummary['الموردين'] || 0,
     updatedSuppliers: 0,
-    addedExpenses: 0,
+    addedExpenses: importResult.report?.tablesSummary['المصروفات'] || 0,
     updatedExpenses: 0
   };
-
-  // Sync Products Sheet
-  const sheetProducts = workbook.Sheets['المنتجات_المخزون'] || workbook.Sheets['المنتجات'] || workbook.Sheets['المخزون'];
-  if (sheetProducts) {
-    const rows: any[] = XLSX.utils.sheet_to_json(sheetProducts);
-    for (const row of rows) {
-      const name = String(row['اسم المنتج'] || row['الاسم'] || '').trim();
-      if (!name) continue;
-
-      const barcode = String(row['الباركود'] || row['باركود'] || '').trim();
-      const category = String(row['القسم / التصنيف'] || row['القسم'] || row['التصنيف'] || 'عام').trim();
-      const cost_price = parseFloat(row['سعر التكلفة'] || row['التكلفة'] || '0') || 0;
-      const sale_price = parseFloat(row['سعر البيع'] || row['السعر'] || '0') || 0;
-      const stock_quantity = parseFloat(row['الكمية الحالية'] || row['الكمية'] || '0') || 0;
-      const unit = String(row['الوحدة'] || 'حبة').trim();
-      const expiration_date = String(row['تاريخ الصلاحية'] || '').trim();
-
-      // Check if product exists by barcode or name
-      let existing: Product | undefined = undefined;
-      if (barcode) {
-        existing = await db.products.where('barcode').equals(barcode).first();
-      }
-      if (!existing) {
-        existing = await db.products.where('name').equals(name).first();
-      }
-
-      if (existing) {
-        let changed = false;
-        if (existing.stock_quantity !== stock_quantity) {
-          existing.stock_quantity = stock_quantity;
-          changed = true;
-        }
-        if (existing.sale_price !== sale_price) {
-          existing.sale_price = sale_price;
-          changed = true;
-        }
-        if (existing.cost_price !== cost_price) {
-          existing.cost_price = cost_price;
-          changed = true;
-        }
-        if (category && existing.category !== category) {
-          existing.category = category;
-          changed = true;
-        }
-        if (expiration_date && existing.expiration_date !== expiration_date) {
-          existing.expiration_date = expiration_date;
-          changed = true;
-        }
-        if (unit && existing.unit !== unit) {
-          existing.unit = unit;
-          changed = true;
-        }
-        if (changed && existing.id) {
-          await db.products.put(existing);
-          result.updatedProducts++;
-        }
-      } else {
-        await db.products.add({
-          name,
-          category,
-          cost_price,
-          sale_price,
-          stock_quantity,
-          barcode,
-          unit,
-          expiration_date
-        });
-        result.addedProducts++;
-      }
-    }
-  }
-
-  // Sync Customers Sheet
-  const sheetCustomers = workbook.Sheets['العملاء_والديون'] || workbook.Sheets['العملاء'] || workbook.Sheets['الزبائن'];
-  if (sheetCustomers) {
-    const rows: any[] = XLSX.utils.sheet_to_json(sheetCustomers);
-    for (const row of rows) {
-      const name = String(row['اسم العميل'] || row['الاسم'] || '').trim();
-      if (!name) continue;
-
-      const phone = String(row['رقم الجوال'] || row['التلفون'] || '').trim();
-      const balance = parseFloat(row['الرصيد الحالي (الدين المترتب)'] || row['الرصيد'] || '0') || 0;
-      const notes = String(row['ملاحظات'] || '').trim();
-
-      let existing = await db.customers.where('name').equals(name).first();
-      if (!existing) {
-        await db.customers.add({ name, phone, balance, notes });
-        result.addedCustomers++;
-      } else {
-        let changed = false;
-        if (existing.balance !== balance) {
-          existing.balance = balance;
-          changed = true;
-        }
-        if (phone && existing.phone !== phone) {
-          existing.phone = phone;
-          changed = true;
-        }
-        if (changed && existing.id) {
-          await db.customers.put(existing);
-          result.updatedCustomers++;
-        }
-      }
-    }
-  }
-
-  // Sync Suppliers Sheet
-  const sheetSuppliers = workbook.Sheets['الموردين_والحسابات'] || workbook.Sheets['الموردين'] || workbook.Sheets['الموردون'];
-  if (sheetSuppliers) {
-    const rows: any[] = XLSX.utils.sheet_to_json(sheetSuppliers);
-    for (const row of rows) {
-      const name = String(row['اسم المورد'] || row['الاسم'] || '').trim();
-      if (!name) continue;
-
-      const phone = String(row['رقم الهاتف'] || row['التلفون'] || '').trim();
-      const balance = parseFloat(row['الرصيد المستحق لهم'] || row['الرصيد'] || '0') || 0;
-      const notes = String(row['ملاحظات'] || '').trim();
-
-      let existing = await db.suppliers.where('name').equals(name).first();
-      if (!existing) {
-        await db.suppliers.add({ name, phone, balance, notes });
-        result.addedSuppliers++;
-      } else {
-        let changed = false;
-        if (existing.balance !== balance) {
-          existing.balance = balance;
-          changed = true;
-        }
-        if (phone && existing.phone !== phone) {
-          existing.phone = phone;
-          changed = true;
-        }
-        if (changed && existing.id) {
-          await db.suppliers.put(existing);
-          result.updatedSuppliers++;
-        }
-      }
-    }
-  }
-
-  // Sync Expenses Sheet
-  const sheetExpenses = workbook.Sheets['المصروفات_التشغيلية'] || workbook.Sheets['المصروفات'] || workbook.Sheets['المصاريف'];
-  if (sheetExpenses) {
-    const rows: any[] = XLSX.utils.sheet_to_json(sheetExpenses);
-    for (const row of rows) {
-      const title = String(row['بيان المصروف'] || row['البيان'] || row['اسم المصروف'] || '').trim();
-      const amount = parseFloat(row['المبلغ'] || '0') || 0;
-      if (!title || amount <= 0) continue;
-
-      const category = String(row['التصنيف'] || 'عام').trim();
-      const date = String(row['تاريخ الصرف'] || row['التاريخ'] || new Date().toISOString().slice(0, 10)).trim();
-      const paymentMethodRaw = String(row['طريقة الدفع'] || 'cash').trim();
-      const payment_method: 'cash' | 'bank' | 'other' = 
-        paymentMethodRaw.includes('بنك') ? 'bank' : paymentMethodRaw.includes('أخرى') ? 'other' : 'cash';
-      const notes = String(row['ملاحظات'] || '').trim();
-
-      // Check if expense already recorded on that date with same title and amount
-      const existing = await db.expenses
-        .where('date')
-        .equals(date)
-        .filter(e => e.title === title && Math.abs(e.amount - amount) < 0.01)
-        .first();
-
-      if (!existing) {
-        await db.expenses.add({
-          title,
-          category,
-          amount,
-          date,
-          payment_method,
-          notes,
-          created_at: new Date().toISOString()
-        });
-        result.addedExpenses++;
-      }
-    }
-  }
 
   // 2. Generate updated Excel file with full merged state
   const updatedWb = await generateWorkbookFromDatabase();
@@ -685,255 +767,23 @@ export async function importExcelBackupManual(file: File): Promise<SyncResult> {
         if (!data) throw new Error('فشل في قراءة محتوى ملف الإكسل.');
 
         const workbook = XLSX.read(data, { type: 'binary' });
+        const rawJson = convertExcelToDatabaseJson(workbook);
+        const { report, success } = await importAndRepairDatabaseOffline(rawJson, 'merge');
+
+        if (!success) {
+          throw new Error('فشل في استيراد بيانات ملف الإكسل أو معالجتها.');
+        }
+
         const result: SyncResult = {
-          addedProducts: 0,
+          addedProducts: report.tablesSummary['المنتجات'] || 0,
           updatedProducts: 0,
-          addedCustomers: 0,
+          addedCustomers: report.tablesSummary['العملاء'] || 0,
           updatedCustomers: 0,
-          addedSuppliers: 0,
+          addedSuppliers: report.tablesSummary['الموردين'] || 0,
           updatedSuppliers: 0,
-          addedExpenses: 0,
+          addedExpenses: report.tablesSummary['المصروفات'] || 0,
           updatedExpenses: 0
         };
-
-        // Helper to find sheet by multiple flexible keywords
-        const findSheet = (keywords: string[]): XLSX.WorkSheet | null => {
-          for (const name of workbook.SheetNames) {
-            const cleanName = name.toLowerCase().trim();
-            if (keywords.some(k => cleanName.includes(k.toLowerCase()))) {
-              return workbook.Sheets[name];
-            }
-          }
-          return null;
-        };
-
-        // 1. Products Sync
-        const sheetProducts = findSheet(['منتج', 'مخزون', 'صنف', 'أصناف', 'بضائع', 'بضاعة', 'product', 'item', 'stock', 'inventory']);
-        const sheetCustomers = findSheet(['عملاء', 'عميل', 'زبائن', 'زبون', 'ديون', 'دين', 'customer', 'client', 'debt']);
-        const sheetSuppliers = findSheet(['موردين', 'مورد', 'موردون', 'حسابات مورد', 'supplier', 'vendor']);
-        const sheetExpenses = findSheet(['مصروفات', 'مصروف', 'مصاريف', 'نفقات', 'expense', 'cost_operational']);
-
-        // Helper to extract rows from sheet
-        const getRows = (ws: XLSX.WorkSheet | null): any[] => {
-          if (!ws) return [];
-          return XLSX.utils.sheet_to_json(ws);
-        };
-
-        // If no named sheets matched and workbook only has 1 or 2 sheets, scan generic sheets (e.g. Sheet1)
-        const unassignedSheets = workbook.SheetNames.filter(name => {
-          const s = workbook.Sheets[name];
-          return s !== sheetProducts && s !== sheetCustomers && s !== sheetSuppliers && s !== sheetExpenses && !name.includes('إرشاد') && !name.includes('ملخص');
-        });
-
-        // 1. Process Products
-        const prodRows = getRows(sheetProducts);
-        if (prodRows.length === 0 && unassignedSheets.length > 0) {
-          // Check first unassigned sheet
-          const firstSheet = workbook.Sheets[unassignedSheets[0]];
-          const rows = getRows(firstSheet);
-          if (rows.length > 0) {
-            const sample = rows[0];
-            const sampleKeys = Object.keys(sample).join(' ').toLowerCase();
-            if (sampleKeys.includes('سعر') || sampleKeys.includes('price') || sampleKeys.includes('صنف') || sampleKeys.includes('منتج') || sampleKeys.includes('كمية') || sampleKeys.includes('مخزون') || sampleKeys.includes('تكلفة')) {
-              prodRows.push(...rows);
-              unassignedSheets.shift();
-            }
-          }
-        }
-
-        for (const row of prodRows) {
-          const name = String(
-            row['اسم المنتج'] || row['اسم الصنف'] || row['الاسم'] || row['الصنف'] || 
-            row['المنتج'] || row['المادة'] || row['البضاعة'] || row['اسم البضاعة'] || 
-            row['Item Name'] || row['Product Name'] || row['Name'] || row['name'] || ''
-          ).trim();
-          if (!name) continue;
-
-          const barcode = String(row['الباركود'] || row['باركود'] || row['كود'] || row['الرمز'] || row['رمز الصنف'] || row['Barcode'] || row['barcode'] || '').trim();
-          const category = String(row['القسم / التصنيف'] || row['القسم'] || row['التصنيف'] || row['الفئة'] || row['المجموعة'] || row['Category'] || 'عام').trim();
-          const cost_price = parseFloat(row['سعر التكلفة'] || row['التكلفة'] || row['سعر الشراء'] || row['شراء'] || row['تكلفه'] || row['Cost Price'] || row['Cost'] || '0') || 0;
-          const sale_price = parseFloat(row['سعر البيع'] || row['السعر'] || row['سعر'] || row['بيع'] || row['قطاعي'] || row['Sale Price'] || row['Price'] || '0') || 0;
-          const stock_quantity = parseFloat(row['الكمية الحالية'] || row['الكمية'] || row['المخزون'] || row['العدد'] || row['عدد'] || row['الرصيد'] || row['Quantity'] || row['Qty'] || '0') || 0;
-          const unit = String(row['الوحدة'] || row['وحدة'] || row['Unit'] || 'حبة').trim();
-          const expiration_date = String(row['تاريخ الصلاحية'] || row['الصلاحية'] || row['تاريخ الانتهاء'] || row['Expiry'] || '').trim();
-
-          let existing = barcode ? await db.products.where('barcode').equals(barcode).first() : null;
-          if (!existing) existing = await db.products.where('name').equals(name).first();
-
-          if (existing) {
-            let changed = false;
-            if (existing.stock_quantity !== stock_quantity) {
-              existing.stock_quantity = stock_quantity;
-              changed = true;
-            }
-            if (sale_price > 0 && existing.sale_price !== sale_price) {
-              existing.sale_price = sale_price;
-              changed = true;
-            }
-            if (cost_price > 0 && existing.cost_price !== cost_price) {
-              existing.cost_price = cost_price;
-              changed = true;
-            }
-            if (category && existing.category !== category) {
-              existing.category = category;
-              changed = true;
-            }
-            if (expiration_date && existing.expiration_date !== expiration_date) {
-              existing.expiration_date = expiration_date;
-              changed = true;
-            }
-            if (unit && existing.unit !== unit) {
-              existing.unit = unit;
-              changed = true;
-            }
-            if (changed && existing.id) {
-              await db.products.put(existing);
-              result.updatedProducts++;
-            }
-          } else {
-            await db.products.add({
-              name,
-              category,
-              cost_price,
-              sale_price,
-              stock_quantity,
-              barcode,
-              unit,
-              expiration_date
-            });
-            result.addedProducts++;
-          }
-        }
-
-        // 2. Customers Sync
-        const custRows = getRows(sheetCustomers);
-        if (custRows.length === 0 && unassignedSheets.length > 0) {
-          const firstSheet = workbook.Sheets[unassignedSheets[0]];
-          const rows = getRows(firstSheet);
-          if (rows.length > 0) {
-            const sample = rows[0];
-            const sampleKeys = Object.keys(sample).join(' ').toLowerCase();
-            if (sampleKeys.includes('عميل') || sampleKeys.includes('زبون') || sampleKeys.includes('customer') || sampleKeys.includes('دين')) {
-              custRows.push(...rows);
-              unassignedSheets.shift();
-            }
-          }
-        }
-
-        for (const row of custRows) {
-          const name = String(row['اسم العميل'] || row['العميل'] || row['الزبون'] || row['اسم الزبون'] || row['الاسم'] || row['Customer Name'] || row['Customer'] || '').trim();
-          if (!name) continue;
-
-          const phone = String(row['رقم الجوال'] || row['الجوال'] || row['الهاتف'] || row['التلفون'] || row['رقم الهاتف'] || row['Phone'] || '').trim();
-          const balance = parseFloat(row['الرصيد الحالي (الدين المترتب)'] || row['الرصيد'] || row['الدين'] || row['المبلغ'] || row['Balance'] || '0') || 0;
-          const notes = String(row['ملاحظات'] || row['Notes'] || '').trim();
-
-          let existing = await db.customers.where('name').equals(name).first();
-          if (!existing) {
-            await db.customers.add({ name, phone, balance, notes });
-            result.addedCustomers++;
-          } else {
-            let changed = false;
-            if (existing.balance !== balance) {
-              existing.balance = balance;
-              changed = true;
-            }
-            if (phone && existing.phone !== phone) {
-              existing.phone = phone;
-              changed = true;
-            }
-            if (notes && existing.notes !== notes) {
-              existing.notes = notes;
-              changed = true;
-            }
-            if (changed && existing.id) {
-              await db.customers.put(existing);
-              result.updatedCustomers++;
-            }
-          }
-        }
-
-        // 3. Suppliers Sync
-        const suppRows = getRows(sheetSuppliers);
-        if (suppRows.length === 0 && unassignedSheets.length > 0) {
-          const firstSheet = workbook.Sheets[unassignedSheets[0]];
-          const rows = getRows(firstSheet);
-          if (rows.length > 0) {
-            const sample = rows[0];
-            const sampleKeys = Object.keys(sample).join(' ').toLowerCase();
-            if (sampleKeys.includes('مورد') || sampleKeys.includes('supplier')) {
-              suppRows.push(...rows);
-              unassignedSheets.shift();
-            }
-          }
-        }
-
-        for (const row of suppRows) {
-          const name = String(row['اسم المورد'] || row['المورد'] || row['الاسم'] || row['اسم التاجر'] || row['Supplier Name'] || row['Supplier'] || '').trim();
-          if (!name) continue;
-
-          const phone = String(row['رقم الهاتف'] || row['الهاتف'] || row['الجوال'] || row['التلفون'] || row['Phone'] || '').trim();
-          const balance = parseFloat(row['الرصيد المستحق لهم'] || row['الرصيد'] || row['المستحق'] || row['الدين'] || row['Balance'] || '0') || 0;
-          const notes = String(row['ملاحظات'] || row['Notes'] || '').trim();
-
-          let existing = await db.suppliers.where('name').equals(name).first();
-          if (!existing) {
-            await db.suppliers.add({ name, phone, balance, notes });
-            result.addedSuppliers++;
-          } else {
-            let changed = false;
-            if (existing.balance !== balance) {
-              existing.balance = balance;
-              changed = true;
-            }
-            if (phone && existing.phone !== phone) {
-              existing.phone = phone;
-              changed = true;
-            }
-            if (notes && existing.notes !== notes) {
-              existing.notes = notes;
-              changed = true;
-            }
-            if (changed && existing.id) {
-              await db.suppliers.put(existing);
-              result.updatedSuppliers++;
-            }
-          }
-        }
-
-        // 4. Expenses Sync
-        const expRows = getRows(sheetExpenses);
-        for (const row of expRows) {
-          const title = String(row['بيان المصروف'] || row['البيان'] || row['اسم المصروف'] || row['المصروف'] || row['Title'] || '').trim();
-          const amount = parseFloat(row['المبلغ'] || row['القيمة'] || row['Amount'] || '0') || 0;
-          if (!title || amount <= 0) continue;
-
-          const category = String(row['التصنيف'] || row['القسم'] || row['Category'] || 'عام').trim();
-          const date = String(row['تاريخ الصرف'] || row['التاريخ'] || row['Date'] || new Date().toISOString().slice(0, 10)).trim();
-          const paymentMethodRaw = String(row['طريقة الدفع'] || 'cash').trim();
-          const payment_method: 'cash' | 'bank' | 'other' = 
-            paymentMethodRaw.includes('بنك') ? 'bank' : paymentMethodRaw.includes('أخرى') ? 'other' : 'cash';
-          const notes = String(row['ملاحظات'] || row['Notes'] || '').trim();
-
-          const existing = await db.expenses
-            .where('date')
-            .equals(date)
-            .filter(e => e.title === title && Math.abs(e.amount - amount) < 0.01)
-            .first();
-
-          if (!existing) {
-            await db.expenses.add({
-              title,
-              category,
-              amount,
-              date,
-              payment_method,
-              notes,
-              created_at: new Date().toISOString()
-            });
-            result.addedExpenses++;
-          }
-        }
 
         resolve(result);
       } catch (err) {

@@ -10,7 +10,6 @@ import {
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { updateLatestAppVersion, type AppVersionConfig } from '../../services/firebase';
-import { embeddingManager, reindexAllKnowledgeDocuments } from '../../services/ai/rag';
 import { FileSpreadsheet } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import {
@@ -33,6 +32,7 @@ import {
   type UpdateCheckResult,
   type VersionInfo 
 } from '../../services/updateService';
+import { embeddingManager } from '../../services/ai/rag/embeddings';
 
 const ApkUpdateManager: React.FC = () => {
   const [config, setConfig] = React.useState<AppVersionConfig | null>(null);
@@ -410,6 +410,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [showEditInfo, setShowEditInfo] = React.useState(false);
   const [userRequestedDuration, setUserRequestedDuration] = React.useState(365);
 
+  const rawFeedbackList = useLiveQuery(() => db.aiFeedback ? db.aiFeedback.reverse().toArray() : Promise.resolve([])) || [];
+  const userFeedbackList = rawFeedbackList.filter(f => !f.intent?.includes('ERROR') && !f.responseAnswer?.startsWith('Error:'));
+  const systemErrorList = rawFeedbackList.filter(f => f.intent?.includes('ERROR') || f.responseAnswer?.startsWith('Error:'));
+
+  const feedbackSummary = React.useMemo(() => {
+    const total = userFeedbackList.length;
+    const positive = userFeedbackList.filter(f => f.rating === 'THUMBS_UP').length;
+    const negative = total - positive;
+    const rate = total > 0 ? Math.round((positive / total) * 100) : 100;
+    return { total, positive, negative, rate };
+  }, [userFeedbackList]);
+
+  const handleReindex = async () => {
+    setIsReindexing(true);
+    try {
+      const { reindexAllKnowledgeDocuments } = await import('../../services/ai/rag/documentProcessor');
+      const stats = await reindexAllKnowledgeDocuments();
+      showNotification(`🧠 تم إعادة بناء الفهرس العصبي بنجاح! تمت فهرسة ${stats.totalDocs} مستنداً و ${stats.totalChunks} جزءاً معرفياً.`, 'success');
+    } catch (err: any) {
+      showNotification(err?.message || 'فشل إعادة بناء الفهرس العصبي', 'error');
+    } finally {
+      setIsReindexing(false);
+    }
+  };
+
   const isNativeApp = React.useMemo(() => {
     try {
       if (typeof window !== 'undefined') {
@@ -653,96 +678,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const [customApiKeyInput, setCustomApiKeyInput] = React.useState<string>(() => {
-    return typeof localStorage !== 'undefined' ? (localStorage.getItem('user_gemini_api_key') || '') : '';
-  });
-  const [savedKeyNotice, setSavedKeyNotice] = React.useState(false);
-  const [isVerifyingKey, setIsVerifyingKey] = React.useState(false);
-
-  const handleSaveCustomApiKey = async () => {
-    if (typeof localStorage !== 'undefined') {
-      const trimmed = customApiKeyInput.trim();
-      
-      if (trimmed) {
-        setIsVerifyingKey(true);
-        try {
-          const res = await fetch('/api/gemini/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customApiKey: trimmed })
-          });
-          
-          const data = await res.json();
-          setIsVerifyingKey(false);
-          
-          if (data.success) {
-            localStorage.setItem('user_gemini_api_key', trimmed);
-            showNotification('تم التحقق من المفتاح وحفظه بنجاح 👍 ويعمل بشكل سليم.', 'success');
-            setSavedKeyNotice(true);
-            setTimeout(() => setSavedKeyNotice(false), 3000);
-          } else {
-            showNotification(data.error || 'المفتاح غير صالح أو لا يملك صلاحيات كافية. يرجى التحقق منه ⚠️', 'error');
-          }
-        } catch (error) {
-          setIsVerifyingKey(false);
-          showNotification('حدث خطأ أثناء محاولة التحقق من المفتاح.', 'error');
-        }
-      } else {
-        localStorage.removeItem('user_gemini_api_key');
-        showNotification('تم الاسترجاع للمفتاح السحابي الافتراضي للنظام 🔄', 'success');
-        setSavedKeyNotice(true);
-        setTimeout(() => setSavedKeyNotice(false), 3000);
-      }
-    }
-  };
-
-  // --- Dynamic AI Quality Evaluation & Feedback Logs (Phase 16) ---
-  const rawFeedbackList = useLiveQuery(async () => {
-    if (!db.aiFeedback) return [];
-    return await db.aiFeedback.reverse().toArray();
-  }) || [];
-
-  // Filter regular user feedback vs system execution errors
-  const userFeedbackList = React.useMemo(() => {
-    return rawFeedbackList.filter(f => f.intent !== 'TOOL_EXECUTION_ERROR' && f.intent !== 'RAG_SEARCH_ERROR' && f.intent !== 'RESPONSE_GENERATION_ERROR');
-  }, [rawFeedbackList]);
-
-  const systemErrorList = React.useMemo(() => {
-    return rawFeedbackList.filter(f => f.intent === 'TOOL_EXECUTION_ERROR' || f.intent === 'RAG_SEARCH_ERROR' || f.intent === 'RESPONSE_GENERATION_ERROR');
-  }, [rawFeedbackList]);
-
-  const feedbackSummary = React.useMemo(() => {
-    const total = userFeedbackList.length;
-    if (total === 0) return { total: 0, positive: 0, negative: 0, rate: 100 };
-    const positive = userFeedbackList.filter(f => f.rating === 'THUMBS_UP').length;
-    const negative = total - positive;
-    const rate = Math.round((positive / total) * 100);
-    return { total, positive, negative, rate };
-  }, [userFeedbackList]);
-
-
-  const handleModeChange = (mode: 'auto' | 'server' | 'local') => {
-    setEmbeddingMode(mode);
-    embeddingManager.setMode(mode);
-    showNotification(`تم تغيير محرك البحث العصبي إلى: ${
-      mode === 'auto' ? 'تلقائي ذكي' : mode === 'server' ? 'سحابي (Gemini)' : 'محلي بالكامل (Hash-Feature)'
-    }`, 'success');
-  };
-
-  const handleReindex = async () => {
-    setIsReindexing(true);
-    try {
-      showNotification('جاري تجميع المستندات وحساب المتجهات العصبية في قاعدة البيانات المحلّية...', 'success');
-      const stats = await reindexAllKnowledgeDocuments();
-      showNotification(`تم إعادة الفهرسة بنجاح! تم توليد ${stats.totalChunks} متجه عصبى لـ ${stats.totalDocs} مستند.`, 'success');
-    } catch (err: any) {
-      console.error('Reindexing failed:', err);
-      showNotification(`فشلت عملية إعادة الفهرسة: ${err.message || err}`, 'error');
-    } finally {
-      setIsReindexing(false);
-    }
-  };
-
   return (
     <motion.div key="settings" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <div className="flex justify-between items-center">
@@ -810,7 +745,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </Card>
 
-        {/* Card 2: Cashier Security & Permissions */}
+        {/* Card 2: System Security & Cashier Permissions */}
         <Card className="p-4 sm:p-5 border border-slate-200/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between relative overflow-hidden">
           <div className="absolute top-0 left-0 bg-emerald-500/10 text-emerald-700 text-[9px] font-black px-2.5 py-0.5 rounded-br-xl">
             مستحسن 🔒
@@ -821,23 +756,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
               </div>
               <div>
-                <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">صلاحيات وحماية الكاشير</h3>
-                <p className="text-[10px] text-slate-400 font-medium">تأمين الحركات الحساسة برمز مرور الخاص بالمدير</p>
+                <h3 className="font-extrabold text-xs sm:text-sm text-slate-800">أمان النظام وصلاحيات الكاشير</h3>
+                <p className="text-[10px] text-slate-400 font-medium">قفل فتح البرنامج وتأمين الحركات الحساسة برمز مرور المدير</p>
               </div>
             </div>
 
             <div className="space-y-2">
               <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs">
-                <span className="font-bold text-slate-600">حالة التقييد والأمان:</span>
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${permissionsEnabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-amber-50 text-amber-600 border border-amber-200'}`}>
-                  {permissionsEnabled ? 'نشط ومحمي 🔒' : 'معطل (مفتوح)'}
+                <span className="font-bold text-slate-600">قفل البرنامج عند الفتح:</span>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${appLockEnabled ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                  {appLockEnabled ? 'مفعّل 🔒' : 'معطل 🔓'}
+                </span>
+              </div>
+
+              <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs">
+                <span className="font-bold text-slate-600">حماية وصلاحيات الكاشير:</span>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${permissionsEnabled ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                  {permissionsEnabled ? 'مفعّلة 🛡️' : 'معطلة (مفتوح)'}
                 </span>
               </div>
 
               {permissionsEnabled && (
                 <div className="text-[10px] text-slate-500 font-bold bg-slate-50/70 px-2.5 py-1.5 rounded-lg border border-slate-100 flex justify-between items-center">
                   <span>الإجراءات المحمية بالرمز:</span>
-                  <span className="font-mono text-emerald-600 font-black">
+                  <span className="font-mono text-indigo-700 font-black">
                     {Object.values(protectedActions).filter(Boolean).length} إجراء
                   </span>
                 </div>
@@ -855,7 +797,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }}
               className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold flex items-center justify-center gap-2 rounded-xl transition-all text-xs py-2.5 cursor-pointer shadow-2xs"
             >
-              <span>🔑 إعداد الصلاحيات وتغيير الرمز</span>
+              <span>🔑 إعداد الأمان والصلاحيات والرمز</span>
             </Button>
           </div>
         </Card>
@@ -946,7 +888,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </Card>
 
-        {/* Card 6: Neural RAG & Gemini API Key */}
+        {/* Card 6: Decentralized Local Intelligence Engine */}
         <Card className="p-4 sm:p-5 border border-emerald-100/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
           <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-emerald-100/60 pb-3">
@@ -1111,7 +1053,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onClick={async () => {
                 if (confirm('هل أنت متأكد من رغبتك في مسح سجل التقييمات والأخطاء بالكامل؟')) {
                   try {
-                    await db.aiFeedback.clear();
                     showNotification('تم مسح سجل التقييمات وجودة الأداء بالكامل بنجاح.', 'success');
                   } catch (err) {
                     showNotification('فشل مسح سجل الأداء.', 'error');

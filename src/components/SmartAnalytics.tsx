@@ -84,8 +84,11 @@ import {
   PackageMinus,
   ArrowUpDown,
   PlusCircle,
-  MinusCircle
+  MinusCircle,
+  FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { downloadWorkbook, formatSheetWithAutoCols } from '../services/excelSync';
 
 // Arabic translation and formatting helper for inventory log reasons
 const getInventoryLogReasonArabic = (reason?: string, changeAmount?: number, notes?: string): string => {
@@ -1667,6 +1670,114 @@ export default function SmartAnalytics
     html2pdf().set(opt).from(element).save();
   };
 
+  // --- Dynamic Professional Excel Analytics & Reports Export ---
+  const handleExportExcelReport = async () => {
+    try {
+      const wb = XLSX.utils.book_new();
+
+      // 1. KPI & Performance Indicators Sheet
+      const kpiRows = [
+        { 'المؤشر التحليلي والمالي': 'صافي القيمة الكلية للمبيعات', 'القيمة': performanceKPIs.salesTotal || 0, 'الوحدة': 'ريال' },
+        { 'المؤشر التحليلي والمالي': 'إجمالي فواتير الفترة', 'القيمة': performanceKPIs.transactionsCount || 0, 'الوحدة': 'فاتورة' },
+        { 'المؤشر التحليلي والمالي': 'أرباح المبيعات المحققة', 'القيمة': performanceKPIs.profitTotal || 0, 'الوحدة': 'ريال' },
+        { 'المؤشر التحليلي والمالي': 'نسبة هامش الربح الإجمالي', 'القيمة': `${(performanceKPIs.profitMarginPercent || 0).toFixed(1)}%`, 'الوحدة': '%' },
+        { 'المؤشر التحليلي والمالي': 'معدل سداد الذمم الجديدة', 'القيمة': `${(performanceKPIs.debtRecoveryRate || 0).toFixed(1)}%`, 'الوحدة': '%' },
+        { 'المؤشر التحليلي والمالي': 'إجمالي المبالغ المحصلة من الديون', 'القيمة': performanceKPIs.totalCollectedPayments || 0, 'الوحدة': 'ريال' },
+        { 'المؤشر التحليلي والمالي': 'مطابقة وتكامل الصندوق', 'القيمة': `${(performanceKPIs.boxMatchingScore || 0).toFixed(0)}%`, 'الوحدة': '%' },
+        { 'المؤشر التحليلي والمالي': 'إجمالي الفجوة أو العجز بالصندوق', 'القيمة': performanceKPIs.totalDeficitAmount || 0, 'الوحدة': 'ريال' },
+        { 'المؤشر التحليلي والمالي': 'المبيعات النقدية المصفاة (كاش)', 'القيمة': performanceKPIs.cashSalesTotal || 0, 'الوحدة': 'ريال' },
+        { 'المؤشر التحليلي والمالي': 'مبيعات الديون والبيوع الآجلة', 'القيمة': performanceKPIs.debtSalesTotal || 0, 'الوحدة': 'ريال' },
+        { 'المؤشر التحليلي والمالي': 'إجمالي الأصناف بالمخزون', 'القيمة': products.length, 'الوحدة': 'صنف' },
+        { 'المؤشر التحليلي والمالي': 'إجمالي العملاء المسجلين', 'القيمة': customers.length, 'الوحدة': 'عميل' },
+        { 'المؤشر التحليلي والمالي': 'إجمالي الموردين المسجلين', 'القيمة': suppliers.length, 'الوحدة': 'مورد' },
+        { 'المؤشر التحليلي والمالي': 'نطاق تاريخ التحليل', 'القيمة': dateFilter === 'today' ? 'اليوم' : dateFilter === '7days' ? 'آخر 7 أيام' : dateFilter === '30days' ? 'آخر 30 يوماً' : dateFilter === 'month' ? 'الشهر الجاري' : 'الكل', 'الوحدة': '-' },
+        { 'المؤشر التحليلي والمالي': 'تاريخ ووقت استخراج التقرير', 'القيمة': new Date().toLocaleString('ar-SA'), 'الوحدة': '-' }
+      ];
+      const wsKpi = XLSX.utils.json_to_sheet(kpiRows);
+      formatSheetWithAutoCols(wsKpi, kpiRows);
+      XLSX.utils.book_append_sheet(wb, wsKpi, 'مؤشرات_الأداء_والتقارير');
+
+      // 2. Daily Sales Breakdown Sheet
+      if (dailySalesBreakdown && dailySalesBreakdown.length > 0) {
+        const dailyRows = dailySalesBreakdown.map(d => ({
+          'اليوم والتاريخ': d.dateStr,
+          'عدد العمليات': d.count,
+          'النقد الفوري (كاش)': d.cashAmount,
+          'الآجل (ديون)': d.debtAmount,
+          'إجمالي المبيعات': d.totalAmount,
+          'التكلفة (للمورد)': d.cost,
+          'الأرباح المحققة': d.profit
+        }));
+        const wsDaily = XLSX.utils.json_to_sheet(dailyRows);
+        formatSheetWithAutoCols(wsDaily, dailyRows);
+        XLSX.utils.book_append_sheet(wb, wsDaily, 'حركة_المبيعات_اليومية');
+      }
+
+      // 3. Customer Sales & Accounts Breakdown Sheet
+      if (customerSalesBreakdown && customerSalesBreakdown.length > 0) {
+        const custRows = customerSalesBreakdown.map(c => ({
+          'اسم العميل / الشخص': c.name,
+          'عدد الفواتير': c.count,
+          'المبيعات النقدية': c.cashAmount,
+          'المديونية الآجلة': c.debtAmount,
+          'إجمالي المشتريات': c.totalAmount,
+          'الرصيد / الدين المترتب': c.balance
+        }));
+        const wsCust = XLSX.utils.json_to_sheet(custRows);
+        formatSheetWithAutoCols(wsCust, custRows);
+        XLSX.utils.book_append_sheet(wb, wsCust, 'كشف_حسابات_العملاء');
+      }
+
+      // 4. Top Selling & Most Profitable Products
+      if (topProductsChart && topProductsChart.length > 0) {
+        const topProdRows = topProductsChart.map(p => ({
+          'اسم المنتج': p.name,
+          'الكمية المباعة': p.quantity,
+          'إجمالي المبيعات (ريال)': p.revenue,
+          'صافي الأرباح (ريال)': p.profit,
+          'هامش الربح (%)': p.revenue > 0 ? `${((p.profit / p.revenue) * 100).toFixed(1)}%` : '0%'
+        }));
+        const wsTop = XLSX.utils.json_to_sheet(topProdRows);
+        formatSheetWithAutoCols(wsTop, topProdRows);
+        XLSX.utils.book_append_sheet(wb, wsTop, 'المنتجات_الأعلى_مبيعا_وربحا');
+      }
+
+      // 5. Category Sales Performance
+      if (categorySalesChart && categorySalesChart.length > 0) {
+        const catRows = categorySalesChart.map(c => ({
+          'اسم القسم / التصنيف': c.name,
+          'إجمالي المبيعات (ريال)': c.sales,
+          'إجمالي الأرباح (ريال)': c.profit,
+          'نسبة هامش الربح (%)': c.sales > 0 ? `${((c.profit / c.sales) * 100).toFixed(1)}%` : '0%'
+        }));
+        const wsCat = XLSX.utils.json_to_sheet(catRows);
+        formatSheetWithAutoCols(wsCat, catRows);
+        XLSX.utils.book_append_sheet(wb, wsCat, 'تحليل_أقسام_المبيعات');
+      }
+
+      // 6. Supplier Balances & Accounting
+      if (supplierAnalytics?.supplierList && supplierAnalytics.supplierList.length > 0) {
+        const suppRows = supplierAnalytics.supplierList.map(s => ({
+          'اسم المورد': s.name,
+          'الهاتف': s.phone || '',
+          'الشركة': (s as any).company || '',
+          'الرصيد المستحق لهم (ريال)': s.balance || 0,
+          'عدد الأصناف المرتبطة': s.productsCount || 0,
+          'إجمالي المدفوعات لهم': s.totalPaid || 0,
+          'ملاحظات': (s as any).notes || ''
+        }));
+        const wsSupp = XLSX.utils.json_to_sheet(suppRows);
+        formatSheetWithAutoCols(wsSupp, suppRows);
+        XLSX.utils.book_append_sheet(wb, wsSupp, 'حسابات_الموردين');
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      await downloadWorkbook(wb, `تقرير_التحليلات_المحاسبية_المتكاملة_${dateStr}.xlsx`);
+    } catch (err) {
+      console.error('Failed to export Excel report:', err);
+    }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 15 }} 
@@ -1735,11 +1846,21 @@ export default function SmartAnalytics
           </button>
 
           <button
+            onClick={handleExportExcelReport}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-black rounded-2xl shadow-lg transition-all duration-200 cursor-pointer border-t border-white/20 active:scale-95"
+            title="تصدير تقرير إحصائي وتحليلي شامل بصيغة إكسل"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>تصدير تقرير تحليلي (Excel)</span>
+          </button>
+
+          <button
             onClick={handleExportPDF}
-            className="flex items-center justify-center gap-1.5 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-2xl shadow-lg transition-all duration-200 cursor-pointer border-t border-white/20 active:scale-95"
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-2xl shadow-lg transition-all duration-200 cursor-pointer border-t border-white/20 active:scale-95"
+            title="تصدير تقرير رسمي بصيغة PDF"
           >
             <Download className="w-4 h-4" />
-            <span>تصدير ملف مالي (PDF)</span>
+            <span>تصدير تقرير (PDF)</span>
           </button>
         </div>
       </div>

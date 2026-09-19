@@ -212,17 +212,10 @@ export function SmartAdvisorModal({
 
   const resolveSmartQuery = async (query: string): Promise<{ answer: string; stages?: any[] } | string> => {
     try {
-      const aiResponse = await processUserQuery(query, activeConversationId);
-      if (aiResponse && aiResponse.answer && (aiResponse.confidence >= 0.1 || aiResponse.answer.length > 20)) {
-        return {
-          answer: aiResponse.answer,
-          stages: aiResponse.processingStages
-        };
-      } else {
-        return {
-          answer: aiResponse?.answer || 'عذراً، لم أتمكن من فهم استفسارك بدقة كافية. يرجى إعادة صياغة السؤال أو اختيار أحد الأسئلة الجاهزة من بنك الأسئلة.'
-        };
-      }
+      const answer = await processUserQuery(query, activeConversationId);
+      return {
+        answer: answer || 'عذراً، لم أتمكن من فهم استفسارك بدقة كافية. يرجى إعادة صياغة السؤال أو اختيار أحد الأسئلة الجاهزة من بنك الأسئلة.'
+      };
     } catch (err) {
       console.warn('AI Engine Router error:', err);
       return {

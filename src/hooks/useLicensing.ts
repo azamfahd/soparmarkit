@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../db';
-import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from '../utils/licensing';
+import { 
+  generateDeviceID, 
+  generateLicenseKey, 
+  verifyLicenseKey, 
+  initializeLicensingVault, 
+  activateLicenseInVault, 
+  deactivateLicenseInVault,
+  isSystemLicensingKey 
+} from '../utils/licensing';
 import { 
   submitActivationRequest, 
   subscribeToDeviceActivation, 
@@ -112,28 +120,42 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
     if (appSettingsRaw === undefined) return;
 
     const initLicensing = async () => {
-      let currentDeviceID = '';
-      const deviceIdSetting = appSettings.find(s => s.key === 'deviceID');
-      if (deviceIdSetting) {
-        currentDeviceID = deviceIdSetting.value;
-        setDeviceID(deviceIdSetting.value);
-      } else {
-        const newID = generateDeviceID();
-        await db.settings.add({ key: 'deviceID', value: newID });
-        currentDeviceID = newID;
-        setDeviceID(newID);
-      }
+      // 1. Initialize from tamper-proof multi-tier vault (Isolated IndexedDB + LocalStorage)
+      const vault = await initializeLicensingVault();
+      
+      setDeviceID(vault.deviceID);
+      setIsActivated(vault.isActivated);
+      setActivationDetails(vault.activationDetails);
+      setActivationDaysLeft(vault.activationDaysLeft);
 
-      let installDate: Date;
-      const installSetting = appSettings.find(s => s.key === 'firstInstallDate');
-      if (installSetting) {
-        installDate = new Date(installSetting.value);
-      } else {
-        const nowStr = new Date().toISOString();
-        await db.settings.add({ key: 'firstInstallDate', value: nowStr });
-        installDate = new Date(nowStr);
-      }
+      // Keep Dexie settings synchronized as mirror
+      try {
+        const devRec = await db.settings.where('key').equals('deviceID').first();
+        if (!devRec) {
+          await db.settings.add({ key: 'deviceID', value: vault.deviceID });
+        } else if (devRec.value !== vault.deviceID) {
+          await db.settings.update(devRec.id!, { value: vault.deviceID });
+        }
 
+        const instRec = await db.settings.where('key').equals('firstInstallDate').first();
+        if (!instRec) {
+          await db.settings.add({ key: 'firstInstallDate', value: vault.firstInstallDate });
+        }
+
+        const actRec = await db.settings.where('key').equals('activationDetails').first();
+        if (vault.activationDetails) {
+          if (!actRec) {
+            await db.settings.add({ key: 'activationDetails', value: vault.activationDetails });
+          } else {
+            await db.settings.update(actRec.id!, { value: vault.activationDetails });
+          }
+        } else if (actRec) {
+          await db.settings.delete(actRec.id!);
+        }
+      } catch (_) {}
+
+      // Calculate trial days remaining (7 days trial)
+      const installDate = new Date(vault.firstInstallDate);
       const now = new Date();
       const trialMs = 7 * 24 * 60 * 60 * 1000;
       const elapsedMs = now.getTime() - installDate.getTime();
@@ -141,36 +163,6 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
       setTrialDaysLeft(daysLeft);
       setIsInTrial(elapsedMs < trialMs);
 
-      const activationSetting = appSettings.find(s => s.key === 'activationDetails');
-      if (activationSetting && activationSetting.value) {
-        const details = activationSetting.value;
-        setActivationDetails(details);
-        
-        const validation = verifyLicenseKey(currentDeviceID, details.licenseKey);
-        if (validation.isValid) {
-          if (details.expiresAt === 'lifetime') {
-            setIsActivated(true);
-            setActivationDaysLeft(null);
-          } else {
-            const expDate = new Date(details.expiresAt);
-            if (now < expDate) {
-              setIsActivated(true);
-              const msLeft = expDate.getTime() - now.getTime();
-              const dLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
-              setActivationDaysLeft(dLeft);
-            } else {
-              setIsActivated(false);
-              setActivationDaysLeft(0);
-            }
-          }
-        } else {
-          setIsActivated(false);
-          setActivationDaysLeft(null);
-        }
-      } else {
-        setIsActivated(false);
-        setActivationDaysLeft(null);
-      }
       setIsLicensingLoading(false);
     };
 
@@ -224,9 +216,10 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
 
   const performSilentDeactivation = async () => {
     try {
+      deactivateLicenseInVault();
       const existing = await db.settings.where('key').equals('activationDetails').first();
-      if (existing) {
-        await db.settings.delete(existing.id!);
+      if (existing && existing.id) {
+        await db.settings.delete(existing.id);
       }
       setActivationDetails(null);
       setIsActivated(false);
@@ -243,39 +236,27 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
       return;
     }
 
-    const validation = verifyLicenseKey(deviceID, key);
-    if (!validation.isValid) {
-      setActivationError('مفتاح التفعيل غير صحيح أو غير متوافق مع معرف جهازك!');
+    const res = activateLicenseInVault(key, isCloud || !!cloudRequest);
+    if (!res.success || !res.details) {
+      setActivationError(res.error || 'مفتاح التفعيل غير صحيح أو غير متوافق مع معرف جهازك!');
       return;
     }
 
-    let expiresAt = '';
-    const now = new Date();
-    if (validation.durationDays >= 9999) {
-      expiresAt = 'lifetime';
-    } else {
-      const expDate = new Date(now.getTime() + validation.durationDays * 24 * 60 * 60 * 1000);
-      expiresAt = expDate.toISOString();
-    }
-
-    const details = {
-      licenseKey: key,
-      activatedAt: now.toISOString(),
-      expiresAt,
-      isCloud: !!isCloud || !!cloudRequest
-    };
-
-    const existing = await db.settings.where('key').equals('activationDetails').first();
-    if (existing) {
-      await db.settings.update(existing.id!, { value: details });
-    } else {
-      await db.settings.add({ key: 'activationDetails', value: details });
-    }
-
+    const details = res.details;
     setActivationDetails(details);
     setIsActivated(true);
     setActivationError('');
     setActivationKeyInput('');
+
+    // Mirror to Dexie settings
+    try {
+      const existing = await db.settings.where('key').equals('activationDetails').first();
+      if (existing && existing.id) {
+        await db.settings.update(existing.id, { value: details });
+      } else {
+        await db.settings.add({ key: 'activationDetails', value: details });
+      }
+    } catch (_) {}
   };
 
   const handleDeactivateApp = async (setConfirmAction: any, showNotification: any) => {
@@ -284,9 +265,10 @@ export function useLicensing(appSettingsRaw: any[] | undefined): LicensingState 
       message: '⚠️ تنبيه هام: هل أنت متأكد من إلغاء تفعيل هذا الترخيص؟ سيتم إخراجك للنسخة التجريبية ولا يمكنك استخدام الميزات المدفوعة إلا بتفعيل جديد.',
       onConfirm: async () => {
         try {
+          deactivateLicenseInVault();
           const existing = await db.settings.where('key').equals('activationDetails').first();
-          if (existing) {
-            await db.settings.delete(existing.id!);
+          if (existing && existing.id) {
+            await db.settings.delete(existing.id);
           }
           setActivationDetails(null);
           setIsActivated(false);

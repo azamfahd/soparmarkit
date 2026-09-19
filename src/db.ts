@@ -9,6 +9,7 @@ export interface Product {
   category: string;
   barcode?: string;
   unit?: string;
+  min_stock?: number;
   supplier_id?: number;
   production_date?: string;
   expiration_date?: string;
@@ -19,6 +20,7 @@ export interface Supplier {
   name: string;
   phone: string;
   balance: number;
+  company?: string;
   notes?: string;
 }
 
@@ -35,13 +37,16 @@ export interface Customer {
   name: string;
   phone: string;
   balance: number;
+  address?: string;
   notes?: string;
 }
 
 export interface Sale {
   id?: number;
   customer_id: number | null;
+  customer_name?: string;
   total_amount: number;
+  discount?: number;
   paid_amount?: number;
   remaining_amount?: number;
   payment_status?: 'unpaid' | 'partial' | 'paid' | 'overpaid';

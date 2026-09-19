@@ -132,7 +132,15 @@ import {
 } from 'recharts';
 import { App as CapApp } from '@capacitor/app';
 import { db, seedDatabase, Product, Customer, Sale, Supplier } from './db';
-import { generateDeviceID, generateLicenseKey, verifyLicenseKey } from './utils/licensing';
+import { 
+  generateDeviceID, 
+  generateLicenseKey, 
+  verifyLicenseKey, 
+  initializeLicensingVault, 
+  activateLicenseInVault, 
+  deactivateLicenseInVault,
+  isSystemLicensingKey 
+} from './utils/licensing';
 import { useLiveQuery } from './hooks/useLiveQuery';
 import { 
   submitActivationRequest, 
@@ -1085,7 +1093,6 @@ export default function App() {
   const [isAppLocked, setIsAppLocked] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       const lockEnabled = localStorage.getItem('cache_appLockEnabled') === 'true';
-      const permEnabled = localStorage.getItem('cache_permissionsEnabled') === 'true';
       let unlockedInSession = sessionStorage.getItem('session_app_unlocked') === 'true';
 
       // Smart reload detection (protects against strict iframes wiping sessionStorage)
@@ -1098,7 +1105,7 @@ export default function App() {
         localStorage.removeItem('temp_reload_unlock');
       }
 
-      return (lockEnabled || permEnabled) && !unlockedInSession;
+      return lockEnabled && !unlockedInSession;
     }
     return false;
   });
@@ -1342,12 +1349,23 @@ export default function App() {
         const data = {
           products,
           customers,
+          suppliers,
+          supplierPayments: db.supplierPayments ? await db.supplierPayments.toArray() : [],
           sales,
-          saleItems: await db.saleItems.toArray(),
-          debts: await db.debts.toArray(),
-          inventoryLogs: await db.inventoryLogs.toArray(),
+          saleItems: db.saleItems ? await db.saleItems.toArray() : [],
+          debts: db.debts ? await db.debts.toArray() : [],
+          expenses: db.expenses ? await db.expenses.toArray() : [],
+          salesSettlements: db.salesSettlements ? await db.salesSettlements.toArray() : [],
+          cashWithdrawals: db.cashWithdrawals ? await db.cashWithdrawals.toArray() : [],
+          inventoryLogs: db.inventoryLogs ? await db.inventoryLogs.toArray() : [],
           settings: appSettings,
           notes,
+          aiConversations: db.aiConversations ? await db.aiConversations.toArray() : [],
+          aiMessages: db.aiMessages ? await db.aiMessages.toArray() : [],
+          knowledgeDocuments: db.knowledgeDocuments ? await db.knowledgeDocuments.toArray() : [],
+          documentChunks: db.documentChunks ? await db.documentChunks.toArray() : [],
+          aiFeedback: db.aiFeedback ? await db.aiFeedback.toArray() : [],
+          aiTrainingData: db.aiTrainingData ? await db.aiTrainingData.toArray() : []
         };
         const response = await fetch('/api/backup', {
           method: 'POST',
@@ -1368,7 +1386,7 @@ export default function App() {
     }, 8000); // 8 seconds debounce of idle time prevents freezes during active typing/selling
 
     return () => clearTimeout(backupTimer);
-  }, [products, customers, sales, appSettings, notes, isAutoBackupEnabled]);
+  }, [products, customers, suppliers, sales, appSettings, notes, isAutoBackupEnabled]);
 
   useEffect(() => {
     const checkReminders = () => {
@@ -1466,7 +1484,6 @@ export default function App() {
     }
     const appLockSetting = appSettings.find(s => s.key === 'appLockEnabled');
     const isLockOn = appLockSetting ? !!appLockSetting.value : false;
-    const isPermOn = permSetting ? !!permSetting.value : false;
 
     if (appLockSetting) {
       setAppLockEnabled(isLockOn);
@@ -1475,7 +1492,7 @@ export default function App() {
       }
     }
 
-    if ((isLockOn || isPermOn) && !sessionStorage.getItem('session_app_unlocked')) {
+    if (isLockOn && !sessionStorage.getItem('session_app_unlocked')) {
       setIsAppLocked(true);
     }
   }, [appSettingsRaw]);
@@ -1485,85 +1502,49 @@ export default function App() {
     if (appSettingsRaw === undefined) return;
 
     const initLicensing = async () => {
-      // 1. Check or generate Device ID
-      let currentDeviceID = '';
-      const deviceIdSetting = appSettings.find(s => s.key === 'deviceID');
-      if (deviceIdSetting) {
-        currentDeviceID = deviceIdSetting.value;
-        setDeviceID(deviceIdSetting.value);
-        localStorage.setItem('cache_deviceID', deviceIdSetting.value);
-      } else {
-        const newID = generateDeviceID();
-        await db.settings.add({ key: 'deviceID', value: newID });
-        currentDeviceID = newID;
-        setDeviceID(newID);
-        localStorage.setItem('cache_deviceID', newID);
-      }
+      // 1. Recover from hardware-bound tamper-proof vault
+      const vaultData = await initializeLicensingVault();
 
-      // 2. Check first install date for Free Trial
-      let installDate: Date;
-      const installSetting = appSettings.find(s => s.key === 'firstInstallDate');
-      if (installSetting) {
-        installDate = new Date(installSetting.value);
-      } else {
-        const nowStr = new Date().toISOString();
-        await db.settings.add({ key: 'firstInstallDate', value: nowStr });
-        installDate = new Date(nowStr);
-      }
+      setDeviceID(vaultData.deviceID);
+      setActivationDetails(vaultData.activationDetails);
+      setIsActivated(vaultData.isActivated);
+      setActivationDaysLeft(vaultData.activationDaysLeft);
+
+      // Keep Dexie settings synchronized as mirror
+      try {
+        const devRec = await db.settings.where('key').equals('deviceID').first();
+        if (!devRec) {
+          await db.settings.add({ key: 'deviceID', value: vaultData.deviceID });
+        } else if (devRec.value !== vaultData.deviceID) {
+          await db.settings.update(devRec.id!, { value: vaultData.deviceID });
+        }
+
+        const instRec = await db.settings.where('key').equals('firstInstallDate').first();
+        if (!instRec) {
+          await db.settings.add({ key: 'firstInstallDate', value: vaultData.firstInstallDate });
+        }
+
+        const actRec = await db.settings.where('key').equals('activationDetails').first();
+        if (vaultData.activationDetails) {
+          if (!actRec) {
+            await db.settings.add({ key: 'activationDetails', value: vaultData.activationDetails });
+          } else {
+            await db.settings.update(actRec.id!, { value: vaultData.activationDetails });
+          }
+        } else if (actRec) {
+          await db.settings.delete(actRec.id!);
+        }
+      } catch (_) {}
 
       // Calculate trial days remaining (7 days trial)
+      const installDate = new Date(vaultData.firstInstallDate);
       const now = new Date();
       const trialMs = 7 * 24 * 60 * 60 * 1000;
       const elapsedMs = now.getTime() - installDate.getTime();
       const daysLeft = Math.max(0, Math.ceil((trialMs - elapsedMs) / (1000 * 60 * 60 * 24)));
       setTrialDaysLeft(daysLeft);
       setIsInTrial(elapsedMs < trialMs);
-      localStorage.setItem('cache_trialDaysLeft', String(daysLeft));
-      localStorage.setItem('cache_isInTrial', String(elapsedMs < trialMs));
 
-      // 3. Check Activation status
-      const activationSetting = appSettings.find(s => s.key === 'activationDetails');
-      if (activationSetting && activationSetting.value) {
-        const details = activationSetting.value;
-        setActivationDetails(details);
-        localStorage.setItem('cache_activationDetails', JSON.stringify(details));
-        
-        // Validate the activation details
-        const validation = verifyLicenseKey(currentDeviceID, details.licenseKey);
-        if (validation.isValid) {
-          if (details.expiresAt === 'lifetime') {
-            setIsActivated(true);
-            setActivationDaysLeft(null);
-            localStorage.setItem('cache_isActivated', 'true');
-            localStorage.setItem('cache_activationDaysLeft', 'null');
-          } else {
-            const expDate = new Date(details.expiresAt);
-            if (now < expDate) {
-              setIsActivated(true);
-              const msLeft = expDate.getTime() - now.getTime();
-              const dLeft = Math.max(0, Math.ceil(msLeft / (1000 * 60 * 60 * 24)));
-              setActivationDaysLeft(dLeft);
-              localStorage.setItem('cache_isActivated', 'true');
-              localStorage.setItem('cache_activationDaysLeft', String(dLeft));
-            } else {
-              setIsActivated(false); // Expired
-              setActivationDaysLeft(0);
-              localStorage.setItem('cache_isActivated', 'false');
-              localStorage.setItem('cache_activationDaysLeft', '0');
-            }
-          }
-        } else {
-          setIsActivated(false); // Tampered/invalid key
-          setActivationDaysLeft(null);
-          localStorage.setItem('cache_isActivated', 'false');
-          localStorage.setItem('cache_activationDaysLeft', 'null');
-        }
-      } else {
-        setIsActivated(false);
-        setActivationDaysLeft(null);
-        localStorage.setItem('cache_isActivated', 'false');
-        localStorage.setItem('cache_activationDaysLeft', 'null');
-      }
       setIsLicensingLoading(false);
     };
 
@@ -2262,9 +2243,10 @@ export default function App() {
   // --- Licensing & Activation Handlers ---
   const performSilentDeactivation = async () => {
     try {
+      deactivateLicenseInVault();
       const existing = await db.settings.where('key').equals('activationDetails').first();
-      if (existing) {
-        await db.settings.delete(existing.id!);
+      if (existing && existing.id) {
+        await db.settings.delete(existing.id);
       }
       setActivationDetails(null);
       setIsActivated(false);
@@ -2282,41 +2264,29 @@ export default function App() {
       return;
     }
 
-    const validation = verifyLicenseKey(deviceID, key);
-    if (!validation.isValid) {
-      setActivationError('مفتاح التفعيل غير صحيح أو غير متوافق مع معرف جهازك!');
+    const res = activateLicenseInVault(key, isCloud || !!cloudRequest);
+    if (!res.success || !res.details) {
+      setActivationError(res.error || 'مفتاح التفعيل غير صحيح أو غير متوافق مع معرف جهازك!');
       return;
     }
 
-    // Determine expiration date
-    let expiresAt = '';
-    const now = new Date();
-    if (validation.durationDays >= 9999) {
-      expiresAt = 'lifetime';
-    } else {
-      const expDate = new Date(now.getTime() + validation.durationDays * 24 * 60 * 60 * 1000);
-      expiresAt = expDate.toISOString();
-    }
+    const details = res.details;
 
-    const details = {
-      licenseKey: key,
-      activatedAt: now.toISOString(),
-      expiresAt,
-      isCloud: !!isCloud || !!cloudRequest
-    };
-
-    const existing = await db.settings.where('key').equals('activationDetails').first();
-    if (existing) {
-      await db.settings.update(existing.id!, { value: details });
-    } else {
-      await db.settings.add({ key: 'activationDetails', value: details });
-    }
+    // Mirror to Dexie db.settings
+    try {
+      const existing = await db.settings.where('key').equals('activationDetails').first();
+      if (existing && existing.id) {
+        await db.settings.update(existing.id, { value: details });
+      } else {
+        await db.settings.add({ key: 'activationDetails', value: details });
+      }
+    } catch (_) {}
 
     setActivationDetails(details);
     setIsActivated(true);
     setActivationError('');
     setActivationKeyInput('');
-    showNotification('تم تفعيل البرنامج بنجاح! شكراً لاشتراككم.', 'success');
+    showNotification('تم تفعيل البرنامج بنجاح وتثبيت الترخيص على جهازك! شكراً لاشتراككم.', 'success');
   };
 
   useEffect(() => {
@@ -2420,20 +2390,19 @@ export default function App() {
       // إذا كان البرنامج غير مفعل حالياً، نقوم بتفعيله كجهاز للمطور مدى الحياة
       if (!isActivated && deviceID) {
         const key = generateLicenseKey(deviceID, 9999); // 9999 يعني مدى الحياة
-        const details = {
-          licenseKey: key,
-          expiresAt: 'lifetime',
-          activatedAt: new Date().toISOString()
-        };
-        const existing = await db.settings.where('key').equals('activationDetails').first();
-        if (existing) {
-          await db.settings.update(existing.id!, { value: details });
-        } else {
-          await db.settings.add({ key: 'activationDetails', value: details });
+        const res = activateLicenseInVault(key, false);
+        if (res.success && res.details) {
+          const details = res.details;
+          const existing = await db.settings.where('key').equals('activationDetails').first();
+          if (existing && existing.id) {
+            await db.settings.update(existing.id, { value: details });
+          } else {
+            await db.settings.add({ key: 'activationDetails', value: details });
+          }
+          setActivationDetails(details);
+          setIsActivated(true);
+          showNotification('تم تفعيل جهاز المالك بنجاح مدى الحياة ♾️', 'success');
         }
-        setActivationDetails(details);
-        setIsActivated(true);
-        showNotification('تم تفعيل جهاز المالك بنجاح مدى الحياة ♾️', 'success');
       }
     } else {
       // Camouflage: act like it succeeded in syncing a cache, without throwing any error
@@ -2527,9 +2496,10 @@ export default function App() {
       message: '⚠️ تنبيه هام: هل أنت متأكد من إلغاء تفعيل هذا الترخيص؟ سيتم إخراجك للنسخة التجريبية ولا يمكنك استخدام الميزات المدفوعة إلا بتفعيل جديد.',
       onConfirm: async () => {
         try {
+          deactivateLicenseInVault();
           const existing = await db.settings.where('key').equals('activationDetails').first();
-          if (existing) {
-            await db.settings.delete(existing.id!);
+          if (existing && existing.id) {
+            await db.settings.delete(existing.id);
           }
           setActivationDetails(null);
           setIsActivated(false);
@@ -3577,8 +3547,9 @@ export default function App() {
       localStorage.setItem('cache_permissionsEnabled', String(enabled));
     }
     if (enabled) {
-      sessionStorage.setItem('session_app_unlocked', 'true');
-      await updateAppLockEnabled(true);
+      showNotification('🛡️ تم تفعيل نظام حماية وصلاحيات الكاشير', 'success');
+    } else {
+      showNotification('🔓 تم تعطيل صلاحيات الكاشير (العمل بحرية دون طلب الرمز في الحركات)', 'success');
     }
   };
 
@@ -3746,6 +3717,9 @@ export default function App() {
 
   const exportData = async () => {
     try {
+      const allSettings = await db.settings.toArray();
+      const safeSettings = allSettings.filter(s => !isSystemLicensingKey(s.key));
+
       const data = {
         products: await db.products.toArray(),
         customers: await db.customers.toArray(),
@@ -3755,9 +3729,17 @@ export default function App() {
         saleItems: await db.saleItems.toArray(),
         debts: await db.debts.toArray(),
         inventoryLogs: await db.inventoryLogs.toArray(),
-        settings: await db.settings.toArray(),
+        settings: safeSettings,
         notes: await db.notes.toArray(),
         expenses: db.expenses ? await db.expenses.toArray() : [],
+        salesSettlements: db.salesSettlements ? await db.salesSettlements.toArray() : [],
+        cashWithdrawals: db.cashWithdrawals ? await db.cashWithdrawals.toArray() : [],
+        aiConversations: db.aiConversations ? await db.aiConversations.toArray() : [],
+        aiMessages: db.aiMessages ? await db.aiMessages.toArray() : [],
+        knowledgeDocuments: db.knowledgeDocuments ? await db.knowledgeDocuments.toArray() : [],
+        documentChunks: db.documentChunks ? await db.documentChunks.toArray() : [],
+        aiFeedback: db.aiFeedback ? await db.aiFeedback.toArray() : [],
+        aiTrainingData: db.aiTrainingData ? await db.aiTrainingData.toArray() : []
       };
       const jsonString = JSON.stringify(data, null, 2);
       const fileName = `${storeName || 'المتجر'}_بيانات_${new Date().toISOString().split('T')[0]}.json`;
@@ -3799,6 +3781,12 @@ export default function App() {
           data = JSON.parse(content);
         } catch (e) {
           showNotification('الملف ليس بتنسيق JSON صحيح', 'error');
+          return;
+        }
+
+        if (isEncryptedBackup(data)) {
+          setEncryptedBackupPayload(data);
+          setShowDecryptBackupModal(true);
           return;
         }
 
@@ -3871,17 +3859,27 @@ export default function App() {
   const forceLocalDiskBackup = async () => {
     try {
       setIsBackupSyncing(true);
+      const safeSettings = appSettings.filter(s => !isSystemLicensingKey(s.key));
       const data = {
         products,
         customers,
         suppliers,
-        supplierPayments: await db.supplierPayments.toArray(),
+        supplierPayments: db.supplierPayments ? await db.supplierPayments.toArray() : [],
         sales,
-        saleItems: await db.saleItems.toArray(),
-        debts: await db.debts.toArray(),
-        inventoryLogs: await db.inventoryLogs.toArray(),
-        settings: appSettings,
+        saleItems: db.saleItems ? await db.saleItems.toArray() : [],
+        debts: db.debts ? await db.debts.toArray() : [],
+        expenses: db.expenses ? await db.expenses.toArray() : [],
+        salesSettlements: db.salesSettlements ? await db.salesSettlements.toArray() : [],
+        cashWithdrawals: db.cashWithdrawals ? await db.cashWithdrawals.toArray() : [],
+        inventoryLogs: db.inventoryLogs ? await db.inventoryLogs.toArray() : [],
+        settings: safeSettings,
         notes,
+        aiConversations: db.aiConversations ? await db.aiConversations.toArray() : [],
+        aiMessages: db.aiMessages ? await db.aiMessages.toArray() : [],
+        knowledgeDocuments: db.knowledgeDocuments ? await db.knowledgeDocuments.toArray() : [],
+        documentChunks: db.documentChunks ? await db.documentChunks.toArray() : [],
+        aiFeedback: db.aiFeedback ? await db.aiFeedback.toArray() : [],
+        aiTrainingData: db.aiTrainingData ? await db.aiTrainingData.toArray() : []
       };
       const response = await fetch('/api/backup', {
         method: 'POST',
@@ -3890,7 +3888,7 @@ export default function App() {
       });
       if (response.ok) {
         await fetchBackupStatus();
-        showNotification('تم تحديث وحفظ قاعدة بيانات النظام التلقائية على القرص بنجاح!');
+        showNotification('تم تحديث وحفظ كافة بيانات النظام على القرص بنجاح!');
       } else {
         showNotification('فشل تحديث قاعدة البيانات التلقائية', 'error');
       }
@@ -3905,22 +3903,45 @@ export default function App() {
   const resetDatabase = async () => {
     verifyAdminPermission('reset_database', () => {
       setConfirmAction({
-        title: 'إعادة ضبط البرنامج',
-        message: 'هل أنت متأكد من مسح جميع البيانات؟ لا يمكن التراجع عن هذه الخطوة وسيتم حذف كل المنتجات والزبائن والمبيعات.',
+        title: 'إعادة ضبط البرنامج (تصفير البيانات)',
+        message: 'هل أنت متأكد من مسح كافة سجلات المبيعات والمنتجات والزبائن والمصروفات؟ (ملاحظة: ترخيص البرنامج ومفتاح الجهاز ورمز الحماية سيبقون محفوظين ومحميين بالكامل ولن يتأثروا 🔒).',
         onConfirm: async () => {
-        await db.transaction('rw', [db.products, db.customers, db.suppliers, db.supplierPayments, db.sales, db.saleItems, db.debts, db.inventoryLogs, db.settings, db.notes], async () => {
+        await db.transaction('rw', [
+          db.products, 
+          db.customers, 
+          db.suppliers, 
+          db.supplierPayments, 
+          db.sales, 
+          db.saleItems, 
+          db.debts, 
+          db.expenses,
+          db.salesSettlements,
+          db.cashWithdrawals,
+          db.inventoryLogs, 
+          db.settings, 
+          db.notes
+        ], async () => {
           await db.products.clear();
           await db.customers.clear();
           await db.suppliers.clear();
-          await db.supplierPayments.clear();
+          if (db.supplierPayments) await db.supplierPayments.clear();
           await db.sales.clear();
-          await db.saleItems.clear();
-          await db.debts.clear();
-          await db.inventoryLogs.clear();
-          await db.notes.clear();
-          await db.settings.filter(s => s.key !== 'isFirstRun' && s.key !== 'storeName' && s.key !== 'adminPin').delete();
+          if (db.saleItems) await db.saleItems.clear();
+          if (db.debts) await db.debts.clear();
+          if (db.expenses) await db.expenses.clear();
+          if (db.salesSettlements) await db.salesSettlements.clear();
+          if (db.cashWithdrawals) await db.cashWithdrawals.clear();
+          if (db.inventoryLogs) await db.inventoryLogs.clear();
+          if (db.notes) await db.notes.clear();
+          // Delete business settings only, strictly preserve licensing and core identity settings
+          await db.settings.filter(s => 
+            s.key !== 'isFirstRun' && 
+            s.key !== 'storeName' && 
+            s.key !== 'adminPin' && 
+            !isSystemLicensingKey(s.key)
+          ).delete();
         });
-        showNotification('تم تصفير البرنامج بنجاح');
+        showNotification('تم تصفير بيانات البرنامج بنجاح مع الحفاظ الكامل على الترخيص وهوية الجهاز 🔒', 'success');
         setTimeout(() => window.location.reload(), 1000);
       }
     });
@@ -4974,7 +4995,6 @@ export default function App() {
   if (appSettingsRaw !== undefined) {
     const s = (Array.isArray(appSettingsRaw) ? appSettingsRaw.reduce((acc, curr) => ({ ...acc, [curr.key]: curr.value }), {}) : appSettingsRaw) as Record<string, any>;
     const isLockOn = s?.appLockEnabled || false;
-    const isPermOn = s?.permissionsEnabled || false;
     let unlockedInSession = typeof window !== 'undefined' ? sessionStorage.getItem('session_app_unlocked') === 'true' : false;
     const tempReload = typeof window !== 'undefined' ? localStorage.getItem('temp_reload_unlock') : null;
     if (tempReload) {
@@ -4982,7 +5002,7 @@ export default function App() {
         unlockedInSession = true;
       }
     }
-    if ((isLockOn || isPermOn) && !unlockedInSession) {
+    if (isLockOn && !unlockedInSession) {
       finalIsAppLocked = true;
     }
   }
