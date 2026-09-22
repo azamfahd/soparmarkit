@@ -17,6 +17,7 @@ import {
 import { 
   checkAppUpdates, 
   downloadDirectAPK, 
+  installDownloadedAPK,
   applyOTAUpdate, 
   UPDATE_SAFETY_NOTICE,
   GITHUB_REPO,
@@ -57,12 +58,12 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
     }
   };
 
-  const handleDownloadAPKClick = (force = false) => {
+  const handleDownloadAPKClick = async (force = false) => {
     if (!force && checkResult && !checkResult.hasUpdate) {
       setAlreadyUpToDateNotice(true);
       return;
     }
-    downloadDirectAPK(checkResult?.updateUrl);
+    await installDownloadedAPK(checkResult?.updateUrl);
   };
 
   useEffect(() => {
@@ -263,35 +264,29 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
 
                 {/* Download / Action Buttons */}
                 <div className="space-y-2.5 pt-2">
-                  <button
-                    onClick={() => handleDownloadAPKClick(false)}
-                    className={`w-full py-3 px-4 font-extrabold text-sm rounded-2xl transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      checkResult.hasUpdate
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30 active:scale-[0.99]'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 active:scale-[0.99]'
-                    }`}
-                  >
-                    {checkResult.hasUpdate ? (
-                      <>
-                        <Download className="w-4 h-4" />
-                        <span>تنزيل وتثبيت حزمة הـ APK المباشرة 🎉</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span>التطبيق متوافق وبأحدث إصدار (v{checkResult.currentVersion})</span>
-                      </>
-                    )}
-                  </button>
+                  {checkResult.hasUpdate ? (
+                    <button
+                      onClick={() => applyOTAUpdate(checkResult.latestVersion, checkResult.latestVersionCode)}
+                      className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white font-extrabold text-sm rounded-2xl transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      <span>تثبيت وتطبيق التحديث الجديد فوراً 🚀</span>
+                    </button>
+                  ) : (
+                    <div className="w-full py-3 px-4 bg-slate-100 text-slate-800 border border-slate-200 font-extrabold text-sm rounded-2xl flex items-center justify-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>التطبيق متوافق وبأحدث إصدار (v{checkResult.currentVersion})</span>
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => applyOTAUpdate()}
+                      onClick={() => handleDownloadAPKClick(false)}
                       className="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-emerald-300 font-bold text-xs rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                      title="تحديث سريع للواجهة والملفات الخفيفة بدون تنزيل ملف APK"
+                      title="تحميل ملف APK مستقل لتثبيته يدوياً على أجهزة الأندرويد"
                     >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>تحديث خفيف (OTA)</span>
+                      <Download className="w-3.5 h-3.5" />
+                      <span>حزمة APK للأندرويد</span>
                     </button>
 
                     <button
@@ -305,12 +300,12 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
                   </div>
 
                   <a
-                    href={`https://github.com/${GITHUB_REPO}/releases/latest`}
+                    href="https://github.com/azamfahd/soparmarkit/releases"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-1 text-[11px] font-bold text-slate-400 hover:text-slate-600 pt-1 transition-colors"
                   >
-                    <span>فتح صفحة الاصدارات الرسمية في GitHub</span>
+                    <span>صفحة الإصدارات في المستودع الرسمية</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
                 </div>

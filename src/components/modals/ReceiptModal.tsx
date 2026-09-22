@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { printSaleReceiptDoc, executeDirectPrint } from '../../utils/printUtils';
+import { exportHtmlToPdfFile } from '../../utils/fileSaver';
 
 export interface SaleReceiptData {
   sale: any;
@@ -106,14 +107,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
     setIsExportingPDF(true);
     try {
-      const opt = {
-        margin: [4, 4, 4, 4],
-        filename: `فاتورة_مبيعات_${saleId}_${new Date().toISOString().split('T')[0]}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-        jsPDF: { unit: 'mm', format: paperFormat === 'thermal' ? [80, 180] : 'a5', orientation: 'portrait' }
-      };
-      await (html2pdf as any)().set(opt).from(targetElement).save();
+      const fileName = `فاتورة_مبيعات_${saleId}_${new Date().toISOString().split('T')[0]}.pdf`;
+      await exportHtmlToPdfFile(targetElement, fileName, {
+        format: paperFormat === 'thermal' ? [80, 180] : 'a5',
+        orientation: 'portrait',
+        margin: [4, 4, 4, 4]
+      });
     } catch (err) {
       console.error('PDF export error:', err);
     } finally {

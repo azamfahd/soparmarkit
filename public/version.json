@@ -4,7 +4,7 @@
   "buildNumber": 4,
   "releaseDate": "2026-09-17",
   "appName": "النظام المحاسبي الذكي",
-  "updateUrl": "https://account20.netlify.app",
+  "updateUrl": "https://github.com/azamfahd/soparmarkit/releases",
   "minSupportedVersion": "1.0.0",
   "releaseNotes": "تحديث تلقائي جديد للنظام المحاسبي: تحسينات الأداء، دعم التحديثات المزدوجة، والاحتفاظ الكامل بالبيانات.",
   "features": [

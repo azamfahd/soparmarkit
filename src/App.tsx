@@ -49,14 +49,14 @@ import { DecryptBackupModal } from './components/modals/DecryptBackupModal';
 import { isEncryptedBackup } from './services/security/encryptedBackup';
 import { DataAuditReportModal } from './components/modals/DataAuditReportModal';
 import { checkFileModifiedAndSync } from './services/excelSync';
-import { saveFileToDevice } from './utils/fileSaver';
+import { saveFileToDevice, exportHtmlToPdfFile } from './utils/fileSaver';
 import { importAndRepairDatabaseOffline, convertJsonDatabaseToExcel, convertExcelToDatabaseJson, AuditReport } from './services/dataSanitizer';
 import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } from './utils/printUtils';
 import { InstallAppModal } from './components/InstallAppModal';
 import { CheckUpdatesModal } from './components/modals/CheckUpdatesModal';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
-import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, getApkDownloadUrl } from './services/updateService';
+import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, installDownloadedAPK, getApkDownloadUrl } from './services/updateService';
 import { DownloadToast } from './components/DownloadToast';
 import { Scan, QrCode, Smartphone, FileSpreadsheet } from 'lucide-react';
 import { 
@@ -851,17 +851,16 @@ export default function App() {
     const cached = localStorage.getItem('cache_activationDaysLeft');
     return cached ? (cached === 'null' ? null : parseInt(cached, 10)) : null;
   });
-  const [isLicensingLoading, setIsLicensingLoading] = useState<boolean>(false);
+  const [isLicensingLoading, setIsLicensingLoading] = useState<boolean>(true);
   const [showSplash, setShowSplash] = useState<boolean>(true);
   
-  // Failsafe timeout for IndexedDB hanging
+  // Failsafe timeout for licensing loading to ensure app always responds
   useEffect(() => {
     const timer = setTimeout(() => {
       if (isLicensingLoading) {
-        console.warn('IndexedDB loading timed out. Forcing app to load.');
         setIsLicensingLoading(false);
       }
-    }, 600);
+    }, 1200);
     return () => clearTimeout(timer);
   }, [isLicensingLoading]);
   const backupWarningShownRef = useRef<boolean>(false);
@@ -875,7 +874,7 @@ export default function App() {
   const [isDeveloperMode, setIsDeveloperMode] = useState<boolean>(false);
   const [developerPinInput, setDeveloperPinInput] = useState<string>('');
   const [developerPinError, setDeveloperPinError] = useState<string>('');
-  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests'>('requests');
+  const [activeDevTab, setActiveDevTab] = useState<'generator' | 'requests' | 'updates'>('requests');
   const [devClickCount, setDevClickCount] = useState<number>(0);
   const [showHiddenAdminInput, setShowHiddenAdminInput] = useState<boolean>(false);
   const [diagnosticAttempts, setDiagnosticAttempts] = useState<number>(0);
@@ -1029,19 +1028,26 @@ export default function App() {
     }
   };
 
-  const handleDownloadAPK = (force = false) => {
+  const handleDownloadAPK = async (force = false) => {
     if (!force && remoteAppConfig && !hasPendingUpdate) {
       showNotification(`✨ التطبيق مثبت لديك ومتوافق بأحدث إصدار بالفعل (v${remoteAppConfig.latestVersion || '1.0.0'}) - لا داعي لإعادة التنزيل!`, 'success');
       return;
     }
     const url = remoteAppConfig?.apkUrl || getApkDownloadUrl();
-    downloadDirectAPK(url);
-    showNotification('جاري بدء تنزيل حزمة الـ APK المباشرة... (تثبيت آمن مع الاحتفاظ ببياناتك)', 'success');
+    if (url.toLowerCase().includes('.apk')) {
+      showNotification('جاري بدء تثبيت حزمة الـ APK فوق النسخة الحالية... (تثبيت آمن مع الاحتفاظ ببياناتك)', 'success');
+    } else {
+      showNotification('جاري فتح صفحة الإصدارات الرسمية في مستودع GitHub...', 'success');
+    }
+    const res = await installDownloadedAPK(url);
+    if (res.message && res.method !== 'DIRECT_BROWSER') {
+      showNotification(res.message, 'success');
+    }
   };
 
   const handleUpdateAppNow = async () => {
-    showNotification('جاري تحديث واجهة النظام وتحديث الكاش المحلي فوراً...', 'success');
-    await applyOTAUpdate();
+    showNotification('جاري تثبيت وتطبيق التحديث الجديد مباشرة من المستودع...', 'success');
+    await applyOTAUpdate(remoteAppConfig?.latestVersion);
   };
 
   const [storeName, setStoreName] = useState<string>(() => {
@@ -4094,20 +4100,12 @@ export default function App() {
       </div>
     `;
     
-    const opt = {
+    const fileName = `كشف_حساب_${customer.name}_${new Date().toISOString().split('T')[0]}.pdf`;
+    exportHtmlToPdfFile(element, fileName, {
       margin: 0.4,
-      filename: `كشف_حساب_${customer.name}_${new Date().toISOString().split('T')[0]}.pdf`,
-      image: { type: 'jpeg' as 'jpeg', quality: 0.98 },
-      html2canvas: { 
-        scale: 2,
-        ignoreElements: (element: HTMLElement) => {
-          return element.tagName === 'STYLE' || element.tagName === 'LINK';
-        }
-      },
-      jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' as 'portrait' }
-    };
-    
-    html2pdf().set(opt).from(element).save();
+      format: 'a4',
+      orientation: 'portrait'
+    });
   };
 
   const handleDownloadInventoryPDF = async () => {
@@ -4144,20 +4142,12 @@ export default function App() {
       </div>
     `;
     
-    const opt = {
+    const fileName = `تقرير_المخزون_${new Date().toISOString().split('T')[0]}.pdf`;
+    exportHtmlToPdfFile(element, fileName, {
       margin: 0.5,
-      filename: `تقرير_المخزون_${new Date().toISOString().split('T')[0]}.pdf`,
-      image: { type: 'jpeg' as 'jpeg', quality: 0.98 },
-      html2canvas: { 
-        scale: 2,
-        ignoreElements: (element: HTMLElement) => {
-          return element.tagName === 'STYLE' || element.tagName === 'LINK';
-        }
-      },
-      jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' as 'portrait' }
-    };
-    
-    html2pdf().set(opt).from(element).save();
+      format: 'letter',
+      orientation: 'portrait'
+    });
   };
 
   const handleShareWhatsApp = (customer: Customer, stats?: any, monthLabel?: string) => {
@@ -4792,18 +4782,14 @@ export default function App() {
 
   const handleDownloadCartPDF = () => {
     if (cart.length === 0) return showNotification('السلة فارغة', 'error');
-    const element = document.createElement('div');
-    element.innerHTML = generateCartHTML();
+    const htmlContent = generateCartHTML();
+    const fileName = `cart_${new Date().getTime()}.pdf`;
     
-    const opt = {
+    exportHtmlToPdfFile(htmlContent, fileName, {
       margin: 5,
-      filename: `cart_${new Date().getTime()}.pdf`,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: 'mm', format: [80, 200], orientation: 'portrait' }
-    };
-    
-    html2pdf().set(opt as any).from(element).save();
+      format: [80, 200],
+      orientation: 'portrait'
+    });
   };
 
   const handleCheckout = async () => {
@@ -4992,7 +4978,7 @@ export default function App() {
     }
   };
 
-  if (appSettingsRaw === undefined) {
+  if (appSettingsRaw === undefined || isLicensingLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>

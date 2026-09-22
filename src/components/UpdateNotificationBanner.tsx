@@ -72,26 +72,38 @@ export const UpdateNotificationBanner: React.FC<UpdateNotificationBannerProps> =
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           </div>
 
-          {/* Action Buttons (Dual System) */}
-          <div className="flex items-center gap-2 pt-0.5">
+          {/* Action Buttons: Direct In-Place Update is the Primary Action */}
+          <div className="flex flex-col gap-2 pt-0.5">
             <button
               id="refresh-update-btn"
               onClick={onUpdateNow}
-              className="flex-1 py-2 px-3 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-slate-950 font-black text-xs rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
-              title="تحديث الواجهات والملفات الخفيفة فوراً دون تنزيل ملف APK"
+              className="w-full py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-slate-950 font-black text-xs sm:text-sm rounded-xl transition-all shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 cursor-pointer"
+              title="تحديث النظام مباشرة بالتحديث الجديد الصادر من المستودع دون إعادة تحميل البرنامج من الصفر"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>تحديث الواجهة (OTA) 🔄</span>
+              <RefreshCw className="w-4 h-4" />
+              <span>تثبيت وتطبيق التحديث الجديد فوراً 🚀</span>
             </button>
-            <button
-              id="download-apk-update-btn"
-              onClick={onDownloadAPK}
-              className="py-2 px-3 bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-emerald-300 font-bold text-xs rounded-xl border border-emerald-500/30 transition-all flex items-center justify-center gap-1 cursor-pointer"
-              title="تحميل حزمة APK كاملة ومباشرة"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>تحميل الـ APK 📲</span>
-            </button>
+
+            <div className="flex items-center justify-between text-[11px] pt-0.5 px-1">
+              <button
+                id="download-apk-update-btn"
+                onClick={onDownloadAPK}
+                className="text-emerald-300 hover:text-emerald-200 font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="تنزيل حزمة APK كاملة للأندرويد من مستودع GitHub"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span>تحميل حزمة APK للأندرويد (تثبيت مستقل)</span>
+              </button>
+
+              <a
+                href="https://github.com/azamfahd/soparmarkit/releases"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-slate-400 hover:text-slate-200 transition-colors font-mono text-[10px]"
+              >
+                صفحة المستودع ↗
+              </a>
+            </div>
           </div>
         </motion.div>
       )}

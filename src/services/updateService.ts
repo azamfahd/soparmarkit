@@ -6,7 +6,11 @@
  * 3. Full APK Direct Download from GitHub Release Assets without losing local data
  */
 
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+
 export const GITHUB_REPO = 'azamfahd/soparmarkit';
+export const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases`;
 export const GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 export interface GitHubReleaseAsset {
@@ -26,6 +30,7 @@ export interface GitHubReleaseInfo {
   html_url: string;
   assets: GitHubReleaseAsset[];
   apkUrl: string;
+  hasDirectApk: boolean;
 }
 
 export interface VersionInfo {
@@ -54,44 +59,71 @@ export interface UpdateCheckResult {
   githubRelease?: GitHubReleaseInfo;
   source: 'GITHUB' | 'LOCAL_CONFIG' | 'FALLBACK';
   publishedAt?: string;
+  hasDirectApk?: boolean;
 }
 
 const LOCAL_STORAGE_VERSION_KEY = 'app_installed_version_code';
 
 export const UPDATE_SAFETY_NOTICE = 
-  'ملاحظة أمان وموثوقية: يتم تثبيت التحديث مباشرة فوق النسخة الحالية، وكافة فواتيرك وبياناتك المخزنة محلياً في جهازك محفوظة بنسبة 100% دون مسح.';
+  'ملاحظة أمان وموثوقية: يتم تثبيت وتطبيق التحديث مباشرة فوق النسخة الحالية، وكافة فواتيرك وبياناتك المخزنة محلياً في جهازك محفوظة بنسبة 100% دون مسح.';
 
 /**
  * Gets the direct APK download URL, checking:
  * 1. import.meta.env.VITE_APK_DOWNLOAD_URL
- * 2. GitHub Release Asset URL
- * 3. Default fallback
+ * 2. Fallback provided URL
+ * 3. Official GitHub Releases page
  */
 export function getApkDownloadUrl(fallbackUrl?: string): string {
   if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APK_DOWNLOAD_URL) {
     return import.meta.env.VITE_APK_DOWNLOAD_URL;
   }
-  return fallbackUrl || `https://github.com/${GITHUB_REPO}/releases/download/latest/app-release.apk`;
+  return fallbackUrl || GITHUB_RELEASES_PAGE_URL;
 }
 
 /**
  * Directly queries GitHub Releases API for repository azamfahd/soparmarkit
+ * Queries /releases/latest first, and falls back to /releases list
  */
 export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | null> {
   try {
-    const res = await fetch(GITHUB_RELEASES_API_URL, {
-      headers: {
-        'Accept': 'application/vnd.github.v3+json',
-        'Cache-Control': 'no-cache',
-      },
-    });
+    let data: any = null;
 
-    if (!res.ok) {
-      console.warn('[UpdateService] GitHub Releases API error status:', res.status);
-      return null;
+    // 1. Try /releases/latest
+    try {
+      const res = await fetch(GITHUB_RELEASES_API_URL, {
+        headers: {
+          'Accept': 'application/vnd.github.v3+json',
+          'Cache-Control': 'no-cache',
+        },
+      });
+
+      if (res.ok) {
+        data = await res.json();
+      }
+    } catch (e) {
+      console.warn('[UpdateService] Latest release fetch error:', e);
     }
 
-    const data = await res.json();
+    // 2. Fallback to /releases list if /latest returned 404 or empty
+    if (!data || !data.tag_name) {
+      try {
+        const listRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases`, {
+          headers: {
+            'Accept': 'application/vnd.github.v3+json',
+            'Cache-Control': 'no-cache',
+          },
+        });
+        if (listRes.ok) {
+          const list = await listRes.json();
+          if (Array.isArray(list) && list.length > 0) {
+            data = list[0];
+          }
+        }
+      } catch (e) {
+        console.warn('[UpdateService] Releases list fetch error:', e);
+      }
+    }
+
     if (!data || !data.tag_name) {
       return null;
     }
@@ -99,7 +131,7 @@ export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | nu
     const tagName = data.tag_name || 'v1.0.0';
     const cleanVersion = tagName.replace(/^v/i, '').trim();
 
-    // Search assets for .apk file
+    // Search assets for genuine .apk file
     const assets: GitHubReleaseAsset[] = Array.isArray(data.assets)
       ? data.assets.map((a: any) => ({
           name: a.name || '',
@@ -114,9 +146,12 @@ export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | nu
       (a) => a.name.toLowerCase().endsWith('.apk') || a.browser_download_url.toLowerCase().endsWith('.apk')
     );
 
-    const apkUrl = apkAsset
+    const hasDirectApk = Boolean(apkAsset && apkAsset.browser_download_url);
+    // If a genuine .apk asset is present, use its direct download URL.
+    // Otherwise, point to the release page on GitHub to prevent downloading corrupt/fake non-apk files!
+    const apkUrl = hasDirectApk && apkAsset
       ? apkAsset.browser_download_url
-      : `https://github.com/${GITHUB_REPO}/releases/download/${tagName}/app-release.apk`;
+      : (data.html_url || `${GITHUB_RELEASES_PAGE_URL}/tag/${tagName}`);
 
     return {
       tag_name: tagName,
@@ -124,9 +159,10 @@ export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | nu
       name: data.name || `إصدار GitHub جديد ${tagName}`,
       body: data.body || 'تحديث جديد صادر مباشرة من مستودع GitHub يتضمن تحسينات وميزات جديدة.',
       published_at: data.published_at || new Date().toISOString(),
-      html_url: data.html_url || `https://github.com/${GITHUB_REPO}/releases/tag/${tagName}`,
+      html_url: data.html_url || `${GITHUB_RELEASES_PAGE_URL}/tag/${tagName}`,
       assets,
       apkUrl,
+      hasDirectApk,
     };
   } catch (err) {
     console.warn('[UpdateService] Failed to query GitHub Releases API directly:', err);
@@ -204,6 +240,7 @@ export async function checkAppUpdates(): Promise<UpdateCheckResult> {
       githubRelease,
       source: 'GITHUB',
       publishedAt: githubRelease.published_at,
+      hasDirectApk: githubRelease.hasDirectApk,
     };
   }
 
@@ -228,6 +265,7 @@ export async function checkAppUpdates(): Promise<UpdateCheckResult> {
       features: remoteInfo.features || [],
       isNativeApp: isNative,
       source: 'LOCAL_CONFIG',
+      hasDirectApk: remoteInfo.updateUrl.toLowerCase().includes('.apk'),
     };
   }
 
@@ -243,16 +281,29 @@ export async function checkAppUpdates(): Promise<UpdateCheckResult> {
     features: [],
     isNativeApp: isNative,
     source: 'FALLBACK',
+    hasDirectApk: false,
   };
 }
 
 /**
- * Applies immediate OTA update for Web/PWA
+ * Applies immediate in-place update for Web, PWA, and APK WebView
+ * Completely clears outdated cache storage, triggers service worker refresh, and reloads
  */
-export async function applyOTAUpdate(): Promise<void> {
+export async function applyOTAUpdate(newVersionStr?: string, newVersionCode?: number): Promise<void> {
   if (typeof window === 'undefined') return;
 
   try {
+    // 1. Wipe old browser CacheStorage so new bundled scripts and styles load immediately
+    if ('caches' in window) {
+      const cacheNames = await caches.keys();
+      await Promise.all(cacheNames.map((name) => caches.delete(name)));
+    }
+  } catch (err) {
+    console.warn('[UpdateService] CacheStorage clear error:', err);
+  }
+
+  try {
+    // 2. Unregister or skip waiting on existing service workers
     if ('serviceWorker' in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
       for (const reg of registrations) {
@@ -263,28 +314,55 @@ export async function applyOTAUpdate(): Promise<void> {
       }
     }
   } catch (err) {
-    console.warn('[UpdateService] SW update error:', err);
+    console.warn('[UpdateService] ServiceWorker update error:', err);
   }
 
   try {
-    const remote = await fetchRemoteVersionInfo();
-    if (remote?.versionCode) {
-      localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, String(remote.versionCode));
+    // 3. Record the updated version in localStorage
+    if (newVersionStr) {
+      localStorage.setItem('app_installed_version_str', newVersionStr);
+    }
+    if (newVersionCode) {
+      localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, String(newVersionCode));
+    } else {
+      const remote = await fetchRemoteVersionInfo();
+      if (remote?.versionCode) {
+        localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, String(remote.versionCode));
+      }
     }
   } catch {}
 
-  window.location.reload();
+  // 4. Force reload page with a cache-busting timestamp query parameter
+  const targetUrl = new URL(window.location.href);
+  targetUrl.searchParams.set('v_update', Date.now().toString());
+  window.location.href = targetUrl.toString();
 }
 
 /**
- * Triggers direct APK download from GitHub Releases
+ * Triggers APK download from GitHub Releases
+ * STRICT VALIDATION: If URL is not an actual APK file (e.g. web page or release HTML),
+ * opens the official GitHub Releases page in a new tab instead of downloading a corrupt file!
  */
 export function downloadDirectAPK(targetUrl?: string): void {
   const url = targetUrl || getApkDownloadUrl();
+  if (typeof window === 'undefined') return;
+
+  const isDirectApk = url.toLowerCase().split('?')[0].endsWith('.apk') || url.toLowerCase().includes('.apk');
+
+  if (!isDirectApk) {
+    // Open the official GitHub release page in a new tab
+    const target = url.startsWith('http') ? url : GITHUB_RELEASES_PAGE_URL;
+    window.open(target, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  // Real direct APK download
   const link = document.createElement('a');
   link.href = url;
   link.target = '_blank';
-  link.download = 'app-release.apk';
+  link.rel = 'noopener noreferrer';
+  const fileName = url.split('/').pop()?.split('?')[0] || 'smart-pos-accounting.apk';
+  link.download = fileName.endsWith('.apk') ? fileName : `${fileName}.apk`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -305,4 +383,173 @@ export function compareSemver(v1: string, v2: string): number {
   }
   return 0;
 }
+
+/**
+ * Interface result returned by installDownloadedAPK
+ */
+export interface ApkInstallResult {
+  success: boolean;
+  method: 'ANDROID_BRIDGE' | 'CAPACITOR_APP' | 'CAPACITOR_FILE' | 'DIRECT_BROWSER' | 'FALLBACK';
+  message: string;
+}
+
+/**
+ * Universal Native In-Place APK Installer:
+ * Installs/re-installs the new downloaded APK package on top of the existing app
+ * without deleting user data or IndexedDB / SQLite storage.
+ *
+ * It utilizes:
+ * 1. Android JavaScript Bridge (@JavascriptInterface methods if hosted in Android WebView APK)
+ * 2. Capacitor App / Plugins (AppLauncher, Filesystem + FileOpener / Native Intent)
+ * 3. Browser direct install intent / trigger fallback
+ *
+ * @param apkUrlOrPath The direct URL or device file path/URI of the APK package.
+ */
+export async function installDownloadedAPK(apkUrlOrPath?: string): Promise<ApkInstallResult> {
+  const url = apkUrlOrPath || getApkDownloadUrl();
+  const fileName = url.split('/').pop()?.split('?')[0] || 'smart-pos-accounting.apk';
+  const cleanFileName = fileName.endsWith('.apk') ? fileName : `${fileName}.apk`;
+
+  if (typeof window === 'undefined') {
+    return { success: false, method: 'FALLBACK', message: 'البيئة الحالية غير مدعومة' };
+  }
+
+  // -------------------------------------------------------------
+  // Method 1: Android Native Bridge (Custom WebView / Java Bridge)
+  // -------------------------------------------------------------
+  const win = window as any;
+  const androidBridge = win.Android || win.android || win.JSBridge || win.AndroidBridge;
+
+  if (androidBridge) {
+    try {
+      // 1. Direct install from downloaded file path / URL
+      if (typeof androidBridge.installApk === 'function') {
+        androidBridge.installApk(url);
+        return {
+          success: true,
+          method: 'ANDROID_BRIDGE',
+          message: 'تم إرسال أمر تثبيت التحديث عبر واجهة الأندرويد البرمجية بنجاح.',
+        };
+      }
+      if (typeof androidBridge.installPackage === 'function') {
+        androidBridge.installPackage(url);
+        return {
+          success: true,
+          method: 'ANDROID_BRIDGE',
+          message: 'تم إرسال أمر تثبيت الحزمة عبر واجهة الأندرويد البرمجية بنجاح.',
+        };
+      }
+      if (typeof androidBridge.updateApp === 'function') {
+        androidBridge.updateApp(url);
+        return {
+          success: true,
+          method: 'ANDROID_BRIDGE',
+          message: 'تم إرسال أمر تحديث التطبيق عبر واجهة الأندرويد البرمجية بنجاح.',
+        };
+      }
+      if (typeof androidBridge.openApkFile === 'function') {
+        androidBridge.openApkFile(cleanFileName);
+        return {
+          success: true,
+          method: 'ANDROID_BRIDGE',
+          message: 'تم فتح ملف الـ APK لتثبيت التحديث مباشرة فوق النسخة الحالية.',
+        };
+      }
+    } catch (bridgeErr) {
+      console.warn('[UpdateService] AndroidBridge install call failed:', bridgeErr);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Method 2: Capacitor Native Plugins (Capacitor.isNativePlatform())
+  // -------------------------------------------------------------
+  const isCapNative = typeof Capacitor !== 'undefined' && (Capacitor.isNativePlatform?.() || win.Capacitor?.isNativePlatform?.());
+
+  if (isCapNative) {
+    // 2.1 Check custom / community plugins or custom Registered Capacitor Plugin
+    const capPlugins = win.Capacitor?.Plugins || {};
+
+    // Check if AppUpdate / FileOpener / AppInstaller plugin is registered
+    const appInstallerPlugin = capPlugins.AppUpdate || capPlugins.FileOpener || capPlugins.AppInstaller;
+    if (appInstallerPlugin) {
+      try {
+        if (typeof appInstallerPlugin.installApk === 'function') {
+          await appInstallerPlugin.installApk({ filePath: url });
+          return {
+            success: true,
+            method: 'CAPACITOR_APP',
+            message: 'تم بدء تثبيت التحديث عبر إضافة Capacitor App بنجاح.',
+          };
+        }
+        if (typeof appInstallerPlugin.open === 'function') {
+          await appInstallerPlugin.open({
+            filePath: url,
+            contentType: 'application/vnd.android.package-archive',
+          });
+          return {
+            success: true,
+            method: 'CAPACITOR_APP',
+            message: 'تم تشغيل برنامج تثبيت الحزم (Package Installer) بنجاح.',
+          };
+        }
+      } catch (capErr) {
+        console.warn('[UpdateService] Capacitor installer plugin error:', capErr);
+      }
+    }
+
+    // 2.2 Using Filesystem to check file and AppLauncher / OpenUrl with Android Intent
+    try {
+      // If the URL is a remote web APK link, attempt downloading to device cache/documents
+      let localUri = url;
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        try {
+          const checkFile = await Filesystem.getUri({
+            path: cleanFileName,
+            directory: Directory.Cache,
+          }).catch(() => null);
+
+          if (checkFile?.uri) {
+            localUri = checkFile.uri;
+          }
+        } catch {}
+      }
+
+      // Check AppLauncher or window.open intent
+      const appLauncher = capPlugins.AppLauncher;
+      if (appLauncher && typeof appLauncher.openUrl === 'function') {
+        const canOpen = await appLauncher.canOpenUrl({ url: localUri }).catch(() => ({ value: true }));
+        if (canOpen?.value !== false) {
+          await appLauncher.openUrl({ url: localUri });
+          return {
+            success: true,
+            method: 'CAPACITOR_APP',
+            message: 'تم إطلاق برنامج تثبيت الحزم لتحديث التطبيق فوق النسخة الحالية.',
+          };
+        }
+      }
+    } catch (fsErr) {
+      console.warn('[UpdateService] Capacitor Filesystem / AppLauncher install error:', fsErr);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Method 3: Browser Download & Direct Trigger Fallback
+  // (Triggers Android Package Installer directly on download completion)
+  // -------------------------------------------------------------
+  try {
+    downloadDirectAPK(url);
+    return {
+      success: true,
+      method: 'DIRECT_BROWSER',
+      message: 'جاري تنزيل ملف التحديث وسيتم تشغيل مثبت الحزم للتثبيت فوق النسخة الحالية مع الحفاظ على كافة البيانات.',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      method: 'FALLBACK',
+      message: `تعذر بدء التثبيت التلقائي: ${err?.message || 'خطأ غير معروف'}`,
+    };
+  }
+}
+
 

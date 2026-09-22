@@ -245,3 +245,32 @@ export async function updateLatestAppVersion(config: Omit<AppVersionConfig, 'upd
   }
 }
 
+/**
+ * Automatically ensures default app_config/version_info exists in Firestore
+ */
+export async function ensureDefaultAppVersionConfig(): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return;
+  }
+  try {
+    const docRef = doc(cloudDb, 'app_config', 'version_info');
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) {
+      await setDoc(docRef, {
+        latestVersion: "1.0.5",
+        apkUrl: "https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk",
+        updateMessage: "يتوفر تحديث جديد يحتوي على تحسينات واسعة وإصلاحات ممتازة للتطبيق.",
+        mandatory: false,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      console.log("Firestore app_config/version_info created successfully!");
+    }
+  } catch (err) {
+    console.warn("Firestore ensureDefaultAppVersionConfig warning:", err);
+  }
+}
+
+// Automatically execute on initialization
+ensureDefaultAppVersionConfig();
+
+

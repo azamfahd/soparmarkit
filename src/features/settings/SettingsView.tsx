@@ -84,8 +84,8 @@ export interface SettingsViewProps {
   developerPinError: string;
   setDeveloperPinError: (val: string) => void;
   handleVerifyDeveloperPIN: () => void;
-  activeDevTab: 'generator' | 'requests';
-  setActiveDevTab: (tab: 'generator' | 'requests') => void;
+  activeDevTab: 'generator' | 'requests' | 'updates';
+  setActiveDevTab: (tab: 'generator' | 'requests' | 'updates') => void;
   allCloudRequests: any[];
   requestDurations: Record<string, number>;
   setRequestDurations: React.Dispatch<React.SetStateAction<Record<string, number>>>;
@@ -201,6 +201,54 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isReindexing, setIsReindexing] = React.useState(false);
   const [showEditInfo, setShowEditInfo] = React.useState(false);
   const [userRequestedDuration, setUserRequestedDuration] = React.useState(365);
+
+  // App Update Publisher states for Owner / Developer
+  const [liveRemoteConfig, setLiveRemoteConfig] = React.useState<AppVersionConfig | null>(null);
+  const [devVersionInput, setDevVersionInput] = React.useState('1.0.6');
+  const [devApkUrlInput, setDevApkUrlInput] = React.useState('https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk');
+  const [devUpdateMsgInput, setDevUpdateMsgInput] = React.useState('يتوفر تحديث جديد يحتوي على تحسينات واسعة بالسرعة والأداء واستقرار أسرع للتطبيق.');
+  const [devIsMandatory, setDevIsMandatory] = React.useState(false);
+  const [isPublishingUpdate, setIsPublishingUpdate] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!isDeveloperMode) return;
+    const unsubscribe = subscribeToAppVersion((config) => {
+      if (config) {
+        setLiveRemoteConfig(config);
+        setDevVersionInput(config.latestVersion || '1.0.6');
+        if (config.apkUrl) setDevApkUrlInput(config.apkUrl);
+        if (config.updateMessage) setDevUpdateMsgInput(config.updateMessage);
+        setDevIsMandatory(Boolean(config.mandatory));
+      }
+    });
+    return () => unsubscribe();
+  }, [isDeveloperMode]);
+
+  const handlePublishAppUpdate = async () => {
+    if (!devVersionInput.trim()) {
+      showNotification('يرجى تحديد رقم الإصدار الجديد', 'error');
+      return;
+    }
+    if (!devApkUrlInput.trim()) {
+      showNotification('يرجى تحديد رابط تنزيل ملف الـ APK', 'error');
+      return;
+    }
+    setIsPublishingUpdate(true);
+    try {
+      await updateLatestAppVersion({
+        latestVersion: devVersionInput.trim(),
+        apkUrl: devApkUrlInput.trim(),
+        updateMessage: devUpdateMsgInput.trim() || 'يتوفر تحديث جديد للتطبيق.',
+        mandatory: devIsMandatory
+      });
+      showNotification(`🎉 تم نشر التحديث v${devVersionInput.trim()} في السحابة بنجاح! وسيتلقى جميع مستخدمي التطبيق والـ APK التنبيه فوراً.`, 'success');
+    } catch (err) {
+      console.error('Failed to publish app update:', err);
+      showNotification('حدث خطأ أثناء نشر التحديث، يرجى الاتصال بالإنترنت والتحقق مجدداً', 'error');
+    } finally {
+      setIsPublishingUpdate(false);
+    }
+  };
 
   const rawFeedbackList = useLiveQuery(() => db.aiFeedback ? db.aiFeedback.reverse().toArray() : Promise.resolve([])) || [];
   const userFeedbackList = rawFeedbackList.filter(f => !f.intent?.includes('ERROR') && !f.responseAnswer?.startsWith('Error:'));
@@ -1341,28 +1389,199 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             
             <div className="space-y-4">
               {/* Developer Sub-Tabs */}
-              <div className="grid grid-cols-2 p-1 bg-slate-150 rounded-xl border border-slate-200">
+              <div className="grid grid-cols-3 p-1 bg-slate-150 rounded-xl border border-slate-200 gap-1">
                 <button 
                   onClick={() => setActiveDevTab('generator')}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'generator' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                  className={`py-2 text-[11px] sm:text-xs font-extrabold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'generator' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
                 >
-                  🛠️ توليد ترخيص
+                  🛠️ ترخيص جديد
                 </button>
                 <button 
                   onClick={_handleCloudTabTelemetrySync}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all cursor-pointer text-center relative ${activeDevTab === 'requests' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
+                  className={`py-2 text-[11px] sm:text-xs font-extrabold rounded-lg transition-all cursor-pointer text-center relative ${activeDevTab === 'requests' ? 'bg-slate-800 text-white shadow' : 'text-slate-500 hover:text-slate-800'}`}
                   title="النقر المتكرر 5 مرات يفتح نافذة تحديث رمز المالك"
                 >
                   📡 الطلبات
                   {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-extrabold text-[9px] w-5.5 h-5.5 flex items-center justify-center rounded-full border-2 border-white animate-pulse">
+                    <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-extrabold text-[9px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-white animate-pulse">
                       {allCloudRequests.filter(r => r.status === 'pending').length}
                     </span>
                   )}
                 </button>
+                <button 
+                  onClick={() => setActiveDevTab('updates')}
+                  className={`py-2 text-[11px] sm:text-xs font-extrabold rounded-lg transition-all cursor-pointer text-center ${activeDevTab === 'updates' ? 'bg-indigo-700 text-white shadow-md shadow-indigo-700/20' : 'text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 font-black'}`}
+                >
+                  🚀 نشر التحديثات
+                </button>
               </div>
 
-              {activeDevTab === 'requests' ? (
+              {activeDevTab === 'updates' ? (
+                /* App Updates Publisher for Owner / Developer */
+                <div className="space-y-4 text-right" dir="rtl">
+                  {/* Current Published Status Badge */}
+                  <div className="p-3.5 bg-indigo-50 border border-indigo-150 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between border-b border-indigo-150/80 pb-2">
+                      <span className="text-[10px] font-black text-indigo-700 bg-indigo-100/90 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        مباشر بالسحابة
+                      </span>
+                      <h4 className="text-xs font-black text-indigo-900 flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-indigo-600" />
+                        <span>بيانات التحديث المتاحة للعملاء حالياً:</span>
+                      </h4>
+                    </div>
+                    
+                    {liveRemoteConfig ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="bg-white p-2.5 rounded-xl border border-indigo-100 flex justify-between items-center shadow-2xs">
+                          <span className="font-mono font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-lg border border-indigo-100/60">
+                            v{liveRemoteConfig.latestVersion}
+                          </span>
+                          <span className="text-slate-500 font-bold text-[11px]">رقم الإصدار:</span>
+                        </div>
+                        <div className="bg-white p-2.5 rounded-xl border border-indigo-100 flex justify-between items-center shadow-2xs">
+                          <span className={`font-black text-[11px] px-2 py-0.5 rounded-md ${liveRemoteConfig.mandatory ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                            {liveRemoteConfig.mandatory ? 'إجباري ⚠️' : 'اختياري 🟢'}
+                          </span>
+                          <span className="text-slate-500 font-bold text-[11px]">نوع التحديث:</span>
+                        </div>
+                        <div className="col-span-1 sm:col-span-2 bg-white p-2.5 rounded-xl border border-indigo-100 space-y-1 shadow-2xs">
+                          <div className="flex justify-between items-center border-b border-slate-100 pb-1">
+                            <span className="text-slate-400 font-bold text-[10px]">
+                              تاريخ النشر: {liveRemoteConfig.updatedAt ? new Date(liveRemoteConfig.updatedAt).toLocaleString('ar-SA') : 'غير محدد'}
+                            </span>
+                            <span className="text-slate-500 font-black text-[11px]">رسالة التنبيه الموجهة للعملاء:</span>
+                          </div>
+                          <p className="text-slate-700 text-xs font-bold leading-relaxed pt-0.5">{liveRemoteConfig.updateMessage}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-2 text-xs text-slate-500 font-bold">
+                        جاري جلب معلومات التحديث الحالية من سحابة Firebase...
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Form to Publish New Update */}
+                  <div className="space-y-3.5 bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                    <div className="border-b border-slate-100 pb-2">
+                      <h4 className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                        <Upload className="w-4 h-4 text-indigo-600" />
+                        <span>نشر إصدار وتحديث جديد (سيظهر فوراً لكل مستخدمي الـ APK)</span>
+                      </h4>
+                      <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                        عند حفظ ونشر التحديث، سيرسل النظام تنبيهاً فورياً لكافة الأجهزة للتنزيل أو التحديث التلقائي.
+                      </p>
+                    </div>
+
+                    {/* Target Version Tag */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] font-bold text-slate-400 ml-1">اختصارات:</span>
+                          {['1.0.6', '1.1.0', '2.0.0'].map(v => (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => setDevVersionInput(v)}
+                              className="text-[10px] font-bold bg-slate-100 hover:bg-indigo-100 text-slate-600 hover:text-indigo-700 px-2 py-0.5 rounded-md border border-slate-200 transition-colors cursor-pointer"
+                            >
+                              {v}
+                            </button>
+                          ))}
+                        </div>
+                        <label className="text-xs font-extrabold text-slate-700">رقم الإصدار الجديد (Version Tag):</label>
+                      </div>
+                      <input
+                        type="text"
+                        value={devVersionInput}
+                        onChange={(e) => setDevVersionInput(e.target.value)}
+                        placeholder="مثال: 1.0.6"
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-center text-xs font-extrabold text-slate-800 focus:border-indigo-500 focus:bg-white outline-none transition-all"
+                      />
+                    </div>
+
+                    {/* APK Link Input */}
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <button
+                          type="button"
+                          onClick={() => setDevApkUrlInput("https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk")}
+                          className="text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md border border-indigo-200 transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                          <ExternalLink className="w-3 h-3 text-indigo-600" />
+                          <span>تعبئة رابط GitHub الرئيسي</span>
+                        </button>
+                        <label className="text-xs font-extrabold text-slate-700">رابط تنزيل ملف الـ APK المباشر:</label>
+                      </div>
+                      <input
+                        type="text"
+                        value={devApkUrlInput}
+                        onChange={(e) => setDevApkUrlInput(e.target.value)}
+                        placeholder="https://github.com/azamfahd/soparmarkit/releases/..."
+                        className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs font-bold text-slate-800 focus:border-indigo-500 focus:bg-white outline-none transition-all dir-ltr text-left"
+                      />
+                    </div>
+
+                    {/* Notification Message */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-extrabold text-slate-700 block">رسالة تنبيه المستخدمين والتحسينات المضافة:</label>
+                      <textarea
+                        value={devUpdateMsgInput}
+                        onChange={(e) => setDevUpdateMsgInput(e.target.value)}
+                        rows={3}
+                        placeholder="اكتب نص الرسالة والتنبيه الذي يظهر لمستخدمي البرنامج..."
+                        className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:border-indigo-500 focus:bg-white outline-none transition-all resize-none"
+                      />
+                      {/* Templates */}
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {[
+                          "يتوفر تحديث جديد يحتوي على تحسينات واسعة بالسرعة والأداء واستقرار أسرع للتطبيق.",
+                          "إصدار جديد يتضمن ميزات إضافية وتحديثات هامة في المبيعات وتصدير الملفات.",
+                          "تحديث صيانة واستقرار شامل وتسهيل مشاركة وتقارير الـ APK."
+                        ].map((msgTemplate, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setDevUpdateMsgInput(msgTemplate)}
+                            className="text-[10px] bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 px-2 py-1 rounded-lg border border-slate-200 font-bold transition-colors cursor-pointer text-right"
+                          >
+                            📝 قالب {idx + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Mandatory Toggle */}
+                    <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={devIsMandatory}
+                        onChange={(e) => setDevIsMandatory(e.target.checked)}
+                        className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                      />
+                      <span className="text-xs font-extrabold text-slate-700">تحديث إجباري ⚠️ (يلزم المستخدمين بالتحديث فوراً)</span>
+                    </label>
+
+                    {/* Publish Action Button */}
+                    <Button
+                      onClick={handlePublishAppUpdate}
+                      disabled={isPublishingUpdate}
+                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-md shadow-indigo-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
+                    >
+                      {isPublishingUpdate ? (
+                        <span>جاري الحفظ وإرسال التحديث للسحابة...</span>
+                      ) : (
+                        <>
+                          <Bell className="w-4 h-4 text-amber-300 animate-bounce" />
+                          <span>نشر التحديث وإرسال التنبيه لكافة المستخدمين الآن 🚀</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              ) : activeDevTab === 'requests' ? (
                 /* Cloud Requests Dashboard */
                 <div className="space-y-3">
                   {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (

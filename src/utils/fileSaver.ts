@@ -3,6 +3,7 @@ import { saveAs } from 'file-saver';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
+import html2pdf from 'html2pdf.js';
 
 /**
  * Helper to convert Blob to Base64 string
@@ -28,6 +29,7 @@ export interface ReadyFileInfo {
   blob: Blob;
   base64?: string;
   text?: string;
+  fileUri?: string;
 }
 
 /**
@@ -130,34 +132,19 @@ export async function saveFileToDevice(
   blob: Blob,
   fileName: string,
   mimeType: string = 'application/octet-stream'
-): Promise<{ success: boolean; method: string }> {
+): Promise<{ success: boolean; method: string; fileUri?: string }> {
   const blobUrl = URL.createObjectURL(blob);
   let textContent: string | undefined;
   let base64Content: string | undefined;
+  let savedFileUri: string | undefined;
 
   try {
-    if (blob.type.includes('json') || blob.type.includes('text') || fileName.endsWith('.json')) {
+    if (blob.type.includes('json') || blob.type.includes('text') || fileName.endsWith('.json') || fileName.endsWith('.txt')) {
       textContent = await blob.text();
     }
     base64Content = await blobToBase64(blob);
   } catch (e) {
     console.warn('Extract text/base64 warning:', e);
-  }
-
-  // Dispatch global event so UI can display an immediate interactive download modal/toast
-  try {
-    const eventDetail: ReadyFileInfo = {
-      fileName,
-      mimeType,
-      blobUrl,
-      sizeBytes: blob.size,
-      blob,
-      base64: base64Content,
-      text: textContent
-    };
-    window.dispatchEvent(new CustomEvent('smartpos:file_ready', { detail: eventDetail }));
-  } catch (evErr) {
-    console.warn('Dispatch file_ready event error:', evErr);
   }
 
   // 1. PyWebView API (Desktop Wrapper)
@@ -174,12 +161,12 @@ export async function saveFileToDevice(
   }
 
   // 2. Capacitor Native APK FileSystem & Share Plugin (Primary method for Android/iOS APKs)
-  if (Capacitor.isNativePlatform()) {
+  const isNative = typeof window !== 'undefined' && ((window as any).Capacitor?.isNativePlatform?.() || Capacitor.isNativePlatform());
+  if (isNative) {
     try {
       const base64Data = base64Content || (await blobToBase64(blob));
       
-      // Write file directly to Documents or Cache
-      let fileUri: string = '';
+      // First try Documents directory, then Cache/External
       try {
         const result = await Filesystem.writeFile({
           path: fileName,
@@ -187,68 +174,89 @@ export async function saveFileToDevice(
           directory: Directory.Documents,
           recursive: true
         });
-        fileUri = result.uri;
+        savedFileUri = result.uri;
       } catch (docErr) {
-        // Fallback to Cache directory
-        const cacheResult = await Filesystem.writeFile({
-          path: fileName,
-          data: base64Data,
-          directory: Directory.Cache,
-          recursive: true
-        });
-        fileUri = cacheResult.uri;
+        try {
+          const cacheResult = await Filesystem.writeFile({
+            path: fileName,
+            data: base64Data,
+            directory: Directory.Cache,
+            recursive: true
+          });
+          savedFileUri = cacheResult.uri;
+        } catch (cacheErr) {
+          console.warn('Filesystem write fallback failed:', cacheErr);
+        }
       }
 
-      // Trigger Native Android Share / Save Sheet
-      if (fileUri) {
+      // Trigger Native Android Share / Save Sheet with high reliability
+      if (savedFileUri) {
         try {
           await Share.share({
             title: fileName,
             text: `تصدير ملف: ${fileName}`,
-            url: fileUri,
-            dialogTitle: 'حفظ وتصدير الملف إلى الهاتف'
+            url: savedFileUri,
+            dialogTitle: 'مشاركة أو حفظ الملف في الهاتف'
           });
         } catch (shareErr) {
           console.warn('Capacitor native share notice:', shareErr);
         }
       }
-
-      return { success: true, method: 'capacitor_native' };
     } catch (capErr) {
       console.warn('Capacitor native export failed, falling back to Web direct download:', capErr);
     }
   }
 
-  // 3. FileSaver saveAs
+  // Dispatch global event so UI can display an immediate interactive download toast/modal
   try {
-    saveAs(blob, fileName);
-  } catch (fsErr) {
-    console.warn('file-saver saveAs notice:', fsErr);
+    const eventDetail: ReadyFileInfo = {
+      fileName,
+      mimeType,
+      blobUrl,
+      sizeBytes: blob.size,
+      blob,
+      base64: base64Content,
+      text: textContent,
+      fileUri: savedFileUri
+    };
+    window.dispatchEvent(new CustomEvent('smartpos:file_ready', { detail: eventDetail }));
+  } catch (evErr) {
+    console.warn('Dispatch file_ready event error:', evErr);
   }
 
-  // 4. Direct Anchor Click with DOM Attachment
-  try {
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = blobUrl;
-    a.download = fileName;
-    a.setAttribute('download', fileName);
-    
-    document.body.appendChild(a);
-    a.click();
+  // If running in browser or as fallback for native:
+  if (!isNative) {
+    // FileSaver saveAs
+    try {
+      saveAs(blob, fileName);
+    } catch (fsErr) {
+      console.warn('file-saver saveAs notice:', fsErr);
+    }
 
-    setTimeout(() => {
-      try {
-        if (document.body.contains(a)) {
-          document.body.removeChild(a);
-        }
-      } catch {}
-    }, 3000);
-  } catch (blobErr) {
-    console.warn('Direct Anchor download failed:', blobErr);
+    // Direct Anchor Click with DOM Attachment
+    try {
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = blobUrl;
+      a.download = fileName;
+      a.setAttribute('download', fileName);
+      
+      document.body.appendChild(a);
+      a.click();
+
+      setTimeout(() => {
+        try {
+          if (document.body.contains(a)) {
+            document.body.removeChild(a);
+          }
+        } catch {}
+      }, 3000);
+    } catch (blobErr) {
+      console.warn('Direct Anchor download failed:', blobErr);
+    }
   }
 
-  return { success: true, method: 'filesaver_and_blob' };
+  return { success: true, method: isNative ? 'capacitor_native' : 'filesaver_and_blob', fileUri: savedFileUri };
 }
 
 /**
@@ -287,4 +295,68 @@ export async function saveCanvasImageToDevice(canvas: HTMLCanvasElement, fileNam
       resolve(res.success);
     }, 'image/png', 1.0);
   });
+}
+
+/**
+ * Converts an HTML element or HTML string directly into a PDF Blob and saves/shares via saveFileToDevice
+ */
+export async function exportHtmlToPdfFile(
+  elementOrHtml: HTMLElement | string,
+  fileName: string,
+  options?: {
+    orientation?: 'portrait' | 'landscape';
+    format?: string | [number, number];
+    margin?: number | [number, number, number, number];
+  }
+): Promise<boolean> {
+  try {
+    let sourceElement: HTMLElement;
+    let isTemporary = false;
+
+    if (typeof elementOrHtml === 'string') {
+      sourceElement = document.createElement('div');
+      sourceElement.innerHTML = elementOrHtml;
+      document.body.appendChild(sourceElement);
+      isTemporary = true;
+    } else {
+      sourceElement = elementOrHtml;
+    }
+
+    const opt = {
+      margin: options?.margin !== undefined ? options?.margin : 0.3,
+      filename: fileName,
+      image: { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas: { 
+        scale: 2, 
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        ignoreElements: (el: HTMLElement) => el.tagName === 'STYLE' || el.tagName === 'LINK'
+      },
+      jsPDF: { 
+        unit: 'in', 
+        format: options?.format || 'a4', 
+        orientation: options?.orientation || 'portrait' 
+      }
+    };
+
+    // Output as Blob rather than direct browser save, so saveFileToDevice handles APK native share & storage
+    const pdfBlob: Blob = await (html2pdf as any)()
+      .set(opt)
+      .from(sourceElement)
+      .output('blob');
+
+    if (isTemporary && sourceElement.parentNode) {
+      sourceElement.parentNode.removeChild(sourceElement);
+    }
+
+    if (pdfBlob) {
+      const result = await saveFileToDevice(pdfBlob, fileName, 'application/pdf');
+      return result.success;
+    }
+
+    return false;
+  } catch (err) {
+    console.error('exportHtmlToPdfFile error:', err);
+    return false;
+  }
 }

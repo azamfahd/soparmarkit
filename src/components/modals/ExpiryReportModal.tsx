@@ -16,8 +16,7 @@ import {
   TrendingDown
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import html2pdf from 'html2pdf.js';
-import { downloadWorkbook } from '../../utils/fileSaver';
+import { downloadWorkbook, exportHtmlToPdfFile } from '../../utils/fileSaver';
 
 export interface ExpiryReportModalProps {
   isOpen: boolean;
@@ -262,15 +261,12 @@ export const ExpiryReportModal: React.FC<ExpiryReportModalProps> = ({
       </div>
     `;
 
-    const opt = {
+    const fileName = `تقرير_صلاحية_المخزون_${new Date().toISOString().split('T')[0]}.pdf`;
+    exportHtmlToPdfFile(element, fileName, {
       margin: 0.3,
-      filename: `تقرير_صلاحية_المخزون_${new Date().toISOString().split('T')[0]}.pdf`,
-      image: { type: 'jpeg' as const, quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'in' as const, format: 'a4' as const, orientation: 'portrait' as const }
-    };
-
-    (html2pdf as any)().set(opt as any).from(element).save();
+      format: 'a4',
+      orientation: 'portrait'
+    });
   };
 
   if (!isOpen) return null;
