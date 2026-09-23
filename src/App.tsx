@@ -979,7 +979,12 @@ export default function App() {
   const [hasPendingUpdate, setHasPendingUpdate] = useState(false);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [remoteAppConfig, setRemoteAppConfig] = useState<AppVersionConfig | null>(null);
-  const [currentAppVersion, setCurrentAppVersion] = useState<string>('');
+  const [currentAppVersion, setCurrentAppVersion] = useState<string>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('app_installed_version_str') || '1.0.4';
+    }
+    return '1.0.4';
+  });
   const [isNativeAndroid, setIsNativeAndroid] = useState(() => {
     if (typeof window === 'undefined') return false;
     return Boolean(
@@ -1033,6 +1038,12 @@ export default function App() {
       showNotification(`✨ التطبيق مثبت لديك ومتوافق بأحدث إصدار بالفعل (v${remoteAppConfig.latestVersion || '1.0.0'}) - لا داعي لإعادة التنزيل!`, 'success');
       return;
     }
+    if (remoteAppConfig?.latestVersion) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('app_installed_version_str', remoteAppConfig.latestVersion);
+      }
+      setCurrentAppVersion(remoteAppConfig.latestVersion);
+    }
     const url = remoteAppConfig?.apkUrl || getApkDownloadUrl();
     if (url.toLowerCase().includes('.apk')) {
       showNotification('جاري بدء تثبيت حزمة الـ APK فوق النسخة الحالية... (تثبيت آمن مع الاحتفاظ ببياناتك)', 'success');
@@ -1046,6 +1057,12 @@ export default function App() {
   };
 
   const handleUpdateAppNow = async () => {
+    if (remoteAppConfig?.latestVersion) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('app_installed_version_str', remoteAppConfig.latestVersion);
+      }
+      setCurrentAppVersion(remoteAppConfig.latestVersion);
+    }
     showNotification('جاري تثبيت وتطبيق التحديث الجديد مباشرة من المستودع...', 'success');
     await applyOTAUpdate(remoteAppConfig?.latestVersion);
   };
