@@ -21,8 +21,13 @@ import {
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
+  browserPopupRedirectResolver,
   type User
 } from 'firebase/auth';
+import { getAnalytics, isSupported as isAnalyticsSupported } from 'firebase/analytics';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Suppress non-critical connection retry warnings in offline/sandbox environments
@@ -64,7 +69,24 @@ export const googleAuthProvider = new GoogleAuthProvider();
 try {
   googleAuthProvider.addScope('email');
   googleAuthProvider.addScope('profile');
+  googleAuthProvider.setCustomParameters({
+    prompt: 'select_account'
+  });
 } catch {}
+
+// Initialize Firebase Analytics safely (Web & Capacitor environment)
+export let cloudAnalytics: any = null;
+if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
+  isAnalyticsSupported().then((supported) => {
+    if (supported) {
+      try {
+        cloudAnalytics = getAnalytics(app);
+      } catch (e) {
+        console.warn("Firebase Analytics init warning:", e);
+      }
+    }
+  }).catch(() => {});
+}
 
 export const OWNER_EMAIL = 'azamfahd25@gmail.com';
 
@@ -77,31 +99,34 @@ export function isSuperOwner(email?: string | null): boolean {
 }
 
 /**
- * Signs in using Google (supports Popup for Web/PWA and Redirect for Android WebView/Capacitor)
+ * Signs in using Google
  */
 export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean }> {
   if (!cloudAuth) {
     throw new Error('خدمة المصادقة السحابية غير متوفرة حالياً.');
   }
 
+  // Ensure persistent authentication state across sessions
+  try {
+    await setPersistence(cloudAuth, indexedDBLocalPersistence);
+  } catch {
+    try {
+      await setPersistence(cloudAuth, browserLocalPersistence);
+    } catch {}
+  }
+
   let user: User;
 
   try {
-    const result = await signInWithPopup(cloudAuth, googleAuthProvider);
+    const result = await signInWithPopup(cloudAuth, googleAuthProvider, browserPopupRedirectResolver);
     user = result.user;
   } catch (popupErr: any) {
-    console.warn("signInWithPopup failed, attempting signInWithRedirect:", popupErr);
-    // If popup was blocked or not supported in WebView / mobile, try redirect
-    if (
-      popupErr?.code === 'auth/popup-blocked' ||
-      popupErr?.code === 'auth/operation-not-supported-in-this-environment' ||
-      popupErr?.code === 'auth/popup-closed-by-user' ||
-      popupErr?.message?.includes('disallowed_useragent') ||
-      popupErr?.message?.includes('popup')
-    ) {
-      await signInWithRedirect(cloudAuth, googleAuthProvider);
-      // In redirect flow, page will reload or redirect back
-      return new Promise(() => {});
+    console.warn("signInWithPopup error:", popupErr);
+    if (popupErr?.code === 'auth/popup-closed-by-user') {
+      throw new Error('تم إغلاق نافذة تسجيل الدخول.');
+    }
+    if (popupErr?.code === 'auth/unauthorized-domain') {
+      throw new Error('النطاق غير مصرح به في Firebase Console.');
     }
     throw popupErr;
   }

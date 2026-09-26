@@ -72,8 +72,13 @@ export const GoogleAuthButton: React.FC<GoogleAuthButtonProps> = ({
         showNotification?.('تم إلغاء نافذة تسجيل الدخول.', 'error');
       } else if (err?.code === 'auth/unauthorized-domain') {
         showNotification?.('تنبيه: يجب إضافة هذا النطاق في Authorized Domains في Firebase Console.', 'error');
+      } else if (err?.message?.includes('missing initial state') || err?.message?.includes('storage-partitioned')) {
+        showNotification?.('💡 تم حظر ملفات تعريف الارتباط في المتصفح. يمكنك الضغط على "دخول المالك برمز الأمان" أدناه للدخول الفوري.', 'error');
+        if (onRequireOwnerVerification) {
+          onRequireOwnerVerification();
+        }
       } else {
-        showNotification?.(err?.message || 'تعذر تسجيل الدخول بحساب Google حالياً، يرجى التأكد من الاتصال بالإنترنت.', 'error');
+        showNotification?.(err?.message || 'تعذر تسجيل الدخول بحساب Google حالياً، يمكنك استخدام رمز أمان المالك.', 'error');
       }
     } finally {
       setLoading(false);
