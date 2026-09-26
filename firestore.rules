@@ -7,5 +7,8 @@ service cloud.firestore {
     match /app_config/{document=**} {
       allow read, write: if true;
     }
+    match /user_profiles/{userId} {
+      allow read, write: if true;
+    }
   }
 }

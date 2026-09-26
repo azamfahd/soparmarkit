@@ -13,6 +13,14 @@ import {
   orderBy,
   setLogLevel
 } from 'firebase/firestore';
+import {
+  getAuth,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  type User
+} from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Suppress non-critical connection retry warnings in offline/sandbox environments
@@ -37,6 +45,123 @@ try {
 }
 
 export const cloudDb = cloudDbInstance;
+export const CLOUD_PROJECT_ID = firebaseConfig.projectId;
+export const CLOUD_DATABASE_ID = firebaseConfig.firestoreDatabaseId || "(default)";
+
+// Initialize Firebase Auth
+let authInstance: any = null;
+try {
+  authInstance = getAuth(app);
+} catch (e) {
+  console.warn("Firebase Auth initialization warning:", e);
+}
+
+export const cloudAuth = authInstance;
+export const googleAuthProvider = new GoogleAuthProvider();
+try {
+  googleAuthProvider.addScope('email');
+  googleAuthProvider.addScope('profile');
+} catch {}
+
+export const OWNER_EMAIL = 'azamfahd25@gmail.com';
+
+/**
+ * Checks if a given email is the system Super Owner
+ */
+export function isSuperOwner(email?: string | null): boolean {
+  if (!email) return false;
+  return email.trim().toLowerCase() === OWNER_EMAIL.toLowerCase();
+}
+
+/**
+ * Signs in using Google Popup (Web & PWA supported)
+ */
+export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean }> {
+  if (!cloudAuth) {
+    throw new Error('خدمة المصادقة السحابية غير متوفرة حالياً.');
+  }
+  const result = await signInWithPopup(cloudAuth, googleAuthProvider);
+  const user = result.user;
+  const isOwner = isSuperOwner(user.email);
+
+  // Sync user profile to Firestore
+  try {
+    const userDocRef = doc(cloudDb, 'user_profiles', user.uid);
+    await setDoc(userDocRef, {
+      uid: user.uid,
+      displayName: user.displayName || 'مستخدم النظام',
+      email: user.email || '',
+      photoURL: user.photoURL || '',
+      isOwner,
+      role: isOwner ? 'owner' : 'user',
+      lastLoginAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (syncErr) {
+    console.warn("Could not sync user profile to cloud:", syncErr);
+  }
+
+  return { user, isOwner };
+}
+
+/**
+ * Signs out from Google Firebase Auth
+ */
+export async function signOutGoogle(): Promise<void> {
+  if (cloudAuth) {
+    await firebaseSignOut(cloudAuth);
+  }
+}
+
+/**
+ * Listens for auth state changes (Login / Logout)
+ */
+export function subscribeToAuth(callback: (user: User | null, isOwner: boolean) => void): () => void {
+  if (!cloudAuth) {
+    callback(null, false);
+    return () => {};
+  }
+  return onAuthStateChanged(cloudAuth, (user) => {
+    callback(user, isSuperOwner(user?.email));
+  });
+}
+
+export interface UserProfile {
+  uid: string;
+  displayName: string;
+  email: string;
+  photoURL?: string;
+  isOwner?: boolean;
+  role?: 'owner' | 'user';
+  lastLoginAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  deviceId?: string;
+}
+
+/**
+ * Listens for all user profiles in Firestore (Admin/Owner only)
+ */
+export function subscribeToAllUserProfiles(callback: (profiles: UserProfile[]) => void): () => void {
+  try {
+    const colRef = collection(cloudDb, 'user_profiles');
+    const q = query(colRef);
+    return onSnapshot(q, (snapshot) => {
+      const profiles: UserProfile[] = [];
+      snapshot.forEach((doc) => {
+        profiles.push(doc.data() as UserProfile);
+      });
+      callback(profiles);
+    }, (err) => {
+      console.warn("Firestore subscribeToAllUserProfiles error:", err);
+      callback([]);
+    });
+  } catch (e) {
+    console.warn("Firestore subscribeToAllUserProfiles failed:", e);
+    callback([]);
+    return () => {};
+  }
+}
 
 export interface ActivationRequest {
   id: string; // same as deviceId
@@ -246,6 +371,25 @@ export async function updateLatestAppVersion(config: Omit<AppVersionConfig, 'upd
 }
 
 /**
+ * Gets the latest app version configuration directly from Firestore
+ */
+export async function getLatestAppVersion(): Promise<AppVersionConfig | null> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return null;
+  }
+  try {
+    const docRef = doc(cloudDb, 'app_config', 'version_info');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as AppVersionConfig;
+    }
+  } catch (err) {
+    console.warn("Firestore getLatestAppVersion warning:", err);
+  }
+  return null;
+}
+
+/**
  * Automatically ensures default app_config/version_info exists in Firestore
  */
 export async function ensureDefaultAppVersionConfig(): Promise<void> {
@@ -265,6 +409,26 @@ export async function ensureDefaultAppVersionConfig(): Promise<void> {
       }, { merge: true });
       console.log("Firestore app_config/version_info created successfully!");
     }
+
+    // Migrate owner activation record to ensure no data is lost
+    const ownerDocRef = doc(cloudDb, 'activation_requests', 'GR-8BJB-3SQQ-ZVMU');
+    const ownerSnap = await getDoc(ownerDocRef);
+    if (!ownerSnap.exists()) {
+      await setDoc(ownerDocRef, {
+        id: "GR-8BJB-3SQQ-ZVMU",
+        deviceId: "GR-8BJB-3SQQ-ZVMU",
+        storeName: "انا المالك ",
+        phone: "",
+        requestType: "renewal",
+        requestedDuration: 9999,
+        durationDays: 9999,
+        status: "approved",
+        licenseKey: "LIC-270F-GR8B-679A8BD1-ZVMU",
+        requestedAt: "2026-08-16T20:39:48.884Z",
+        approvedAt: "2026-08-16T20:42:06.386Z"
+      }, { merge: true });
+      console.log("Owner record migrated to new Firestore database successfully!");
+    }
   } catch (err) {
     console.warn("Firestore ensureDefaultAppVersionConfig warning:", err);
   }
@@ -272,5 +436,29 @@ export async function ensureDefaultAppVersionConfig(): Promise<void> {
 
 // Automatically execute on initialization
 ensureDefaultAppVersionConfig();
+
+/**
+ * Tests Firestore connectivity and measures response latency
+ */
+export async function testCloudConnection(): Promise<{ success: boolean; latencyMs: number; error?: string; latestConfig?: AppVersionConfig | null }> {
+  const startTime = Date.now();
+  try {
+    const docRef = doc(cloudDb, 'app_config', 'version_info');
+    const docSnap = await getDoc(docRef);
+    const latency = Date.now() - startTime;
+    return {
+      success: true,
+      latencyMs: latency,
+      latestConfig: docSnap.exists() ? (docSnap.data() as AppVersionConfig) : null
+    };
+  } catch (err: any) {
+    const latency = Date.now() - startTime;
+    return {
+      success: false,
+      latencyMs: latency,
+      error: err?.message || 'تعذر الاتصال بقاعدة البيانات'
+    };
+  }
+}
 
 

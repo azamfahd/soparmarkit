@@ -186,7 +186,7 @@ export const CheckUpdatesModal: React.FC<CheckUpdatesModalProps> = ({
                     </span>
 
                     <span className="text-[10px] text-slate-500 font-medium">
-                      المصدر: {checkResult.source === 'GITHUB' ? 'سيرفر التحديثات المباشر' : 'الملف المحلي'}
+                      المصدر: {checkResult.source === 'FIREBASE' ? 'سحابة Firebase المباشرة' : checkResult.source === 'GITHUB' ? 'سيرفر GitHub الرسمي' : 'الملف المحلي'}
                     </span>
                   </div>
 

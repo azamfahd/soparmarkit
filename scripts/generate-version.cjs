@@ -13,7 +13,7 @@ const buildGradlePath = path.join(rootDir, 'android', 'app', 'build.gradle');
 const packageJsonPath = path.join(rootDir, 'package.json');
 
 // Read package.json
-let appVersion = '1.0.4';
+let appVersion = '1.0.5';
 try {
   if (fs.existsSync(packageJsonPath)) {
     const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));

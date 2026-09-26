@@ -5,11 +5,12 @@ import { db } from '../../db';
 import { 
   Home, Edit, ShieldCheck, Database, Download, Upload, 
   Sparkles, RefreshCw, Package, Camera, Key, Copy, Activity, 
-  Check, Cloud, Lock, Trash2, Brain, Cpu, ThumbsUp, ThumbsDown, AlertTriangle, Shield, ExternalLink, Bell, Clock
+  Check, Cloud, Lock, Trash2, Brain, Cpu, ThumbsUp, ThumbsDown, AlertTriangle, Shield, ExternalLink, Bell, Clock,
+  Wifi, CheckCircle2, XCircle
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { updateLatestAppVersion, type AppVersionConfig } from '../../services/firebase';
+import { updateLatestAppVersion, testCloudConnection, CLOUD_PROJECT_ID, CLOUD_DATABASE_ID, type AppVersionConfig } from '../../services/firebase';
 import { FileSpreadsheet } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import {
@@ -23,6 +24,7 @@ import {
 } from '../../services/excelSync';
 import { subscribeToAppVersion } from '../../services/firebase';
 import { embeddingManager } from '../../services/ai/rag/embeddings';
+import { GoogleAuthButton } from '../../components/auth/GoogleAuthButton';
 
 export interface SettingsViewProps {
   isAutoBackupEnabled: boolean;
@@ -109,6 +111,13 @@ export interface SettingsViewProps {
   handleResetDeveloperPIN?: (currentPin: string) => void;
   onOpenExcelSyncCenter?: () => void;
   onOpenSecureExport?: () => void;
+  onOpenCheckUpdatesModal?: () => void;
+  onTriggerTestBanner?: () => void;
+  currentAppVersion?: string;
+  latestCloudVersion?: string;
+  onVersionPublished?: (config: AppVersionConfig) => void;
+  onApplyUpdateNow?: () => void;
+  onOpenOwnerModal?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -140,6 +149,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   isBackupSyncing,
   onOpenExcelSyncCenter,
   onOpenSecureExport,
+  onOpenCheckUpdatesModal,
+  onTriggerTestBanner,
+  currentAppVersion,
+  latestCloudVersion,
+  onVersionPublished,
+  onApplyUpdateNow,
+  onOpenOwnerModal,
   autoBackupFileStatus,
   forceLocalDiskBackup,
   resetDatabase,
@@ -235,18 +251,79 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
     setIsPublishingUpdate(true);
     try {
-      await updateLatestAppVersion({
+      const newVersionConfig: Omit<AppVersionConfig, 'updatedAt'> = {
         latestVersion: devVersionInput.trim(),
         apkUrl: devApkUrlInput.trim(),
         updateMessage: devUpdateMsgInput.trim() || 'يتوفر تحديث جديد للتطبيق.',
         mandatory: devIsMandatory
-      });
+      };
+      await updateLatestAppVersion(newVersionConfig);
+      const fullConfig: AppVersionConfig = {
+        ...newVersionConfig,
+        updatedAt: new Date().toISOString()
+      };
+      setLiveRemoteConfig(fullConfig);
+      if (onVersionPublished) {
+        onVersionPublished(fullConfig);
+      }
       showNotification(`🎉 تم نشر التحديث v${devVersionInput.trim()} في السحابة بنجاح! وسيتلقى جميع مستخدمي التطبيق والـ APK التنبيه فوراً.`, 'success');
     } catch (err) {
       console.error('Failed to publish app update:', err);
       showNotification('حدث خطأ أثناء نشر التحديث، يرجى الاتصال بالإنترنت والتحقق مجدداً', 'error');
     } finally {
       setIsPublishingUpdate(false);
+    }
+  };
+
+  // Live Cloud & Update Diagnostics
+  const [isDiagnosing, setIsDiagnosing] = React.useState(false);
+  const [diagResult, setDiagResult] = React.useState<{
+    networkOk: boolean;
+    firebaseOk: boolean;
+    firebaseLatency: number;
+    githubOk: boolean;
+    githubLatency: number;
+    lastTested: string;
+    versionInCloud?: string;
+  } | null>(null);
+
+  const runCloudDiagnostics = async () => {
+    setIsDiagnosing(true);
+    const networkOk = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    
+    // 1. Firebase Firestore Test
+    const fbTest = await testCloudConnection();
+    
+    // 2. GitHub Releases API Test
+    let ghOk = false;
+    let ghLatency = 0;
+    const ghStart = Date.now();
+    try {
+      const ghRes = await fetch('https://api.github.com/repos/azamfahd/soparmarkit/releases/latest', {
+        headers: { 'Accept': 'application/vnd.github.v3+json' },
+        cache: 'no-store'
+      });
+      ghLatency = Date.now() - ghStart;
+      ghOk = ghRes.ok;
+    } catch {
+      ghLatency = Date.now() - ghStart;
+      ghOk = false;
+    }
+
+    setDiagResult({
+      networkOk,
+      firebaseOk: fbTest.success,
+      firebaseLatency: fbTest.latencyMs,
+      githubOk: ghOk,
+      githubLatency: ghLatency,
+      lastTested: new Date().toLocaleTimeString('ar-SA'),
+      versionInCloud: fbTest.latestConfig?.latestVersion
+    });
+    setIsDiagnosing(false);
+    if (fbTest.success) {
+      showNotification('✅ تم فحص الاتصال بالسحابة ومستودع التحديثات بنجاح', 'success');
+    } else {
+      showNotification('⚠️ تعذر الاتصال بالسحابة، يرجى فحص الشبكة', 'error');
     }
   };
 
@@ -910,6 +987,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           )}
         </Card>
 
+        {/* Card: Google Cloud & Owner Account */}
+        <GoogleAuthButton
+          variant="card"
+          onOpenOwnerModal={onOpenOwnerModal}
+          onOwnerAuthChanged={(isOwnerAuth) => {
+            if (isOwnerAuth) {
+              setIsDeveloperMode(true);
+            }
+          }}
+          showNotification={showNotification}
+        />
+
         {/* Card 7: About System */}
         <Card className="p-4 sm:p-5 border border-slate-200/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
           <div className="space-y-3">
@@ -922,8 +1011,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             
             <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
               <div className="flex justify-between items-center">
-                <span>إصدار النظام:</span>
-                <span className="font-mono font-extrabold text-slate-800">v1.0.3</span>
+                <span>إصدار النظام الحالي:</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono font-extrabold text-slate-800">v{currentAppVersion || '1.0.4'}</span>
+                  {latestCloudVersion && latestCloudVersion !== (currentAppVersion || '1.0.4') && (
+                    <button
+                      type="button"
+                      onClick={onOpenCheckUpdatesModal}
+                      className="text-[10px] font-bold bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full cursor-pointer transition-colors flex items-center gap-1 shadow-2xs"
+                      title="اضغط لمعاينة وتثبيت التحديث"
+                    >
+                      <Sparkles className="w-2.5 h-2.5 text-amber-600 animate-pulse" />
+                      <span>يتوفر تحديث v{latestCloudVersion}</span>
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="flex justify-between items-center">
                 <span>نوع قاعدة البيانات:</span>
@@ -1356,10 +1458,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         {/* كرت مولد مفاتيح التفعيل - للمالك */}
         {isDeveloperMode && (
           <Card className="space-y-4 border-indigo-200 shadow-md shadow-indigo-500/5 bg-slate-50 border-2">
-            <div className="flex items-center justify-between border-b border-indigo-100 pb-2 mb-2">
-              <div className="flex items-center gap-2 text-indigo-700">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-2 mb-2">
+              <div className="flex items-center gap-2 text-indigo-700 flex-wrap">
                 <Lock className="w-5 h-5 text-indigo-600" />
                 <h3 className="font-bold text-slate-800">أداة توليد مفاتيح الترخيص (للمطور/المالك)</h3>
+                <span className="text-[10px] font-mono font-extrabold bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full border border-emerald-300/60 flex items-center gap-1 dir-ltr">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Firebase: {CLOUD_PROJECT_ID}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <button 
@@ -1455,12 +1561,132 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           </div>
                           <p className="text-slate-700 text-xs font-bold leading-relaxed pt-0.5">{liveRemoteConfig.updateMessage}</p>
                         </div>
+                        <div className="col-span-1 sm:col-span-2 flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-indigo-100/60">
+                          <span className="text-[10px] text-slate-500 font-bold">
+                            هذا الجهاز يعمل حالياً بالإصدار: <strong className="font-mono text-slate-800">v{currentAppVersion || '1.0.4'}</strong>
+                          </span>
+                          {liveRemoteConfig.latestVersion !== (currentAppVersion || '1.0.4') && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (liveRemoteConfig?.latestVersion) {
+                                  if (typeof localStorage !== 'undefined') {
+                                    localStorage.setItem('app_installed_version_str', liveRemoteConfig.latestVersion);
+                                  }
+                                  showNotification(`✅ تم مزامنة هذا الجهاز مع الإصدار الجديد v${liveRemoteConfig.latestVersion} بنجاح!`, 'success');
+                                  window.location.reload();
+                                }
+                              }}
+                              className="text-[10px] font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 shadow-xs"
+                            >
+                              <RefreshCw className="w-3 h-3 text-indigo-200" />
+                              <span>مزامنة وتطبيق هذا التحديث على هذا الجهاز الآن ⚡</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="text-center py-2 text-xs text-slate-500 font-bold">
                         جاري جلب معلومات التحديث الحالية من سحابة Firebase...
                       </div>
                     )}
+                  </div>
+
+                  {/* Cloud & Updates Live Diagnostics */}
+                  <div className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 space-y-3 shadow-lg">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <button
+                        type="button"
+                        onClick={runCloudDiagnostics}
+                        disabled={isDiagnosing}
+                        className="text-xs font-black bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isDiagnosing ? 'animate-spin' : ''}`} />
+                        <span>{isDiagnosing ? 'جاري الفحص...' : 'فحص الاتصال الحي الآن ⚡'}</span>
+                      </button>
+                      <div className="text-right">
+                        <h4 className="text-xs font-black text-white flex items-center justify-end gap-1.5">
+                          <span>لوحة فحص الاتصال والتحديثات الحية (APK & Cloud)</span>
+                          <Activity className="w-4 h-4 text-emerald-400" />
+                        </h4>
+                        <p className="text-[10px] text-slate-400 font-medium">
+                          تأكد من اتصال النظام السحابي واستقبال مستخدمي الـ APK للتنبيهات
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Connected Cloud Target Badge */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 rounded-xl border border-slate-700/60 text-[11px]">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-400">قاعدة البيانات:</span>
+                        <span className="font-mono text-indigo-300 font-bold bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/60 dir-ltr">{CLOUD_DATABASE_ID}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-400">مشروع Firebase:</span>
+                        <span className="font-mono text-emerald-300 font-extrabold bg-emerald-950/60 px-2.5 py-0.5 rounded border border-emerald-800/60 dir-ltr flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                          {CLOUD_PROJECT_ID}
+                        </span>
+                      </div>
+                    </div>
+
+                    {diagResult ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-1">
+                        <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/80 flex items-center justify-between">
+                          <span className={`text-[11px] font-black px-2 py-0.5 rounded-md flex items-center gap-1 ${diagResult.networkOk ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                            {diagResult.networkOk ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <XCircle className="w-3 h-3 text-rose-400" />}
+                            <span>{diagResult.networkOk ? 'متصل' : 'مقطوع'}</span>
+                          </span>
+                          <span className="text-slate-400 font-bold text-[10px]">شبكة الإنترنت:</span>
+                        </div>
+
+                        <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/80 flex items-center justify-between">
+                          <span className={`text-[11px] font-black px-2 py-0.5 rounded-md flex items-center gap-1 ${diagResult.firebaseOk ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                            {diagResult.firebaseOk ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <XCircle className="w-3 h-3 text-rose-400" />}
+                            <span>{diagResult.firebaseOk ? `${diagResult.firebaseLatency}ms` : 'فشل'}</span>
+                          </span>
+                          <span className="text-slate-400 font-bold text-[10px]">قاعدة Firebase:</span>
+                        </div>
+
+                        <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/80 flex items-center justify-between">
+                          <span className={`text-[11px] font-black px-2 py-0.5 rounded-md flex items-center gap-1 ${diagResult.githubOk ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                            {diagResult.githubOk ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <AlertTriangle className="w-3 h-3 text-amber-400" />}
+                            <span>{diagResult.githubOk ? `${diagResult.githubLatency}ms` : 'مستودع'}</span>
+                          </span>
+                          <span className="text-slate-400 font-bold text-[10px]">تحديثات GitHub:</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-slate-400 bg-slate-800/50 p-2.5 rounded-xl border border-slate-800 text-center font-medium">
+                        اضغط على "فحص الاتصال الحي الآن" لاختبار اتصال قاعدة البيانات وسرعة استجابة السحابة فورياً.
+                      </p>
+                    )}
+
+                    {/* Quick Simulation & Verification Tools */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80 text-[11px]">
+                      {onTriggerTestBanner && (
+                        <button
+                          type="button"
+                          onClick={onTriggerTestBanner}
+                          className="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-600 text-white rounded-xl font-black text-[11px] flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                          title="إظهار راية التحديث على هذا الجهاز كتجربة واقعية"
+                        >
+                          <Bell className="w-3.5 h-3.5 text-emerald-200" />
+                          <span>معاينة ظهور إشعار التحديث للعملاء 🔔</span>
+                        </button>
+                      )}
+
+                      {onOpenCheckUpdatesModal && (
+                        <button
+                          type="button"
+                          onClick={onOpenCheckUpdatesModal}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold text-[11px] flex items-center gap-1.5 transition-all cursor-pointer border border-slate-700"
+                        >
+                          <Download className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>فتح مركز فحص وتنزيل حزمة APK 📱</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Form to Publish New Update */}
@@ -1584,6 +1810,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               ) : activeDevTab === 'requests' ? (
                 /* Cloud Requests Dashboard */
                 <div className="space-y-3">
+                  <div className="flex items-center justify-between text-[11px] px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-900 font-bold">
+                    <span className="font-mono text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200 dir-ltr flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      {CLOUD_PROJECT_ID}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Cloud className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>قاعدة السحابة المتصلة لاستقبال الطلبات:</span>
+                    </span>
+                  </div>
                   {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (
                     <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-900 text-xs font-bold flex items-center justify-between">
                       <span className="flex items-center gap-2">

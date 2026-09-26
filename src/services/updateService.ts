@@ -8,6 +8,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { getLatestAppVersion } from './firebase';
 
 export const GITHUB_REPO = 'azamfahd/soparmarkit';
 export const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases`;
@@ -57,7 +58,7 @@ export interface UpdateCheckResult {
   features: string[];
   isNativeApp: boolean;
   githubRelease?: GitHubReleaseInfo;
-  source: 'GITHUB' | 'LOCAL_CONFIG' | 'FALLBACK';
+  source: 'FIREBASE' | 'GITHUB' | 'LOCAL_CONFIG' | 'FALLBACK';
   publishedAt?: string;
   hasDirectApk?: boolean;
 }
@@ -194,7 +195,10 @@ export async function fetchRemoteVersionInfo(): Promise<VersionInfo | null> {
 }
 
 /**
- * Checks for updates directly via GitHub Releases API first, with local fallback
+ * Checks for updates:
+ * 1. Firebase Cloud Database (app_config/version_info) - Live & instant developer broadcast
+ * 2. GitHub Releases API - Binary releases & tags
+ * 3. Local version.json - Offline fallback
  */
 export async function checkAppUpdates(): Promise<UpdateCheckResult> {
   let isNative = false;
@@ -207,81 +211,84 @@ export async function checkAppUpdates(): Promise<UpdateCheckResult> {
       try {
         const { App: CapApp } = await import('@capacitor/app');
         const info = await CapApp.getInfo();
-        currentVersion = info.version || '1.0.4';
-        currentCode = parseInt(info.build || '4', 10);
+        if (info.version) currentVersion = info.version;
+        if (info.build) currentCode = parseInt(info.build, 10);
       } catch (e) {
         console.warn('[UpdateService] Capacitor getInfo error:', e);
       }
-    } else {
-      const savedCode = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
-      if (savedCode) {
-        currentCode = parseInt(savedCode, 10) || 4;
-      }
+    }
+    const savedInstalled = localStorage.getItem('app_installed_version_str');
+    if (savedInstalled) {
+      currentVersion = savedInstalled;
+    }
+    const savedCode = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
+    if (savedCode) {
+      currentCode = parseInt(savedCode, 10) || currentCode;
     }
   }
 
-  // 1. Primary Check: GitHub Releases API directly
-  const githubRelease = await fetchGitHubLatestRelease();
-  if (githubRelease) {
-    const latestVersionStr = githubRelease.versionName;
-    const isNewer = compareSemver(latestVersionStr, currentVersion) > 0;
+  // 1. Fetch potential updates from Firebase Cloud and GitHub Releases concurrently
+  const [cloudVersionConfig, githubRelease, remoteInfo] = await Promise.all([
+    getLatestAppVersion().catch(() => null),
+    fetchGitHubLatestRelease().catch(() => null),
+    fetchRemoteVersionInfo().catch(() => null),
+  ]);
 
-    return {
-      hasUpdate: isNewer,
-      updateType: isNewer ? (isNative ? 'APK_FULL' : 'OTA') : 'NONE',
-      currentVersion,
-      currentVersionCode: currentCode,
-      latestVersion: latestVersionStr,
-      latestVersionCode: currentCode + (isNewer ? 1 : 0),
-      updateUrl: githubRelease.apkUrl,
-      releaseNotes: githubRelease.body || githubRelease.name,
-      features: [githubRelease.name],
-      isNativeApp: isNative,
-      githubRelease,
-      source: 'GITHUB',
-      publishedAt: githubRelease.published_at,
-      hasDirectApk: githubRelease.hasDirectApk,
-    };
+  let bestVersionStr = currentVersion;
+  let bestSource: 'FIREBASE' | 'GITHUB' | 'LOCAL_CONFIG' | 'FALLBACK' = 'FALLBACK';
+  let bestUpdateUrl = getApkDownloadUrl();
+  let bestReleaseNotes = '';
+  let bestPublishedAt: string | undefined = undefined;
+  let hasDirectApk = false;
+
+  // Check Firebase first (most direct & immediate)
+  if (cloudVersionConfig && cloudVersionConfig.latestVersion) {
+    bestVersionStr = cloudVersionConfig.latestVersion;
+    bestSource = 'FIREBASE';
+    bestUpdateUrl = cloudVersionConfig.apkUrl || bestUpdateUrl;
+    bestReleaseNotes = cloudVersionConfig.updateMessage || 'يتوفر تحديث جديد يحتوي على تحسينات واسعة وإصلاحات للتطبيق.';
+    bestPublishedAt = cloudVersionConfig.updatedAt;
+    hasDirectApk = bestUpdateUrl.toLowerCase().includes('.apk');
   }
 
-  // 2. Secondary Fallback: public/version.json
-  const remoteInfo = await fetchRemoteVersionInfo();
-  if (remoteInfo) {
-    const latestCode = remoteInfo.versionCode || 4;
-    const hasNewerVersion = latestCode > currentCode || (
-      remoteInfo.version !== currentVersion && 
-      compareSemver(remoteInfo.version, currentVersion) > 0
-    );
-
-    return {
-      hasUpdate: hasNewerVersion,
-      updateType: hasNewerVersion ? (isNative ? 'APK_FULL' : 'OTA') : 'NONE',
-      currentVersion,
-      currentVersionCode: currentCode,
-      latestVersion: remoteInfo.version,
-      latestVersionCode: latestCode,
-      updateUrl: getApkDownloadUrl(remoteInfo.updateUrl),
-      releaseNotes: remoteInfo.releaseNotes || 'تحديث جديد يتضمن تحسينات في الاستقرار والأداء والوظائف المحلية.',
-      features: remoteInfo.features || [],
-      isNativeApp: isNative,
-      source: 'LOCAL_CONFIG',
-      hasDirectApk: remoteInfo.updateUrl.toLowerCase().includes('.apk'),
-    };
+  // Check GitHub Releases (if newer than Firebase, prefer GitHub; otherwise keep Firebase)
+  if (githubRelease && githubRelease.versionName) {
+    if (compareSemver(githubRelease.versionName, bestVersionStr) > 0 || bestSource === 'FALLBACK') {
+      bestVersionStr = githubRelease.versionName;
+      bestSource = 'GITHUB';
+      bestUpdateUrl = githubRelease.apkUrl;
+      bestReleaseNotes = githubRelease.body || githubRelease.name;
+      bestPublishedAt = githubRelease.published_at;
+      hasDirectApk = githubRelease.hasDirectApk;
+    }
   }
+
+  // Check local/fallback remote info if neither was set
+  if (bestSource === 'FALLBACK' && remoteInfo && remoteInfo.version) {
+    bestVersionStr = remoteInfo.version;
+    bestSource = 'LOCAL_CONFIG';
+    bestUpdateUrl = getApkDownloadUrl(remoteInfo.updateUrl);
+    bestReleaseNotes = remoteInfo.releaseNotes || 'تحديث جديد يتضمن تحسينات بالاستقرار والأداء.';
+    hasDirectApk = remoteInfo.updateUrl.toLowerCase().includes('.apk');
+  }
+
+  const hasUpdate = compareSemver(bestVersionStr, currentVersion) > 0;
 
   return {
-    hasUpdate: false,
-    updateType: 'NONE',
+    hasUpdate,
+    updateType: hasUpdate ? (isNative ? 'APK_FULL' : 'OTA') : 'NONE',
     currentVersion,
     currentVersionCode: currentCode,
-    latestVersion: currentVersion,
-    latestVersionCode: currentCode,
-    updateUrl: getApkDownloadUrl(),
-    releaseNotes: '',
-    features: [],
+    latestVersion: bestVersionStr,
+    latestVersionCode: currentCode + (hasUpdate ? 1 : 0),
+    updateUrl: bestUpdateUrl,
+    releaseNotes: bestReleaseNotes || (cloudVersionConfig?.updateMessage) || 'تحديث جديد للنظام المحاسبي.',
+    features: githubRelease?.name ? [githubRelease.name] : (remoteInfo?.features || []),
     isNativeApp: isNative,
-    source: 'FALLBACK',
-    hasDirectApk: false,
+    githubRelease: githubRelease || undefined,
+    source: bestSource,
+    publishedAt: bestPublishedAt,
+    hasDirectApk,
   };
 }
 

@@ -104,6 +104,12 @@ export interface SyncQueueItem {
   timestamp: number;
 }
 
+export interface NoteChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
 export interface Note {
   id?: number;
   title: string;
@@ -112,6 +118,11 @@ export interface Note {
   reminder_date?: string | null;
   is_completed?: boolean;
   priority?: 'normal' | 'high' | 'info' | 'warning';
+  category?: 'cashier' | 'external_account' | 'living_expenses' | 'personal_diary' | 'todo';
+  color_tag?: string; // 'emerald' | 'rose' | 'amber' | 'sky' | 'purple' | 'slate'
+  calculated_total?: number; // total calculated from numbers in note or calculator
+  checklist?: NoteChecklistItem[];
+  is_pinned?: boolean;
 }
 
 export interface SalesSettlement {

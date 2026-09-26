@@ -54,6 +54,10 @@ import { importAndRepairDatabaseOffline, convertJsonDatabaseToExcel, convertExce
 import { executeDirectPrint, printCustomerStatementDoc, printSaleReceiptDoc } from './utils/printUtils';
 import { InstallAppModal } from './components/InstallAppModal';
 import { CheckUpdatesModal } from './components/modals/CheckUpdatesModal';
+import { OwnerDashboardModal } from './components/modals/OwnerDashboardModal';
+import { OwnerSecurityVerificationModal } from './components/modals/OwnerSecurityVerificationModal';
+import { GoogleAuthButton } from './components/auth/GoogleAuthButton';
+import { signOutGoogle } from './services/firebase';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, installDownloadedAPK, getApkDownloadUrl } from './services/updateService';
@@ -976,6 +980,10 @@ export default function App() {
 
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [showCheckUpdatesModal, setShowCheckUpdatesModal] = useState(false);
+  const [showOwnerModal, setShowOwnerModal] = useState(false);
+  const [showOwner2FAModal, setShowOwner2FAModal] = useState(false);
+  const [authenticatedUser, setAuthenticatedUser] = useState<any>(null);
+  const [isSuperOwnerLoggedIn, setIsSuperOwnerLoggedIn] = useState(false);
   const [hasPendingUpdate, setHasPendingUpdate] = useState(false);
   const [showUpdateBanner, setShowUpdateBanner] = useState(false);
   const [remoteAppConfig, setRemoteAppConfig] = useState<AppVersionConfig | null>(null);
@@ -1723,12 +1731,15 @@ export default function App() {
     const unsub = subscribeToAppVersion((config) => {
       if (config) {
         setRemoteAppConfig(config);
-        // Compare version if running in APK
-        if (isNativeAndroid && currentAppVersion) {
-          if (config.latestVersion && config.latestVersion !== currentAppVersion) {
+        // Compare version (works in APK, WebView, and browser/PWA)
+        if (config.latestVersion && currentAppVersion) {
+          if (config.latestVersion !== currentAppVersion) {
             setHasPendingUpdate(true);
-            setUpdateBannerMessage(config.updateMessage || 'يتوفر تحديث جديد لتطبيق الأندرويد.');
+            setUpdateBannerMessage(config.updateMessage || 'يتوفر تحديث جديد للنظام.');
             setShowUpdateBanner(true);
+          } else {
+            setHasPendingUpdate(false);
+            setShowUpdateBanner(false);
           }
         }
       }
@@ -2410,7 +2421,7 @@ export default function App() {
 
     const isValid = customChecksum 
       ? (pinHash === customChecksum)
-      : (pinHash === correctHashLower || pinHash === correctHashUpper || pin === '8080');
+      : (pinHash === correctHashLower || pinHash === correctHashUpper);
 
     if (isValid) {
       setIsDeveloperMode(true);
@@ -2452,7 +2463,7 @@ export default function App() {
     
     const isCurrentValid = customChecksum 
       ? (currentPinHash === customChecksum)
-      : (currentPinHash === correctHashLower || currentPinHash === correctHashUpper || currentPin.trim() === '8080');
+      : (currentPinHash === correctHashLower || currentPinHash === correctHashUpper);
 
     if (!isCurrentValid) {
       setPinChangeError('الرمز الحالي غير صحيح. لا يمكنك التعديل.');
@@ -2501,7 +2512,7 @@ export default function App() {
     
     const isCurrentValid = customChecksum 
       ? (currentPinHash === customChecksum)
-      : (currentPinHash === correctHashLower || currentPinHash === correctHashUpper || currentPin.trim() === '8080');
+      : (currentPinHash === correctHashLower || currentPinHash === correctHashUpper);
 
     if (!isCurrentValid) {
       setPinChangeError('الرمز الحالي غير صحيح للقيام بالاستعادة');
@@ -3106,7 +3117,12 @@ export default function App() {
           title: newNote.title.trim(),
           content: newNote.content.trim(),
           reminder_date: newNote.reminder_date || null,
-          priority: newNote.priority || 'normal'
+          priority: newNote.priority || 'normal',
+          category: newNote.category || 'cashier',
+          color_tag: newNote.color_tag || 'emerald',
+          calculated_total: typeof newNote.calculated_total === 'number' ? newNote.calculated_total : 0,
+          checklist: Array.isArray(newNote.checklist) ? newNote.checklist : [],
+          is_pinned: Boolean(newNote.is_pinned)
         });
         showNotification('تم تحديث الملاحظة بنجاح');
       } else {
@@ -3116,7 +3132,12 @@ export default function App() {
           reminder_date: newNote.reminder_date || null,
           created_at: new Date().toISOString(),
           is_completed: false,
-          priority: newNote.priority || 'normal'
+          priority: newNote.priority || 'normal',
+          category: newNote.category || 'cashier',
+          color_tag: newNote.color_tag || 'emerald',
+          calculated_total: typeof newNote.calculated_total === 'number' ? newNote.calculated_total : 0,
+          checklist: Array.isArray(newNote.checklist) ? newNote.checklist : [],
+          is_pinned: Boolean(newNote.is_pinned)
         });
         showNotification('تم حفظ الملاحظة بنجاح');
       }
@@ -5775,7 +5796,25 @@ export default function App() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* زر حساب Google والمتابعة (اختياري) مع تمييز المالك */}
+            <GoogleAuthButton
+              variant="header"
+              onOpenOwnerModal={() => setShowOwnerModal(true)}
+              onRequireOwnerVerification={() => setShowOwner2FAModal(true)}
+              onOwnerAuthChanged={(isOwnerAuth, user) => {
+                setAuthenticatedUser(user);
+                setIsSuperOwnerLoggedIn(isOwnerAuth);
+                if (isOwnerAuth) {
+                  const is2fa = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('owner_2fa_verified') === 'true';
+                  if (is2fa) {
+                    setIsDeveloperMode(true);
+                  }
+                }
+              }}
+              showNotification={showNotification}
+            />
+
             {isBackupOverdue && (
               <motion.button
                 initial={{ scale: 0.9, opacity: 0 }}
@@ -6164,6 +6203,37 @@ export default function App() {
                 handleResetDeveloperPIN={handleResetDeveloperPIN}
                 onOpenExcelSyncCenter={() => setShowExcelSyncModal(true)}
                 onOpenSecureExport={() => setShowSecureBackupModal(true)}
+                onOpenCheckUpdatesModal={() => setShowCheckUpdatesModal(true)}
+                onOpenOwnerModal={() => {
+                  const is2fa = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('owner_2fa_verified') === 'true';
+                  if (!is2fa) {
+                    setShowOwner2FAModal(true);
+                  } else {
+                    setShowOwnerModal(true);
+                  }
+                }}
+                currentAppVersion={currentAppVersion}
+                latestCloudVersion={remoteAppConfig?.latestVersion}
+                onApplyUpdateNow={handleUpdateAppNow}
+                onVersionPublished={(newConfig) => {
+                  setRemoteAppConfig(newConfig);
+                  if (newConfig.latestVersion && newConfig.latestVersion !== currentAppVersion) {
+                    setHasPendingUpdate(true);
+                    setUpdateBannerMessage(newConfig.updateMessage || 'يتوفر تحديث جديد للنظام.');
+                    setShowUpdateBanner(true);
+                  }
+                }}
+                onTriggerTestBanner={() => {
+                  setRemoteAppConfig(prev => ({
+                    latestVersion: prev?.latestVersion || '1.0.6',
+                    apkUrl: prev?.apkUrl || 'https://github.com/azamfahd/soparmarkit/releases/latest/download/app-release.apk',
+                    updateMessage: prev?.updateMessage || '🎉 تجربة إشعار التحديث: النظام متصل بنجاح بالسحابة وجاهز لاستقبال التحديثات!',
+                    mandatory: false,
+                    updatedAt: new Date().toISOString()
+                  }));
+                  setUpdateBannerMessage('🎉 تجربة إشعار التحديث: النظام متصل بالسحابة بنجاح واستقبال التنبيهات يعمل 100%!');
+                  setShowUpdateBanner(true);
+                }}
               />
             </Suspense>
           )}
@@ -7231,6 +7301,44 @@ export default function App() {
           onClose={() => setShowCheckUpdatesModal(false)}
           onUpdateDetected={(res) => {
             setHasPendingUpdate(res.hasUpdate);
+          }}
+        />
+
+        {/* التحقق الأمني الثنائي الإضافي للمالك (2FA / PIN) */}
+        <OwnerSecurityVerificationModal
+          isOpen={showOwner2FAModal}
+          onClose={() => setShowOwner2FAModal(false)}
+          currentUser={authenticatedUser}
+          onSuccess={() => {
+            setIsDeveloperMode(true);
+            setShowOwnerModal(true);
+          }}
+          showNotification={showNotification}
+        />
+
+        {/* لوحة تحكم وإدارة المالك الشاملة (عصام فهد) */}
+        <OwnerDashboardModal
+          isOpen={showOwnerModal}
+          onClose={() => setShowOwnerModal(false)}
+          currentUser={authenticatedUser}
+          allCloudRequests={allCloudRequests}
+          onApproveRequest={(req, dur) => handleApproveCloudRequest(req, dur)}
+          onRejectRequest={(devId, sName) => handleRejectCloudRequest(devId, sName)}
+          onDeleteRequest={(devId) => handleDeleteCloudRequest(devId)}
+          onSignOut={async () => {
+            await signOutGoogle();
+            setAuthenticatedUser(null);
+            setIsSuperOwnerLoggedIn(false);
+            showNotification('تم تسجيل الخروج من حساب المالك.', 'success');
+          }}
+          showNotification={showNotification}
+          onVersionPublished={(newConfig) => {
+            setRemoteAppConfig(newConfig);
+            if (newConfig.latestVersion && newConfig.latestVersion !== currentAppVersion) {
+              setHasPendingUpdate(true);
+              setUpdateBannerMessage(newConfig.updateMessage || 'يتوفر تحديث جديد للنظام.');
+              setShowUpdateBanner(true);
+            }
           }}
         />
 

@@ -1,10 +1,10 @@
 {
-  "version": "1.0.4",
-  "versionCode": 4,
-  "buildNumber": 4,
-  "releaseDate": "2026-09-17",
+  "version": "1.0.5",
+  "versionCode": 5,
+  "buildNumber": 5,
+  "releaseDate": "2026-09-24",
   "appName": "النظام المحاسبي الذكي",
-  "updateUrl": "https://github.com/azamfahd/soparmarkit/releases",
+  "updateUrl": "https://account20.netlify.app",
   "minSupportedVersion": "1.0.0",
   "releaseNotes": "تحديث تلقائي جديد للنظام المحاسبي: تحسينات الأداء، دعم التحديثات المزدوجة، والاحتفاظ الكامل بالبيانات.",
   "features": [

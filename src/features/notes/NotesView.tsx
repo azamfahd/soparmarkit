@@ -12,7 +12,13 @@ import {
   Trash2, 
   CheckCircle2, 
   Database, 
-  AlertCircle 
+  AlertCircle,
+  Sparkles,
+  Pin,
+  Calculator,
+  Wallet,
+  ClipboardList,
+  CheckSquare
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -86,6 +92,11 @@ export const NotesView: React.FC<NotesViewProps> = ({
 }) => {
   const [noteSearchQuery, setNoteSearchQuery] = useState('');
   const [viewSection, setViewSection] = useState<'all' | 'notes' | 'withdrawals' | 'settlement'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'cashier' | 'external_account' | 'living_expenses' | 'personal_diary' | 'todo'>('all');
+
+  const totalCalculatedNotesSum = notes.reduce((sum, n) => sum + (Number(n.calculated_total) || 0), 0);
+  const pendingNotesCount = notes.filter(n => !n.is_completed).length;
+  const completedNotesCount = notes.filter(n => n.is_completed).length;
 
   return (
     <motion.div key="notes" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
@@ -158,51 +169,107 @@ export const NotesView: React.FC<NotesViewProps> = ({
           </Button>
         </div>
 
-        {/* أزرار الفلترة وشريط البحث */}
-        <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between pb-1 text-right">
-          <div className="flex flex-wrap gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-150/50 w-fit">
-            {[
-              { key: 'all', label: 'الكل', count: notes.length },
-              { key: 'pending', label: 'المعلقة 📝', count: notes.filter(n => !n.is_completed).length },
-              { key: 'completed', label: 'المكتملة ✓', count: notes.filter(n => n.is_completed).length },
-              { key: 'high', label: 'عاجلة وهامة 🚨', count: notes.filter(n => (n.priority || 'normal') === 'high').length }
-            ].map((pill, idx) => (
-              <button
-                key={`note-filter-pill-${pill.key}-${idx}`}
-                onClick={() => setNoteFilter(pill.key as any)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
-                  noteFilter === pill.key
-                    ? 'bg-white text-emerald-800 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-                }`}
-              >
-                <span>{pill.label}</span>
-                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
-                  noteFilter === pill.key ? 'bg-emerald-550/15 text-emerald-700' : 'bg-slate-200/80 text-slate-600'
-                }`}>
-                  {pill.count}
-                </span>
-              </button>
-            ))}
+        {/* بطاقات الإحصائيات السريعة لليوميات */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-right">
+          <div className="p-3 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
+            <span className="text-[10px] font-bold text-slate-400 block">إجمالي التدوينات</span>
+            <span className="text-base font-black text-slate-800 font-mono">{notes.length} ملاحظة</span>
           </div>
 
-          <div className="relative flex-1 max-w-md">
-            <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="البحث في العنوان أو محتوى الملاحظات..."
-              value={noteSearchQuery}
-              onChange={(e) => setNoteSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/10 text-slate-700 font-extrabold transition-all placeholder:text-slate-400 text-right"
-            />
-            {noteSearchQuery && (
-              <button 
-                onClick={() => setNoteSearchQuery('')}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-350 hover:text-slate-600 font-bold text-sm cursor-pointer p-1"
+          <div className="p-3 rounded-2xl bg-gradient-to-br from-emerald-50 to-emerald-100/60 border border-emerald-200/80 shadow-2xs">
+            <span className="text-[10px] font-bold text-emerald-800 block flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-emerald-600" />
+              <span>المبالغ المقيدة باليوميات</span>
+            </span>
+            <span className="text-base font-black text-emerald-900 font-mono">
+              {totalCalculatedNotesSum.toLocaleString('ar-SA')} <span className="text-[10px]">ريال</span>
+            </span>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-amber-50/80 border border-amber-200/80 shadow-2xs">
+            <span className="text-[10px] font-bold text-amber-800 block">مهام معلقة</span>
+            <span className="text-base font-black text-amber-900 font-mono">{pendingNotesCount} قيد التنفيذ</span>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-indigo-50/80 border border-indigo-200/80 shadow-2xs">
+            <span className="text-[10px] font-bold text-indigo-800 block">مهام مكتملة</span>
+            <span className="text-base font-black text-indigo-900 font-mono">{completedNotesCount} منجز ✓</span>
+          </div>
+        </div>
+
+        {/* أزرار الفلترة وشريط البحث */}
+        <div className="space-y-2.5">
+          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between pb-1 text-right">
+            <div className="flex flex-wrap gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-150/50 w-fit">
+              {[
+                { key: 'all', label: 'الكل', count: notes.length },
+                { key: 'pending', label: 'المعلقة 📝', count: pendingNotesCount },
+                { key: 'completed', label: 'المكتملة ✓', count: completedNotesCount },
+                { key: 'high', label: 'عاجلة وهامة 🚨', count: notes.filter(n => (n.priority || 'normal') === 'high').length }
+              ].map((pill, idx) => (
+                <button
+                  key={`note-filter-pill-${pill.key}-${idx}`}
+                  onClick={() => setNoteFilter(pill.key as any)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+                    noteFilter === pill.key
+                      ? 'bg-white text-emerald-800 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+                  }`}
+                >
+                  <span>{pill.label}</span>
+                  <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                    noteFilter === pill.key ? 'bg-emerald-550/15 text-emerald-700' : 'bg-slate-200/80 text-slate-600'
+                  }`}>
+                    {pill.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="البحث في العنوان أو محتوى الملاحظات والحسابات..."
+                value={noteSearchQuery}
+                onChange={(e) => setNoteSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-10 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/10 text-slate-700 font-extrabold transition-all placeholder:text-slate-400 text-right"
+              />
+              {noteSearchQuery && (
+                <button 
+                  onClick={() => setNoteSearchQuery('')}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-350 hover:text-slate-600 font-bold text-sm cursor-pointer p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* تصنيفات الملاحظات السريعة (وردية، حسابات، معيشة، مذكرات، مهام) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+            <span className="text-[11px] font-black text-slate-400 shrink-0 ml-1">التصنيف:</span>
+            {[
+              { id: 'all', label: 'جميع التصنيفات' },
+              { id: 'cashier', label: '🏦 يوميات الصندوق والوردية' },
+              { id: 'external_account', label: '💼 حسابات والتزامات خارجية' },
+              { id: 'living_expenses', label: '🏠 مصاريف معيشية وشخصية' },
+              { id: 'personal_diary', label: '📖 مذكرات وخواطر وتعبير' },
+              { id: 'todo', label: '📋 قائمة مهام وشطب' }
+            ].map(cat => (
+              <button
+                key={`cat-pill-${cat.id}`}
+                type="button"
+                onClick={() => setCategoryFilter(cat.id as any)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap shrink-0 border ${
+                  categoryFilter === cat.id
+                    ? 'bg-slate-900 text-white border-slate-900 shadow-2xs'
+                    : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                }`}
               >
-                <X className="w-4 h-4" />
+                {cat.label}
               </button>
-            )}
+            ))}
           </div>
         </div>
 
@@ -225,12 +292,24 @@ export const NotesView: React.FC<NotesViewProps> = ({
               } else if (noteFilter === 'high') {
                 if ((note.priority || 'normal') !== 'high') return false;
               }
+
+              if (categoryFilter !== 'all') {
+                if ((note.category || 'cashier') !== categoryFilter) return false;
+              }
               
               if (noteSearchQuery.trim()) {
                 const q = noteSearchQuery.toLowerCase();
                 return (note.title || '').toLowerCase().includes(q) || (note.content || '').toLowerCase().includes(q);
               }
               return true;
+            });
+
+            // Sort: pinned first, then newest
+            filteredNotes.sort((a, b) => {
+              const aPinned = a.is_pinned ? 1 : 0;
+              const bPinned = b.is_pinned ? 1 : 0;
+              if (bPinned !== aPinned) return bPinned - aPinned;
+              return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
             });
 
             if (filteredNotes.length === 0) {
@@ -243,70 +322,69 @@ export const NotesView: React.FC<NotesViewProps> = ({
               );
             }
 
+            const categoryLabels: Record<string, { label: string; badge: string }> = {
+              cashier: { label: '🏦 يوميات الصندوق والوردية', badge: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+              external_account: { label: '💼 حسابات والتزامات خارجية', badge: 'bg-sky-50 text-sky-800 border-sky-200' },
+              living_expenses: { label: '🏠 مصاريف معيشية وشخصية', badge: 'bg-purple-50 text-purple-800 border-purple-200' },
+              personal_diary: { label: '📖 مذكرات وخواطر وتعبير', badge: 'bg-amber-50 text-amber-800 border-amber-200' },
+              todo: { label: '📋 قائمة مهام وشطب', badge: 'bg-rose-50 text-rose-800 border-rose-200' }
+            };
+
+            const borderColors: Record<string, string> = {
+              emerald: 'border-r-4 border-r-emerald-500',
+              sky: 'border-r-4 border-r-sky-500',
+              purple: 'border-r-4 border-r-purple-500',
+              amber: 'border-r-4 border-r-amber-500',
+              rose: 'border-r-4 border-r-rose-500',
+              slate: 'border-r-4 border-r-slate-500',
+            };
+
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {filteredNotes.map((note, idx) => {
-                  const priority = note.priority || 'normal';
-                  let pConfig = {
-                    badgeBg: 'bg-slate-100 text-slate-600 border border-slate-200/50',
-                    borderColor: 'border-r-4 border-r-slate-400',
-                    label: '🟢 ملاحظة عامة',
-                    bgHover: 'hover:border-slate-300'
-                  };
-                  if (priority === 'high') {
-                    pConfig = {
-                      badgeBg: 'bg-red-50 text-red-700 border border-red-100',
-                      borderColor: 'border-r-4 border-r-red-500',
-                      label: '🔴 عاجل وهام',
-                      bgHover: 'hover:border-red-200 hover:shadow-red-50/[0.04]'
-                    };
-                  } else if (priority === 'info') {
-                    pConfig = {
-                      badgeBg: 'bg-blue-50 text-blue-700 border border-blue-100',
-                      borderColor: 'border-r-4 border-r-blue-500',
-                      label: '🔵 حسابات وكاش',
-                      bgHover: 'hover:border-blue-200 hover:shadow-blue-50/[0.04]'
-                    };
-                  } else if (priority === 'warning') {
-                    pConfig = {
-                      badgeBg: 'bg-amber-50 text-amber-700 border border-amber-100',
-                      borderColor: 'border-r-4 border-r-amber-500',
-                      label: '🟡 نواقص بضاعة',
-                      bgHover: 'hover:border-amber-200 hover:shadow-amber-50/[0.04]'
-                    };
-                  }
+                  const cat = categoryLabels[note.category || 'cashier'] || categoryLabels.cashier;
+                  const borderClass = borderColors[note.color_tag || 'emerald'] || 'border-r-4 border-r-slate-400';
+                  const checklistTotal = Array.isArray(note.checklist) ? note.checklist.length : 0;
+                  const checklistDone = Array.isArray(note.checklist) ? note.checklist.filter((c: any) => c.done).length : 0;
 
                   return (
                     <Card 
                       key={`note-card-${note.id ?? 'noid'}-${idx}`} 
                       onClick={() => setSelectedNote(note)}
-                      className={`relative overflow-hidden group hover:shadow-sm transition-all border border-slate-150/70 bg-white p-4 rounded-2xl flex flex-col justify-between cursor-pointer ${pConfig.borderColor} ${pConfig.bgHover} ${note.is_completed ? 'opacity-70 bg-slate-50/40' : ''}`}
+                      className={`relative overflow-hidden group hover:shadow-md transition-all border border-slate-200/90 bg-white p-4 rounded-3xl flex flex-col justify-between cursor-pointer ${borderClass} hover:border-slate-300 ${note.is_completed ? 'opacity-70 bg-slate-50/50' : ''}`}
                     >
                       <div className="space-y-3">
                         {/* رأس الكارد */}
-                        <div className="flex justify-between items-center gap-2">
-                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${pConfig.badgeBg}`}>
-                            {pConfig.label}
-                          </span>
+                        <div className="flex justify-between items-center gap-1.5 flex-wrap">
+                          <div className="flex items-center gap-1">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black border ${cat.badge}`}>
+                              {cat.label}
+                            </span>
+                            {note.is_pinned && (
+                              <span className="p-1 rounded-full bg-amber-100 text-amber-700" title="مثبتة في الأعلى">
+                                <Pin className="w-3 h-3 fill-amber-500" />
+                              </span>
+                            )}
+                          </div>
                           
                           <div className="flex items-center gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                             <button 
                               onClick={() => handleToggleNoteCompletion(note)}
-                              className={`p-1 rounded-lg transition-colors cursor-pointer ${note.is_completed ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'}`}
+                              className={`p-1.5 rounded-xl transition-colors cursor-pointer ${note.is_completed ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'}`}
                               title={note.is_completed ? "تأشير كغير مكتملة" : "تأشير كمكتملة وسليمة"}
                             >
                               <Check className="w-3.5 h-3.5" />
                             </button>
                             <button 
                               onClick={() => handleEditNoteAction(note)} 
-                              className="text-slate-400 hover:text-emerald-600 transition-colors p-1 hover:bg-slate-150 rounded-lg cursor-pointer"
+                              className="text-slate-400 hover:text-emerald-600 transition-colors p-1.5 hover:bg-slate-150 rounded-xl cursor-pointer"
                               title="تعديل"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
                             <button 
                               onClick={() => handleDeleteNote(note.id!)} 
-                              className="text-slate-400 hover:text-red-600 transition-colors p-1 hover:bg-slate-150 rounded-lg cursor-pointer"
+                              className="text-slate-400 hover:text-red-600 transition-colors p-1.5 hover:bg-slate-150 rounded-xl cursor-pointer"
                               title="حذف"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -323,6 +401,26 @@ export const NotesView: React.FC<NotesViewProps> = ({
                             {note.content}
                           </p>
                         </div>
+
+                        {/* Badges for Total or Checklist */}
+                        {(note.calculated_total > 0 || checklistTotal > 0) && (
+                          <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                            {note.calculated_total > 0 && (
+                              <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-[10px] font-black font-mono flex items-center gap-1">
+                                <Sparkles className="w-3 h-3 text-emerald-600" />
+                                <span>{note.calculated_total.toLocaleString('ar-SA')} ريال</span>
+                              </span>
+                            )}
+                            {checklistTotal > 0 && (
+                              <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border flex items-center gap-1 ${
+                                checklistDone === checklistTotal ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-slate-100 text-slate-600 border-slate-200'
+                              }`}>
+                                <CheckSquare className="w-3 h-3" />
+                                <span>{checklistDone}/{checklistTotal} بنود</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* التواريخ في ذيل الكارد */}
@@ -336,7 +434,7 @@ export const NotesView: React.FC<NotesViewProps> = ({
                             تنبيه: {formatDateWithDay(note.reminder_date)}
                           </span>
                         ) : (
-                          <span className="text-[8px] opacity-65 text-slate-350">عرض التفاصيل ←</span>
+                          <span className="text-[9px] font-bold text-indigo-600 opacity-80 group-hover:opacity-100">عرض التفاصيل ←</span>
                         )}
                       </div>
                     </Card>
