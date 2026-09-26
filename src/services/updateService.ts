@@ -11,6 +11,7 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { getLatestAppVersion } from './firebase';
 
 export const GITHUB_REPO = 'azamfahd/soparmarkit';
+export const GITHUB_ALT_REPO = 'azamfahd/smart-accounting-system';
 export const GITHUB_RELEASES_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases`;
 export const GITHUB_RELEASES_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
@@ -32,6 +33,7 @@ export interface GitHubReleaseInfo {
   assets: GitHubReleaseAsset[];
   apkUrl: string;
   hasDirectApk: boolean;
+  repo: string;
 }
 
 export interface VersionInfo {
@@ -78,97 +80,100 @@ export function getApkDownloadUrl(fallbackUrl?: string): string {
   if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_APK_DOWNLOAD_URL) {
     return import.meta.env.VITE_APK_DOWNLOAD_URL;
   }
-  return fallbackUrl || GITHUB_RELEASES_PAGE_URL;
+  return fallbackUrl || `https://github.com/${GITHUB_REPO}/releases/latest/download/app-release.apk`;
 }
 
 /**
- * Directly queries GitHub Releases API for repository azamfahd/soparmarkit
- * Queries /releases/latest first, and falls back to /releases list
+ * Directly queries GitHub Releases API with automatic multi-repo failover:
+ * Primary: azamfahd/soparmarkit
+ * Secondary: azamfahd/smart-accounting-system
  */
 export async function fetchGitHubLatestRelease(): Promise<GitHubReleaseInfo | null> {
-  try {
-    let data: any = null;
+  const reposToTry = [GITHUB_REPO, GITHUB_ALT_REPO];
 
-    // 1. Try /releases/latest
+  for (const repo of reposToTry) {
     try {
-      const res = await fetch(GITHUB_RELEASES_API_URL, {
-        headers: {
-          'Accept': 'application/vnd.github.v3+json',
-          'Cache-Control': 'no-cache',
-        },
-      });
+      let data: any = null;
 
-      if (res.ok) {
-        data = await res.json();
-      }
-    } catch (e) {
-      console.warn('[UpdateService] Latest release fetch error:', e);
-    }
-
-    // 2. Fallback to /releases list if /latest returned 404 or empty
-    if (!data || !data.tag_name) {
+      // 1. Try /releases/latest
       try {
-        const listRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases`, {
+        const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest?t=${Date.now()}`, {
           headers: {
             'Accept': 'application/vnd.github.v3+json',
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
           },
         });
-        if (listRes.ok) {
-          const list = await listRes.json();
-          if (Array.isArray(list) && list.length > 0) {
-            data = list[0];
-          }
+
+        if (res.ok) {
+          data = await res.json();
         }
       } catch (e) {
-        console.warn('[UpdateService] Releases list fetch error:', e);
+        console.warn(`[UpdateService] Latest release fetch error for ${repo}:`, e);
       }
+
+      // 2. Fallback to /releases list if /latest returned 404 or empty
+      if (!data || !data.tag_name) {
+        try {
+          const listRes = await fetch(`https://api.github.com/repos/${repo}/releases?t=${Date.now()}`, {
+            headers: {
+              'Accept': 'application/vnd.github.v3+json',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+            },
+          });
+          if (listRes.ok) {
+            const list = await listRes.json();
+            if (Array.isArray(list) && list.length > 0) {
+              data = list[0];
+            }
+          }
+        } catch (e) {
+          console.warn(`[UpdateService] Releases list fetch error for ${repo}:`, e);
+        }
+      }
+
+      if (data && data.tag_name) {
+        const tagName = data.tag_name || 'v1.0.0';
+        const cleanVersion = tagName.replace(/^v/i, '').trim();
+
+        // Search assets for genuine .apk file
+        const assets: GitHubReleaseAsset[] = Array.isArray(data.assets)
+          ? data.assets.map((a: any) => ({
+              name: a.name || '',
+              browser_download_url: a.browser_download_url || '',
+              size: a.size || 0,
+              download_count: a.download_count || 0,
+              created_at: a.created_at || '',
+            }))
+          : [];
+
+        const apkAsset = assets.find(
+          (a) => a.name.toLowerCase().endsWith('.apk') || a.browser_download_url.toLowerCase().endsWith('.apk')
+        );
+
+        const hasDirectApk = Boolean(apkAsset && apkAsset.browser_download_url);
+        const apkUrl = hasDirectApk && apkAsset
+          ? apkAsset.browser_download_url
+          : `https://github.com/${repo}/releases/download/${tagName}/app-release.apk`;
+
+        return {
+          tag_name: tagName,
+          versionName: cleanVersion,
+          name: data.name || `إصدار GitHub جديد ${tagName}`,
+          body: data.body || 'تحديث جديد صادر مباشرة من مستودع GitHub يتضمن تحسينات وميزات جديدة.',
+          published_at: data.published_at || new Date().toISOString(),
+          html_url: data.html_url || `https://github.com/${repo}/releases/tag/${tagName}`,
+          assets,
+          apkUrl,
+          hasDirectApk,
+          repo,
+        };
+      }
+    } catch (err) {
+      console.warn(`[UpdateService] Failed to query repo ${repo}:`, err);
     }
-
-    if (!data || !data.tag_name) {
-      return null;
-    }
-
-    const tagName = data.tag_name || 'v1.0.0';
-    const cleanVersion = tagName.replace(/^v/i, '').trim();
-
-    // Search assets for genuine .apk file
-    const assets: GitHubReleaseAsset[] = Array.isArray(data.assets)
-      ? data.assets.map((a: any) => ({
-          name: a.name || '',
-          browser_download_url: a.browser_download_url || '',
-          size: a.size || 0,
-          download_count: a.download_count || 0,
-          created_at: a.created_at || '',
-        }))
-      : [];
-
-    const apkAsset = assets.find(
-      (a) => a.name.toLowerCase().endsWith('.apk') || a.browser_download_url.toLowerCase().endsWith('.apk')
-    );
-
-    const hasDirectApk = Boolean(apkAsset && apkAsset.browser_download_url);
-    // If a genuine .apk asset is present, use its direct download URL.
-    // Otherwise, point to the release page on GitHub to prevent downloading corrupt/fake non-apk files!
-    const apkUrl = hasDirectApk && apkAsset
-      ? apkAsset.browser_download_url
-      : (data.html_url || `${GITHUB_RELEASES_PAGE_URL}/tag/${tagName}`);
-
-    return {
-      tag_name: tagName,
-      versionName: cleanVersion,
-      name: data.name || `إصدار GitHub جديد ${tagName}`,
-      body: data.body || 'تحديث جديد صادر مباشرة من مستودع GitHub يتضمن تحسينات وميزات جديدة.',
-      published_at: data.published_at || new Date().toISOString(),
-      html_url: data.html_url || `${GITHUB_RELEASES_PAGE_URL}/tag/${tagName}`,
-      assets,
-      apkUrl,
-      hasDirectApk,
-    };
-  } catch (err) {
-    console.warn('[UpdateService] Failed to query GitHub Releases API directly:', err);
-    return null;
   }
+
+  return null;
 }
 
 /**

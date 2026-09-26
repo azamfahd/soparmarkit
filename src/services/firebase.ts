@@ -16,6 +16,8 @@ import {
 import {
   getAuth,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
@@ -56,6 +58,7 @@ try {
   console.warn("Firebase Auth initialization warning:", e);
 }
 
+export type { User } from 'firebase/auth';
 export const cloudAuth = authInstance;
 export const googleAuthProvider = new GoogleAuthProvider();
 try {
@@ -74,14 +77,35 @@ export function isSuperOwner(email?: string | null): boolean {
 }
 
 /**
- * Signs in using Google Popup (Web & PWA supported)
+ * Signs in using Google (supports Popup for Web/PWA and Redirect for Android WebView/Capacitor)
  */
 export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean }> {
   if (!cloudAuth) {
     throw new Error('خدمة المصادقة السحابية غير متوفرة حالياً.');
   }
-  const result = await signInWithPopup(cloudAuth, googleAuthProvider);
-  const user = result.user;
+
+  let user: User;
+
+  try {
+    const result = await signInWithPopup(cloudAuth, googleAuthProvider);
+    user = result.user;
+  } catch (popupErr: any) {
+    console.warn("signInWithPopup failed, attempting signInWithRedirect:", popupErr);
+    // If popup was blocked or not supported in WebView / mobile, try redirect
+    if (
+      popupErr?.code === 'auth/popup-blocked' ||
+      popupErr?.code === 'auth/operation-not-supported-in-this-environment' ||
+      popupErr?.code === 'auth/popup-closed-by-user' ||
+      popupErr?.message?.includes('disallowed_useragent') ||
+      popupErr?.message?.includes('popup')
+    ) {
+      await signInWithRedirect(cloudAuth, googleAuthProvider);
+      // In redirect flow, page will reload or redirect back
+      return new Promise(() => {});
+    }
+    throw popupErr;
+  }
+
   const isOwner = isSuperOwner(user.email);
 
   // Sync user profile to Firestore
@@ -114,13 +138,40 @@ export async function signOutGoogle(): Promise<void> {
 }
 
 /**
- * Listens for auth state changes (Login / Logout)
+ * Listens for auth state changes (Login / Logout / Redirect returns)
  */
 export function subscribeToAuth(callback: (user: User | null, isOwner: boolean) => void): () => void {
   if (!cloudAuth) {
     callback(null, false);
     return () => {};
   }
+
+  // Check redirect result on startup if applicable
+  try {
+    getRedirectResult(cloudAuth).then((result) => {
+      if (result && result.user) {
+        const user = result.user;
+        const isOwner = isSuperOwner(user.email);
+        const userDocRef = doc(cloudDb, 'user_profiles', user.uid);
+        setDoc(userDocRef, {
+          uid: user.uid,
+          displayName: user.displayName || 'مستخدم النظام',
+          email: user.email || '',
+          photoURL: user.photoURL || '',
+          isOwner,
+          role: isOwner ? 'owner' : 'user',
+          lastLoginAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(console.warn);
+        callback(user, isOwner);
+      }
+    }).catch((err) => {
+      console.warn("getRedirectResult check error:", err);
+    });
+  } catch (e) {
+    console.warn("getRedirectResult setup warning:", e);
+  }
+
   return onAuthStateChanged(cloudAuth, (user) => {
     callback(user, isSuperOwner(user?.email));
   });

@@ -1711,21 +1711,32 @@ export default function App() {
 
   // Subscribe to remote app version in Firebase & Check Dual In-App Updates
   useEffect(() => {
-    // 1. Dual In-App update check via GitHub Releases API directly first
-    checkAppUpdates().then((res) => {
-      if (res.hasUpdate) {
-        setHasPendingUpdate(true);
-        setRemoteAppConfig({
-          latestVersion: res.latestVersion,
-          apkUrl: res.updateUrl,
-          updateMessage: res.releaseNotes,
-          mandatory: false,
-          updatedAt: new Date().toISOString()
-        });
-        setUpdateBannerMessage(`🎉 يتوفر تحديث جديد v${res.latestVersion}!\n${res.releaseNotes}`);
-        setShowUpdateBanner(true);
-      }
-    }).catch(console.warn);
+    const runUpdateCheck = () => {
+      // 1. Dual In-App update check via GitHub Releases API directly first
+      checkAppUpdates().then((res) => {
+        if (res.hasUpdate) {
+          setHasPendingUpdate(true);
+          setRemoteAppConfig({
+            latestVersion: res.latestVersion,
+            apkUrl: res.updateUrl,
+            updateMessage: res.releaseNotes,
+            mandatory: false,
+            updatedAt: new Date().toISOString()
+          });
+          setUpdateBannerMessage(`🎉 يتوفر تحديث جديد v${res.latestVersion}!\n${res.releaseNotes}`);
+          setShowUpdateBanner(true);
+        }
+      }).catch(console.warn);
+    };
+
+    runUpdateCheck();
+
+    // Re-check on window focus (when user switches back to app) and on network reconnection
+    window.addEventListener('focus', runUpdateCheck);
+    window.addEventListener('online', runUpdateCheck);
+
+    // Periodic check every 15 minutes
+    const interval = setInterval(runUpdateCheck, 15 * 60 * 1000);
 
     // 2. Fallback / Live Firebase version broadcast
     const unsub = subscribeToAppVersion((config) => {
@@ -1744,7 +1755,13 @@ export default function App() {
         }
       }
     });
-    return () => unsub();
+
+    return () => {
+      window.removeEventListener('focus', runUpdateCheck);
+      window.removeEventListener('online', runUpdateCheck);
+      clearInterval(interval);
+      unsub();
+    };
   }, [isNativeAndroid, currentAppVersion]);
 
   const isPopStateRef = useRef<boolean>(false);

@@ -200,8 +200,8 @@ export const AddNoteModal: React.FC<AddNoteModalProps> = ({
     try {
       const num = Number(calcDisplay);
       if (!isNaN(num) && num !== 0) {
-        const frac = math.fraction(num);
-        if (frac.d !== 1) {
+        const frac: any = math.fraction(num);
+        if (Number(frac.d) !== 1) {
           const sign = frac.s < 0 ? '-' : '';
           const fracStr = `${sign}${frac.n}/${frac.d}`;
           setCalcDisplay(fracStr);
