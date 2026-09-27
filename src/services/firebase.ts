@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import {
   getAuth,
+  initializeAuth,
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
@@ -55,12 +56,23 @@ export const cloudDb = cloudDbInstance;
 export const CLOUD_PROJECT_ID = firebaseConfig.projectId;
 export const CLOUD_DATABASE_ID = firebaseConfig.firestoreDatabaseId || "(default)";
 
-// Initialize Firebase Auth
+// Initialize Firebase Auth with explicit IndexedDB persistence for Partitioned Browsers & APK/PWA
 let authInstance: any = null;
 try {
-  authInstance = getAuth(app);
+  if (typeof window !== 'undefined') {
+    authInstance = initializeAuth(app, {
+      persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+      popupRedirectResolver: browserPopupRedirectResolver
+    });
+  } else {
+    authInstance = getAuth(app);
+  }
 } catch (e) {
-  console.warn("Firebase Auth initialization warning:", e);
+  try {
+    authInstance = getAuth(app);
+  } catch (err) {
+    console.warn("Firebase Auth initialization warning:", err);
+  }
 }
 
 export type { User } from 'firebase/auth';
@@ -99,14 +111,14 @@ export function isSuperOwner(email?: string | null): boolean {
 }
 
 /**
- * Signs in using Google
+ * Signs in using Google with automatic fallback between Popup and IndexedDB-based Redirect
  */
 export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean }> {
   if (!cloudAuth) {
     throw new Error('خدمة المصادقة السحابية غير متوفرة حالياً.');
   }
 
-  // Ensure persistent authentication state across sessions
+  // Ensure persistent IndexedDB authentication state across sessions
   try {
     await setPersistence(cloudAuth, indexedDBLocalPersistence);
   } catch {
@@ -121,7 +133,19 @@ export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean
     const result = await signInWithPopup(cloudAuth, googleAuthProvider, browserPopupRedirectResolver);
     user = result.user;
   } catch (popupErr: any) {
-    console.warn("signInWithPopup error:", popupErr);
+    console.warn("signInWithPopup returned error, evaluating redirect fallback:", popupErr);
+    
+    // In partitioned browser environments or standalone PWA/WebView where popups are blocked
+    if (
+      popupErr?.code === 'auth/popup-blocked' ||
+      popupErr?.code === 'auth/operation-not-supported-in-this-environment' ||
+      popupErr?.message?.includes('disallowed_useragent') ||
+      popupErr?.message?.includes('storage-partitioned')
+    ) {
+      await signInWithRedirect(cloudAuth, googleAuthProvider, browserPopupRedirectResolver);
+      return new Promise(() => {}); // Wait for redirect to finish navigation
+    }
+
     if (popupErr?.code === 'auth/popup-closed-by-user') {
       throw new Error('تم إغلاق نافذة تسجيل الدخول.');
     }
@@ -154,6 +178,19 @@ export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean
 }
 
 /**
+ * Explicit redirect-based sign-in using IndexedDB persistence
+ */
+export async function signInWithRedirectGoogle(): Promise<void> {
+  if (!cloudAuth) {
+    throw new Error('خدمة المصادقة السحابية غير متوفرة حالياً.');
+  }
+  try {
+    await setPersistence(cloudAuth, indexedDBLocalPersistence);
+  } catch {}
+  await signInWithRedirect(cloudAuth, googleAuthProvider, browserPopupRedirectResolver);
+}
+
+/**
  * Signs out from Google Firebase Auth
  */
 export async function signOutGoogle(): Promise<void> {
@@ -163,7 +200,7 @@ export async function signOutGoogle(): Promise<void> {
 }
 
 /**
- * Listens for auth state changes (Login / Logout / Redirect returns)
+ * Listens for auth state changes (Login / Logout / Redirect returns via IndexedDB)
  */
 export function subscribeToAuth(callback: (user: User | null, isOwner: boolean) => void): () => void {
   if (!cloudAuth) {
@@ -171,9 +208,9 @@ export function subscribeToAuth(callback: (user: User | null, isOwner: boolean) 
     return () => {};
   }
 
-  // Check redirect result on startup if applicable
+  // Check redirect result on startup if returning from signInWithRedirect
   try {
-    getRedirectResult(cloudAuth).then((result) => {
+    getRedirectResult(cloudAuth, browserPopupRedirectResolver).then((result) => {
       if (result && result.user) {
         const user = result.user;
         const isOwner = isSuperOwner(user.email);
@@ -191,7 +228,7 @@ export function subscribeToAuth(callback: (user: User | null, isOwner: boolean) 
         callback(user, isOwner);
       }
     }).catch((err) => {
-      console.warn("getRedirectResult check error:", err);
+      console.warn("getRedirectResult check warning:", err);
     });
   } catch (e) {
     console.warn("getRedirectResult setup warning:", e);
