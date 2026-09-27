@@ -4,4 +4,6 @@
     <string name="title_activity_main">النظام المحاسبي الذكي</string>
     <string name="package_name">app.azamfahd.account20.twa</string>
     <string name="custom_url_scheme">app.azamfahd.account20.twa</string>
+    <string name="default_web_client_id">215196388756-amn359v7k8tfa50q26kqjtophqcidii3.apps.googleusercontent.com</string>
+    <string name="server_client_id">215196388756-amn359v7k8tfa50q26kqjtophqcidii3.apps.googleusercontent.com</string>
 </resources>

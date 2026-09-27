@@ -1,22 +1,16 @@
 package app.azamfahd.account20.twa;
 
 import android.Manifest;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Message;
 import android.provider.Settings;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
-import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
@@ -29,59 +23,38 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        createNotificationChannel();
         requestAllAppPermissions();
-        configureWebViewForGoogleAuthAndSync();
-    }
 
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    MyFirebaseMessagingService.CHANNEL_ID,
-                    MyFirebaseMessagingService.CHANNEL_NAME,
-                    NotificationManager.IMPORTANCE_HIGH
-            );
-            channel.setDescription("قناة استلام تنبيهات التحديثات والفواتير والترخيص السحابي");
-            channel.enableVibration(true);
-            NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
-        }
-    }
-
-    private void configureWebViewForGoogleAuthAndSync() {
+        // Configure WebView for modern Google OAuth & smooth performance
         if (this.bridge != null && this.bridge.getWebView() != null) {
             WebView webView = this.bridge.getWebView();
             WebSettings settings = webView.getSettings();
 
-            // 1. Enable Storage & DOM for Firebase Auth & Firestore
             settings.setJavaScriptEnabled(true);
             settings.setDomStorageEnabled(true);
             settings.setDatabaseEnabled(true);
-            settings.setAllowFileAccess(true);
-            settings.setAllowContentAccess(true);
-
-            // 2. Enable Popups & Multi-Windows for Google OAuth
             settings.setJavaScriptCanOpenWindowsAutomatically(true);
             settings.setSupportMultipleWindows(true);
 
-            // 3. Enable Third-Party Cookies for OAuth sessions
+            // Enable Cookies (including 3rd-party for Firebase/Google Auth)
             CookieManager cookieManager = CookieManager.getInstance();
             cookieManager.setAcceptCookie(true);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 cookieManager.setAcceptThirdPartyCookies(webView, true);
             }
 
-            // 4. Clean User-Agent to prevent Google OAuth 403 (disallowed_useragent)
-            String userAgent = settings.getUserAgentString();
-            if (userAgent != null) {
-                // Remove WebView identifiers like 'Version/X.X' and '; wv'
-                String cleanUserAgent = userAgent.replaceAll("; wv", "").replaceAll("Version/\\d+\\.\\d+", "");
-                settings.setUserAgentString(cleanUserAgent);
+            // Remove WebView signature from User-Agent to avoid Google's "403 disallowed_useragent" policy
+            try {
+                String defaultUa = settings.getUserAgentString();
+                String cleanedUa = defaultUa.replace("; wv", "")
+                                            .replace("Version/4.0 ", "")
+                                            .replace("Version/4.0", "");
+                settings.setUserAgentString(cleanedUa);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
 
-            // 5. JavaScript Interface for native controls
+            // Native JS Bridge for in-app permission management
             webView.addJavascriptInterface(new Object() {
                 @JavascriptInterface
                 public void openAppSettings() {
@@ -111,13 +84,16 @@ public class MainActivity extends BridgeActivity {
                 permissions.add(Manifest.permission.RECORD_AUDIO);
             }
 
-            // 2. Notifications (Android 13+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                    permissions.add(Manifest.permission.POST_NOTIFICATIONS);
-                }
+            // 2. Storage & Media Access
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
                     permissions.add(Manifest.permission.READ_MEDIA_IMAGES);
+                }
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VIDEO) != PackageManager.PERMISSION_GRANTED) {
+                    permissions.add(Manifest.permission.READ_MEDIA_VIDEO);
+                }
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    permissions.add(Manifest.permission.POST_NOTIFICATIONS);
                 }
             } else {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
@@ -128,8 +104,8 @@ public class MainActivity extends BridgeActivity {
                 }
             }
 
-            // 3. Bluetooth (Android 12+)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // 3. Bluetooth & Nearby Devices
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // Android 12+
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
                     permissions.add(Manifest.permission.BLUETOOTH_CONNECT);
                 }
@@ -138,7 +114,7 @@ public class MainActivity extends BridgeActivity {
                 }
             }
 
-            // 4. Location
+            // 4. Location for Hardware Peripheral Scanning
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
             }
@@ -149,3 +125,4 @@ public class MainActivity extends BridgeActivity {
         }
     }
 }
+
