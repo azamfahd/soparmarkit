@@ -4,6 +4,8 @@
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {
+    "url": "https://account20.netlify.app",
+    "cleartext": false,
     "androidScheme": "https"
   },
   "plugins": {

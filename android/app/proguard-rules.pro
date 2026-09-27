@@ -1,21 +1,61 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ==============================================================================
+# ProGuard Rules for Smart Accounting App (Android / Capacitor / Firebase)
+# ==============================================================================
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve annotations and line numbers for stack traces
+-keepattributes *Annotation*
+-keepattributes SourceFile,LineNumberTable
+-keepattributes JavascriptInterface
+-keepattributes Signature
+-keepattributes EnclosingMethod
+-keepattributes InnerClasses
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Preserve JavaScript Interface methods for WebView communication
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+-keepclassmembers class app.azamfahd.account20.twa.MainActivity$* {
+    public *;
+}
+
+# ==============================================================================
+# Capacitor & Bridge
+# ==============================================================================
+-keep public class com.getcapacitor.** { *; }
+-keep public class * extends com.getcapacitor.Plugin
+-keep public class * extends com.getcapacitor.BridgeActivity
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    public <methods>;
+}
+-keepclassmembers enum com.getcapacitor.** { *; }
+
+# ==============================================================================
+# Google Play Services & Google Sign-In
+# ==============================================================================
+-keep class com.google.android.gms.common.** { *; }
+-keep class com.google.android.gms.auth.** { *; }
+-keep class com.google.android.gms.auth.api.** { *; }
+-keep class com.google.android.gms.auth.api.signin.** { *; }
+-keep class com.google.android.gms.tasks.** { *; }
+-dontwarn com.google.android.gms.**
+
+# ==============================================================================
+# Firebase Services (Auth, Firestore, Analytics, Core)
+# ==============================================================================
+-keep class com.google.firebase.** { *; }
+-keep class com.google.firebase.auth.** { *; }
+-keep class com.google.firebase.firestore.** { *; }
+-keep class com.google.firebase.analytics.** { *; }
+-dontwarn com.google.firebase.**
+
+# ==============================================================================
+# Capacitor SQLite & Native Plugins
+# ==============================================================================
+-keep class com.getcapacitor.community.database.sqlite.** { *; }
+-dontwarn com.getcapacitor.community.database.sqlite.**
+
+# Generic JSON & Serialization safety
+-keepclassmembers class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}

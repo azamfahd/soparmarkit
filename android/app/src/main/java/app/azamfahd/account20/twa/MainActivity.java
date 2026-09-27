@@ -34,7 +34,7 @@ public class MainActivity extends BridgeActivity {
             settings.setDomStorageEnabled(true);
             settings.setDatabaseEnabled(true);
             settings.setJavaScriptCanOpenWindowsAutomatically(true);
-            settings.setSupportMultipleWindows(true);
+            settings.setSupportMultipleWindows(false);
 
             // Enable Cookies (including 3rd-party for Firebase/Google Auth)
             CookieManager cookieManager = CookieManager.getInstance();
