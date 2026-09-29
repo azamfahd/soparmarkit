@@ -43,13 +43,13 @@ public class MainActivity extends BridgeActivity {
                 cookieManager.setAcceptThirdPartyCookies(webView, true);
             }
 
-            // Remove WebView signature from User-Agent to avoid Google's "403 disallowed_useragent" policy
+            // Clean WebView signature safely to avoid Google OAuth malformed header or 403 blocks
             try {
                 String defaultUa = settings.getUserAgentString();
-                String cleanedUa = defaultUa.replace("; wv", "")
-                                            .replace("Version/4.0 ", "")
-                                            .replace("Version/4.0", "");
-                settings.setUserAgentString(cleanedUa);
+                if (defaultUa != null) {
+                    String cleanedUa = defaultUa.replaceAll(";\\s*wv", "").replaceAll("Version/[0-9.]+\\s*", "");
+                    settings.setUserAgentString(cleanedUa.trim());
+                }
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -122,6 +122,26 @@ public class MainActivity extends BridgeActivity {
             if (!permissions.isEmpty()) {
                 ActivityCompat.requestPermissions(this, permissions.toArray(new String[0]), PERMISSION_REQUEST_CODE);
             }
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        try {
+            android.webkit.CookieManager.getInstance().flush();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        try {
+            android.webkit.CookieManager.getInstance().flush();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }

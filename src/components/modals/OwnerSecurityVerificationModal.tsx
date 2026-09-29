@@ -101,7 +101,7 @@ export const OwnerSecurityVerificationModal: React.FC<OwnerSecurityVerificationM
                 تأكيد هوية مالك النظام
               </h3>
               <p className="text-xs text-slate-500 max-w-xs mx-auto leading-relaxed">
-                مرحباً بك يا أستاذ عصام! تم التحقق من حسابك السحابي. لحماية وإدارة الصلاحيات القصوى، يرجى إدخال رمز الأمان السري للمالك للمتابعة:
+                مرحباً بك يا أستاذ عزام! تم التحقق من حسابك السحابي. لحماية وإدارة الصلاحيات القصوى، يرجى إدخال رمز الأمان السري للمالك للمتابعة:
               </p>
             </div>
           </div>
@@ -114,7 +114,7 @@ export const OwnerSecurityVerificationModal: React.FC<OwnerSecurityVerificationM
             </div>
             <div className="flex items-center gap-2 text-right">
               <div>
-                <p className="text-xs font-black text-slate-800">{currentUser?.displayName || 'عصام فهد'}</p>
+                <p className="text-xs font-black text-slate-800">{currentUser?.displayName || 'عزام فهد'}</p>
                 <p className="text-[10px] font-mono text-slate-500 dir-ltr text-right">{currentUser?.email || 'azamfahd25@gmail.com'}</p>
               </div>
               {currentUser?.photoURL ? (

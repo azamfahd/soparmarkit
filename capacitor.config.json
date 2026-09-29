@@ -6,7 +6,15 @@
   "server": {
     "url": "https://account20.netlify.app",
     "cleartext": false,
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "allowNavigation": [
+      "account20.netlify.app",
+      "smart-account20.firebaseapp.com",
+      "accounts.google.com",
+      "*.google.com",
+      "*.googleusercontent.com",
+      "*.firebaseapp.com"
+    ]
   },
   "plugins": {
     "CapacitorSQLite": {

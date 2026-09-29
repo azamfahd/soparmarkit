@@ -65,6 +65,9 @@ export const googleAuthProvider = new GoogleAuthProvider();
 try {
   googleAuthProvider.addScope('email');
   googleAuthProvider.addScope('profile');
+  googleAuthProvider.setCustomParameters({
+    prompt: 'select_account'
+  });
 } catch {}
 
 // Initialize Firebase Analytics safely (Web & Capacitor environment)
@@ -95,7 +98,11 @@ export function isSuperOwner(email?: string | null): boolean {
  * Signs in using Google (supports Popup for Web/PWA and Redirect for Android WebView/Capacitor)
  */
 export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean }> {
-  const isAndroidNative = typeof window !== 'undefined' && ((window as any).Capacitor?.isNativePlatform?.() || /android/i.test(navigator.userAgent));
+  const isAndroidNative = typeof window !== 'undefined' && (
+    Boolean((window as any).Capacitor?.isNativePlatform?.()) ||
+    window.location.protocol === 'capacitor:' ||
+    window.location.protocol === 'ionic:'
+  );
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'unknown';
   const currentHref = typeof window !== 'undefined' ? window.location.href : 'unknown';
 
@@ -116,6 +123,32 @@ export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean
   }
 
   let user: User;
+
+  // In native Android WebView, popups are not supported or cause window conflicts; use signInWithRedirect directly
+  if (isAndroidNative) {
+    console.log('📱 [Firebase Auth] Native Android environment detected: Disagreeing with popup, using signInWithRedirect directly...');
+    try {
+      await signInWithRedirect(cloudAuth, googleAuthProvider);
+      console.log('🚀 [Firebase Auth] signInWithRedirect dispatched. Awaiting redirect callback...');
+      console.groupEnd();
+      return new Promise(() => {});
+    } catch (redirectErr: any) {
+      console.error('❌ [Firebase Auth] Native signInWithRedirect FAILED:', {
+        code: redirectErr?.code,
+        message: redirectErr?.message,
+        fullError: redirectErr
+      });
+      console.groupEnd();
+      if (redirectErr?.code === 'auth/unauthorized-domain' || redirectErr?.message?.includes('unauthorized-domain')) {
+        const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+        const enhancedError: any = new Error(`النطاق (${hostname}) غير مضاف في قائمة Authorized Domains في Firebase Console.`);
+        enhancedError.code = 'auth/unauthorized-domain';
+        enhancedError.unauthorizedDomain = hostname;
+        throw enhancedError;
+      }
+      throw redirectErr;
+    }
+  }
 
   try {
     console.log('🚀 [Firebase Auth] Attempting signInWithPopup...');
@@ -141,8 +174,7 @@ export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean
       popupErr?.code === 'auth/operation-not-supported-in-this-environment' ||
       popupErr?.code === 'auth/cancelled-popup-request' ||
       popupErr?.message?.includes('disallowed_useragent') ||
-      popupErr?.message?.includes('popup') ||
-      isAndroidNative;
+      popupErr?.message?.includes('popup');
 
     if (shouldTryRedirect) {
       console.log('🔄 [Firebase Auth] Falling back to signInWithRedirect...', {
@@ -162,6 +194,13 @@ export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean
           fullError: redirectErr
         });
         console.groupEnd();
+        if (redirectErr?.code === 'auth/unauthorized-domain' || redirectErr?.message?.includes('unauthorized-domain')) {
+          const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+          const enhancedError: any = new Error(`النطاق (${hostname}) غير مضاف في قائمة Authorized Domains في Firebase Console.`);
+          enhancedError.code = 'auth/unauthorized-domain';
+          enhancedError.unauthorizedDomain = hostname;
+          throw enhancedError;
+        }
         throw redirectErr;
       }
     }

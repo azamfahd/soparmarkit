@@ -57,7 +57,7 @@ import { CheckUpdatesModal } from './components/modals/CheckUpdatesModal';
 import { OwnerDashboardModal } from './components/modals/OwnerDashboardModal';
 import { OwnerSecurityVerificationModal } from './components/modals/OwnerSecurityVerificationModal';
 import { GoogleAuthButton } from './components/auth/GoogleAuthButton';
-import { signOutGoogle } from './services/firebase';
+import { signOutGoogle, subscribeToAuth, isSuperOwner, OWNER_EMAIL } from './services/firebase';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, installDownloadedAPK, getApkDownloadUrl } from './services/updateService';
@@ -1025,6 +1025,21 @@ export default function App() {
     }
     return true;
   });
+
+  // Authoritative Firebase Auth subscription
+  useEffect(() => {
+    const unsub = subscribeToAuth((user, isOwner) => {
+      setAuthenticatedUser(user);
+      setIsSuperOwnerLoggedIn(isOwner);
+      if (isOwner) {
+        const is2fa = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('owner_2fa_verified') === 'true';
+        if (is2fa) {
+          setIsDeveloperMode(true);
+        }
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const handleInstallPWA = () => {
     if (deferredPrompt) {
@@ -7333,7 +7348,7 @@ export default function App() {
           showNotification={showNotification}
         />
 
-        {/* لوحة تحكم وإدارة المالك الشاملة (عصام فهد) */}
+        {/* لوحة تحكم وإدارة المالك الشاملة (عزام فهد) */}
         <OwnerDashboardModal
           isOpen={showOwnerModal}
           onClose={() => setShowOwnerModal(false)}
