@@ -16,14 +16,11 @@ import {
 import {
   getAuth,
   signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
   type User
 } from 'firebase/auth';
-import { getAnalytics, isSupported as isAnalyticsSupported } from 'firebase/analytics';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Suppress non-critical connection retry warnings in offline/sandbox environments
@@ -51,38 +48,21 @@ export const cloudDb = cloudDbInstance;
 export const CLOUD_PROJECT_ID = firebaseConfig.projectId;
 export const CLOUD_DATABASE_ID = firebaseConfig.firestoreDatabaseId || "(default)";
 
-// Initialize Firebase Auth
+// Safe / Lazy Firebase Auth initialization
 let authInstance: any = null;
-try {
-  authInstance = getAuth(app);
-} catch (e) {
-  console.warn("Firebase Auth initialization warning:", e);
-}
-
-export type { User } from 'firebase/auth';
-export const cloudAuth = authInstance;
-export const googleAuthProvider = new GoogleAuthProvider();
-try {
-  googleAuthProvider.addScope('email');
-  googleAuthProvider.addScope('profile');
-  googleAuthProvider.setCustomParameters({
-    prompt: 'select_account'
-  });
-} catch {}
-
-// Initialize Firebase Analytics safely (Web & Capacitor environment)
-export let cloudAnalytics: any = null;
-if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
-  isAnalyticsSupported().then((supported) => {
-    if (supported) {
-      try {
-        cloudAnalytics = getAnalytics(app);
-      } catch (e) {
-        console.warn("Firebase Analytics init warning:", e);
-      }
+export function getCloudAuth(): any {
+  if (!authInstance) {
+    try {
+      authInstance = getAuth(app);
+    } catch (e) {
+      console.warn("Firebase Auth initialization warning:", e);
     }
-  }).catch(() => {});
+  }
+  return authInstance;
 }
+
+export const cloudAuth = null;
+export const googleAuthProvider = null;
 
 export const OWNER_EMAIL = 'azamfahd25@gmail.com';
 
@@ -95,121 +75,21 @@ export function isSuperOwner(email?: string | null): boolean {
 }
 
 /**
- * Signs in using Google (supports Popup for Web/PWA and Redirect for Android WebView/Capacitor)
+ * Signs in using Google Popup (Web & PWA supported)
  */
 export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean }> {
-  const isAndroidNative = typeof window !== 'undefined' && (
-    Boolean((window as any).Capacitor?.isNativePlatform?.()) ||
-    window.location.protocol === 'capacitor:' ||
-    window.location.protocol === 'ionic:'
-  );
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'unknown';
-  const currentHref = typeof window !== 'undefined' ? window.location.href : 'unknown';
-
-  console.group('🔐 [Firebase Auth] Google Sign-In Flow Initiated');
-  console.log('📍 Environment:', {
-    isAndroidNative,
-    origin: currentOrigin,
-    href: currentHref,
-    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-    authDomain: firebaseConfig.authDomain,
-    projectId: firebaseConfig.projectId,
-  });
-
-  if (!cloudAuth) {
-    console.error('❌ [Firebase Auth] Cloud auth instance is not initialized.');
-    console.groupEnd();
+  const auth = getCloudAuth();
+  if (!auth) {
     throw new Error('خدمة المصادقة السحابية غير متوفرة حالياً.');
   }
-
-  let user: User;
-
-  // In native Android WebView, popups are not supported or cause window conflicts; use signInWithRedirect directly
-  if (isAndroidNative) {
-    console.log('📱 [Firebase Auth] Native Android environment detected: Disagreeing with popup, using signInWithRedirect directly...');
-    try {
-      await signInWithRedirect(cloudAuth, googleAuthProvider);
-      console.log('🚀 [Firebase Auth] signInWithRedirect dispatched. Awaiting redirect callback...');
-      console.groupEnd();
-      return new Promise(() => {});
-    } catch (redirectErr: any) {
-      console.error('❌ [Firebase Auth] Native signInWithRedirect FAILED:', {
-        code: redirectErr?.code,
-        message: redirectErr?.message,
-        fullError: redirectErr
-      });
-      console.groupEnd();
-      if (redirectErr?.code === 'auth/unauthorized-domain' || redirectErr?.message?.includes('unauthorized-domain')) {
-        const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-        const enhancedError: any = new Error(`النطاق (${hostname}) غير مضاف في قائمة Authorized Domains في Firebase Console.`);
-        enhancedError.code = 'auth/unauthorized-domain';
-        enhancedError.unauthorizedDomain = hostname;
-        throw enhancedError;
-      }
-      throw redirectErr;
-    }
-  }
-
+  const provider = new GoogleAuthProvider();
   try {
-    console.log('🚀 [Firebase Auth] Attempting signInWithPopup...');
-    const result = await signInWithPopup(cloudAuth, googleAuthProvider);
-    user = result.user;
-    console.log('✅ [Firebase Auth] signInWithPopup SUCCEEDED:', {
-      uid: user.uid,
-      email: user.email,
-      displayName: user.displayName
-    });
-  } catch (popupErr: any) {
-    console.warn('⚠️ [Firebase Auth] signInWithPopup encountered error:', {
-      code: popupErr?.code,
-      message: popupErr?.message,
-      customData: popupErr?.customData,
-      fullError: popupErr
-    });
+    provider.addScope('email');
+    provider.addScope('profile');
+  } catch {}
 
-    // Check if error is popup-related or environment-related, fallback to signInWithRedirect
-    const shouldTryRedirect = 
-      popupErr?.code === 'auth/popup-blocked' ||
-      popupErr?.code === 'auth/popup-closed-by-user' ||
-      popupErr?.code === 'auth/operation-not-supported-in-this-environment' ||
-      popupErr?.code === 'auth/cancelled-popup-request' ||
-      popupErr?.message?.includes('disallowed_useragent') ||
-      popupErr?.message?.includes('popup');
-
-    if (shouldTryRedirect) {
-      console.log('🔄 [Firebase Auth] Falling back to signInWithRedirect...', {
-        reasonCode: popupErr?.code,
-        authDomain: firebaseConfig.authDomain
-      });
-      try {
-        await signInWithRedirect(cloudAuth, googleAuthProvider);
-        console.log('🚀 [Firebase Auth] signInWithRedirect dispatched. Awaiting page redirect/callback...');
-        console.groupEnd();
-        // In redirect flow, the browser/WebView will navigate away
-        return new Promise(() => {});
-      } catch (redirectErr: any) {
-        console.error('❌ [Firebase Auth] signInWithRedirect FAILED:', {
-          code: redirectErr?.code,
-          message: redirectErr?.message,
-          fullError: redirectErr
-        });
-        console.groupEnd();
-        if (redirectErr?.code === 'auth/unauthorized-domain' || redirectErr?.message?.includes('unauthorized-domain')) {
-          const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-          const enhancedError: any = new Error(`النطاق (${hostname}) غير مضاف في قائمة Authorized Domains في Firebase Console.`);
-          enhancedError.code = 'auth/unauthorized-domain';
-          enhancedError.unauthorizedDomain = hostname;
-          throw enhancedError;
-        }
-        throw redirectErr;
-      }
-    }
-
-    console.groupEnd();
-    throw popupErr;
-  }
-
-  console.groupEnd();
+  const result = await signInWithPopup(auth, provider);
+  const user = result.user;
   const isOwner = isSuperOwner(user.email);
 
   // Sync user profile to Firestore
@@ -236,61 +116,36 @@ export async function signInWithGoogle(): Promise<{ user: User; isOwner: boolean
  * Signs out from Google Firebase Auth
  */
 export async function signOutGoogle(): Promise<void> {
-  if (cloudAuth) {
-    await firebaseSignOut(cloudAuth);
+  try {
+    const auth = getCloudAuth();
+    if (auth) {
+      await firebaseSignOut(auth);
+    }
+  } catch (e) {
+    console.warn("Sign out error ignored:", e);
   }
 }
 
 /**
- * Listens for auth state changes (Login / Logout / Redirect returns)
+ * Listens for auth state changes (Login / Logout)
  */
 export function subscribeToAuth(callback: (user: User | null, isOwner: boolean) => void): () => void {
-  if (!cloudAuth) {
+  try {
+    const auth = getCloudAuth();
+    if (!auth) {
+      callback(null, false);
+      return () => {};
+    }
+    return onAuthStateChanged(auth, (user) => {
+      callback(user, isSuperOwner(user?.email));
+    }, (err) => {
+      console.warn("Auth state change error:", err);
+      callback(null, false);
+    });
+  } catch {
     callback(null, false);
     return () => {};
   }
-
-  // Check redirect result on startup if applicable
-  try {
-    console.log('🔍 [Firebase Auth] Checking getRedirectResult on startup...');
-    getRedirectResult(cloudAuth).then((result) => {
-      if (result && result.user) {
-        const user = result.user;
-        console.log('🎉 [Firebase Auth] getRedirectResult returned successful login:', {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName
-        });
-        const isOwner = isSuperOwner(user.email);
-        const userDocRef = doc(cloudDb, 'user_profiles', user.uid);
-        setDoc(userDocRef, {
-          uid: user.uid,
-          displayName: user.displayName || 'مستخدم النظام',
-          email: user.email || '',
-          photoURL: user.photoURL || '',
-          isOwner,
-          role: isOwner ? 'owner' : 'user',
-          lastLoginAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(console.warn);
-        callback(user, isOwner);
-      } else {
-        console.log('ℹ️ [Firebase Auth] getRedirectResult returned null (no pending redirect login).');
-      }
-    }).catch((err) => {
-      console.warn('⚠️ [Firebase Auth] getRedirectResult error:', {
-        code: err?.code,
-        message: err?.message,
-        fullError: err
-      });
-    });
-  } catch (e) {
-    console.warn("getRedirectResult setup warning:", e);
-  }
-
-  return onAuthStateChanged(cloudAuth, (user) => {
-    callback(user, isSuperOwner(user?.email));
-  });
 }
 
 export interface UserProfile {

@@ -138,7 +138,7 @@ export function sanitizeAndRepairDatabase(rawData: any): { sanitizedData: any; r
         0, 'المنتجات', 'الكمية'
       );
       const min_stock = safeNumber(
-        p.min_stock !== undefined ? p.min_stock : (p.minStock !== undefined ? p.minStock : (p['الحد الأدنى للمخزون'] !== undefined ? p['الحد الأدنى للمخزون'] : (p['حد الأدنى'] !== undefined ? p['حد الأدنى'] : (p['الحد الأدنى'] !== undefined ? p['الحد الأدنى'] : 5)))),
+        p.min_stock_alert !== undefined ? p.min_stock_alert : (p.min_stock !== undefined ? p.min_stock : (p.minStock !== undefined ? p.minStock : (p['حد تنبيه النواقص'] !== undefined ? p['حد تنبيه النواقص'] : (p['الحد الأدنى للمخزون'] !== undefined ? p['الحد الأدنى للمخزون'] : (p['حد الأدنى'] !== undefined ? p['حد الأدنى'] : (p['الحد الأدنى'] !== undefined ? p['الحد الأدنى'] : 5)))))),
         5, 'المنتجات', 'الحد الأدنى'
       );
       const category = safeString(p.category || p['القسم / التصنيف'] || p['التصنيف'] || p['القسم'] || p['الفئة'], 'عام', 'المنتجات', 'التصنيف');
@@ -161,6 +161,7 @@ export function sanitizeAndRepairDatabase(rawData: any): { sanitizedData: any; r
         cost_price,
         stock_quantity,
         min_stock,
+        min_stock_alert: min_stock,
         category,
         unit: safeString(p.unit || p['الوحدة'] || p['وحدة'], 'حبة', 'المنتجات', 'الوحدة'),
         production_date: p.production_date || p.productionDate || p['تاريخ الإنتاج'] || '',

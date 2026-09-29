@@ -12,7 +12,6 @@ import {
   subscribeToAllUserProfiles,
   CLOUD_PROJECT_ID,
   OWNER_EMAIL,
-  isSuperOwner,
   type ActivationRequest,
   type AppVersionConfig,
   type UserProfile
@@ -77,18 +76,14 @@ export const OwnerDashboardModal: React.FC<OwnerDashboardModalProps> = ({
   const [pinChangeMsg, setPinChangeMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [isChangingPin, setIsChangingPin] = useState(false);
 
-  const isAuthorized = Boolean(
-    currentUser && (isSuperOwner(currentUser.email) || currentUser.email?.trim().toLowerCase() === OWNER_EMAIL.toLowerCase())
-  );
-
   useEffect(() => {
-    if (isOpen && isAuthorized) {
+    if (isOpen) {
       const unsub = subscribeToAllUserProfiles((users) => {
         setCloudUsers(users);
       });
       return () => unsub();
     }
-  }, [isOpen, isAuthorized]);
+  }, [isOpen]);
 
   const pendingRequests = allCloudRequests.filter(r => r.status === 'pending');
   const approvedRequests = allCloudRequests.filter(r => r.status === 'approved');
@@ -213,40 +208,12 @@ export const OwnerDashboardModal: React.FC<OwnerDashboardModalProps> = ({
         />
 
         {/* Modal Container */}
-        {!isAuthorized ? (
-          <motion.div
-            initial={{ scale: 0.93, opacity: 0, y: 15 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.93, opacity: 0, y: 15 }}
-            className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border-2 border-rose-500/40 overflow-hidden text-right z-10 my-auto p-6"
-          >
-            <div className="text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
-                <AlertTriangle className="w-8 h-8 text-rose-600" />
-              </div>
-              <h3 className="font-black text-lg text-slate-900">منطقة سيادية محظورة 🔒</h3>
-              <p className="text-xs text-slate-600 leading-relaxed max-w-sm mx-auto">
-                هذه اللوحة مخصصة حصرياً لمالك ومطور النظام الأستاذ <strong className="text-slate-900 font-black">عزام فهد</strong> ({OWNER_EMAIL}).
-                {currentUser ? ` الحساب الحالي (${currentUser.email}) ليس حساب المالك المعتمد.` : ' يرجى تسجيل الدخول بحساب المالك أولاً.'}
-              </p>
-              <div className="pt-2 flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-xl transition-all cursor-pointer"
-                >
-                  إغلاق النافذة
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        ) : (
-          <motion.div
-            initial={{ scale: 0.93, opacity: 0, y: 15 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.93, opacity: 0, y: 15 }}
-            className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border-2 border-amber-500/40 overflow-hidden text-right z-10 my-auto"
-          >
+        <motion.div
+          initial={{ scale: 0.93, opacity: 0, y: 15 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.93, opacity: 0, y: 15 }}
+          className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border-2 border-amber-500/40 overflow-hidden text-right z-10 my-auto"
+        >
           {/* Header */}
           <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-amber-950 text-white p-4 sm:p-5 border-b border-amber-500/30 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -278,7 +245,7 @@ export const OwnerDashboardModal: React.FC<OwnerDashboardModalProps> = ({
                     <span>المالك والمطور الرئيسي</span>
                   </span>
                   <h3 className="font-black text-sm sm:text-base text-white">
-                    {currentUser?.displayName || 'عزام فهد'}
+                    {currentUser?.displayName || 'عصام فهد'}
                   </h3>
                 </div>
                 <p className="text-[11px] font-mono text-amber-200/80 dir-ltr text-right mt-0.5">
@@ -803,7 +770,7 @@ export const OwnerDashboardModal: React.FC<OwnerDashboardModalProps> = ({
               className="text-xs font-bold text-rose-600 hover:text-rose-800 hover:bg-rose-50 px-3 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center gap-1.5"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>تسجيل الخروج من حساب Google</span>
+              <span>تسجيل الخروج</span>
             </button>
 
             <div className="flex items-center gap-2">
@@ -825,7 +792,6 @@ export const OwnerDashboardModal: React.FC<OwnerDashboardModalProps> = ({
             </div>
           </div>
         </motion.div>
-        )}
       </div>
     </AnimatePresence>
   );

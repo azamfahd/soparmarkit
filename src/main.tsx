@@ -10,19 +10,27 @@ initializeSQLiteSync().catch((err) => {
   console.error('Failed to initialize SQLite sync:', err);
 });
 
-// Catch and ignore benign HMR websocket connection failures and web plugin stubs
+// Catch and ignore benign HMR, websocket, and offline/auth network failures
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
-    const reasonMsg = event?.reason?.message || String(event?.reason || '');
+    const msg = event.reason?.message || String(event.reason || '');
+    const code = event.reason?.code || '';
     if (
-      reasonMsg.includes('WebSocket') || 
-      reasonMsg.includes('HMR') ||
-      reasonMsg.includes('closed without opened') ||
-      reasonMsg.includes('Not implemented on web') ||
-      reasonMsg.includes('not implemented on web')
+      msg.includes('WebSocket') || 
+      msg.includes('HMR') ||
+      msg.includes('closed without opened') ||
+      msg.includes('auth/network-request-failed') ||
+      code === 'auth/network-request-failed' ||
+      code.includes('auth/')
     ) {
       event.preventDefault();
-      event.stopPropagation();
+    }
+  });
+
+  window.addEventListener('error', (event) => {
+    const msg = event.message || '';
+    if (msg.includes('auth/network-request-failed') || msg.includes('Firebase: Error (auth/')) {
+      event.preventDefault();
     }
   });
 }

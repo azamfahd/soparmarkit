@@ -486,6 +486,63 @@ export const EditProductModal: React.FC<EditProductModalProps> = ({
             </div>
           </div>
 
+          {/* Custom Low Stock Alert Threshold */}
+          <div className="p-3 bg-amber-50/60 rounded-2xl border border-amber-200/80 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                <span>حد تنبيه النواقص المخصص لهذا الصنف</span>
+              </label>
+              <span className="text-[10px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                إعادة الطلب
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                placeholder="افتراضي: 5"
+                className="w-28 p-2.5 bg-white border border-amber-300 rounded-xl text-center font-mono font-black text-amber-950 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 outline-none text-sm shadow-xs"
+                value={editingProduct.min_stock_alert ?? editingProduct.min_stock ?? ''}
+                onChange={e => {
+                  const val = e.target.value === '' ? '' : Number(e.target.value);
+                  setEditingProduct({
+                    ...editingProduct,
+                    min_stock_alert: val,
+                    min_stock: val,
+                  });
+                }}
+              />
+              
+              <div className="flex flex-wrap gap-1 items-center flex-1">
+                <span className="text-[10px] font-bold text-amber-800 ml-1">تحديد سريع:</span>
+                {[2, 5, 10, 20, 50].map(num => (
+                  <button
+                    key={`edit-preset-alert-${num}`}
+                    type="button"
+                    onClick={() =>
+                      setEditingProduct({
+                        ...editingProduct,
+                        min_stock_alert: num,
+                        min_stock: num,
+                      })
+                    }
+                    className={`px-2.5 py-1 rounded-lg text-xs font-black border transition-all cursor-pointer ${
+                      (editingProduct.min_stock_alert ?? editingProduct.min_stock) === num
+                        ? 'bg-amber-600 text-white border-amber-700 shadow-xs'
+                        : 'bg-white text-amber-900 border-amber-200 hover:bg-amber-100/70'
+                    }`}
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[10px] text-amber-800 font-medium">
+              💡 يظهر تنبيه النواقص عند وصول الرصيد إلى <strong>{editingProduct.min_stock_alert ?? editingProduct.min_stock ?? 5} {editingProduct.unit || 'حبة'}</strong> أو أقل.
+            </p>
+          </div>
+
           {/* Unit & Quick Selection */}
           <div className="space-y-1.5">
             <div className="flex justify-between items-center">

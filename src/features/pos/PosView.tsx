@@ -23,6 +23,7 @@ import {
   List
 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
+import { getProductMinStockAlert } from '../../utils/accounting';
 
 interface PosViewProps {
   setActiveTab: (tab: string) => void;
@@ -366,7 +367,7 @@ const PosViewComponent: React.FC<PosViewProps> = ({
                   </div>
                   <div>
                     <p className="text-[9px] text-slate-400 font-bold">المخزون المتوفر</p>
-                    <p className={`text-xs font-extrabold ${scannedProductInfo.stock_quantity <= 5 ? 'text-red-500' : 'text-slate-700'}`}>
+                    <p className={`text-xs font-extrabold ${scannedProductInfo.stock_quantity <= getProductMinStockAlert(scannedProductInfo) ? 'text-red-500' : 'text-slate-700'}`}>
                       {scannedProductInfo.stock_quantity} سلع
                     </p>
                   </div>
@@ -501,7 +502,8 @@ const PosViewComponent: React.FC<PosViewProps> = ({
           {filteredProducts.map((p, idx) => {
             const inCartQty = cartItemCounts.get(p.id!) || 0;
             const isOutOfStock = p.stock_quantity <= 0;
-            const isLowStock = p.stock_quantity > 0 && p.stock_quantity < 5;
+            const threshold = getProductMinStockAlert(p);
+            const isLowStock = p.stock_quantity > 0 && p.stock_quantity <= threshold;
             const theme = getCategoryTheme(p.category);
 
             return (
@@ -588,7 +590,8 @@ const PosViewComponent: React.FC<PosViewProps> = ({
           {filteredProducts.map((p, idx) => {
             const inCartQty = cartItemCounts.get(p.id!) || 0;
             const isOutOfStock = p.stock_quantity <= 0;
-            const isLowStock = p.stock_quantity > 0 && p.stock_quantity < 5;
+            const threshold = getProductMinStockAlert(p);
+            const isLowStock = p.stock_quantity > 0 && p.stock_quantity <= threshold;
             const theme = getCategoryTheme(p.category);
 
             return (

@@ -10,6 +10,7 @@ export interface Product {
   barcode?: string;
   unit?: string;
   min_stock?: number;
+  min_stock_alert?: number;
   supplier_id?: number;
   production_date?: string;
   expiration_date?: string;

@@ -25,6 +25,7 @@ import {
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { ExpiryReportModal } from '../../components/modals/ExpiryReportModal';
+import { getProductMinStockAlert, getProductStockStatus } from '../../utils/accounting';
 
 interface ProductsViewProps {
   setActiveTab: (tab: string) => void;
@@ -109,7 +110,7 @@ const ProductsViewComponent: React.FC<ProductsViewProps> = ({
       if (exp.isExpired) expired.push(p);
       if (exp.isExpiring30) expiring30.push(p);
 
-      const min = typeof p.min_stock === 'number' && p.min_stock > 0 ? p.min_stock : 5;
+      const min = getProductMinStockAlert(p);
       if (p.stock_quantity <= min) lowStock.push(p);
     });
 
@@ -139,7 +140,7 @@ const ProductsViewComponent: React.FC<ProductsViewProps> = ({
         const exp = getProductExpiry(p);
         if (!exp.isExpired) return false;
       } else if (alertFilter === 'lowStock') {
-        const min = typeof p.min_stock === 'number' && p.min_stock > 0 ? p.min_stock : 5;
+        const min = getProductMinStockAlert(p);
         if (p.stock_quantity > min) return false;
       } else if (alertFilter === 'expiring30') {
         const exp = getProductExpiry(p);
@@ -398,11 +399,12 @@ const ProductsViewComponent: React.FC<ProductsViewProps> = ({
                 ? 'border border-amber-300 bg-amber-50/20 hover:border-amber-400'
                 : 'border border-slate-200 hover:border-emerald-300 bg-white';
 
+            const minAlert = getProductMinStockAlert(p);
             const rightStripeClass = (isCritical7Days || isExpired)
               ? 'bg-red-600'
-              : p.stock_quantity <= 5 
+              : p.stock_quantity <= minAlert 
                 ? 'bg-red-500' 
-                : p.stock_quantity <= 20 
+                : p.stock_quantity <= minAlert * 2 
                   ? 'bg-amber-500' 
                   : 'bg-emerald-500';
 
@@ -498,8 +500,8 @@ const ProductsViewComponent: React.FC<ProductsViewProps> = ({
                       title="تحديث المخزون"
                       className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer ${
                         (isCritical7Days || isExpired) ? 'bg-red-100 text-red-700 hover:bg-red-200' :
-                        p.stock_quantity <= 5 ? 'bg-red-50 text-red-600 hover:bg-red-100' : 
-                        p.stock_quantity <= 20 ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 
+                        p.stock_quantity <= minAlert ? 'bg-red-50 text-red-600 hover:bg-red-100' : 
+                        p.stock_quantity <= minAlert * 2 ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 
                         'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
                       }`}
                     >

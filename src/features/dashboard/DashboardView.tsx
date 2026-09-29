@@ -23,6 +23,7 @@ import {
   Unlock
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, CartesianGrid, XAxis, YAxis, Tooltip, Bar, Cell, LabelList } from 'recharts';
+import { getProductMinStockAlert } from '../../utils/accounting';
 import { Card } from '../../components/ui/Card';
 
 interface DashboardViewProps {
@@ -785,7 +786,7 @@ const DashboardViewComponent: React.FC<DashboardViewProps> = ({
                   const maxRevenue = Math.max(...topProducts.map(t => t.revenue || 1));
               return topProducts.map((item, index) => {
                 const contributionPercent = Math.round((item.revenue / maxRevenue) * 100);
-                const isLowStock = item.product?.stock_quantity <= 5;
+                const isLowStock = item.product ? item.product.stock_quantity <= getProductMinStockAlert(item.product) : false;
                 const indexBadges = [
                   { label: '🏆 الأول', bg: 'bg-amber-100 text-amber-900 border-amber-300 font-black' },
                   { label: '🥈 الثاني', bg: 'bg-slate-200 text-slate-900 border-slate-300 font-black' },

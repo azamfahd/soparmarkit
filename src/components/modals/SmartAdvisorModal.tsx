@@ -36,6 +36,7 @@ import {
   Wrench
 } from 'lucide-react';
 import VisualModelsExtension from '../VisualModelsExtension';
+import { getProductMinStockAlert } from '../../utils/accounting';
 import { processUserQuery } from '../../services/ai/aiRouter';
 import { COMPREHENSIVE_QUICK_QUESTIONS, QUICK_QUESTION_CATEGORIES, QuickQuestionItem } from '../../data/aiQuestions';
 
@@ -640,7 +641,7 @@ export function SmartAdvisorModal({
           recommendedReorder: Math.max(10, Math.ceil(dailyVelocity * 14)) // 2 weeks safety buffer
         };
       })
-      .filter(item => item.soldUnits > 0 || item.product.stock_quantity <= 5)
+      .filter(item => item.soldUnits > 0 || item.product.stock_quantity <= getProductMinStockAlert(item.product))
       .sort((a, b) => a.daysRemaining - b.daysRemaining)
       .slice(0, 6);
 
@@ -688,7 +689,7 @@ export function SmartAdvisorModal({
     const totalSalesSum = sales.reduce((sum, s) => sum + (s.total_amount || 0), 0);
     const totalDebtSum = customers.reduce((sum, c) => sum + (c.balance || 0), 0);
     const outOfStockItems = products.filter(p => p.stock_quantity <= 0);
-    const lowStockItems = products.filter(p => p.stock_quantity > 0 && p.stock_quantity <= 5);
+    const lowStockItems = products.filter(p => p.stock_quantity > 0 && p.stock_quantity <= getProductMinStockAlert(p));
     const totalWithdrawals = withdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
 
     // 1. Critical Inventory Alert

@@ -56,8 +56,7 @@ import { InstallAppModal } from './components/InstallAppModal';
 import { CheckUpdatesModal } from './components/modals/CheckUpdatesModal';
 import { OwnerDashboardModal } from './components/modals/OwnerDashboardModal';
 import { OwnerSecurityVerificationModal } from './components/modals/OwnerSecurityVerificationModal';
-import { GoogleAuthButton } from './components/auth/GoogleAuthButton';
-import { signOutGoogle, subscribeToAuth, isSuperOwner, OWNER_EMAIL } from './services/firebase';
+import { signOutGoogle } from './services/firebase';
 import { UpdateNotificationBanner } from './components/UpdateNotificationBanner';
 import { BrowserInstallBanner } from './components/BrowserInstallBanner';
 import { checkAppUpdates, applyOTAUpdate, downloadDirectAPK, installDownloadedAPK, getApkDownloadUrl } from './services/updateService';
@@ -1026,21 +1025,6 @@ export default function App() {
     return true;
   });
 
-  // Authoritative Firebase Auth subscription
-  useEffect(() => {
-    const unsub = subscribeToAuth((user, isOwner) => {
-      setAuthenticatedUser(user);
-      setIsSuperOwnerLoggedIn(isOwner);
-      if (isOwner) {
-        const is2fa = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('owner_2fa_verified') === 'true';
-        if (is2fa) {
-          setIsDeveloperMode(true);
-        }
-      }
-    });
-    return () => unsub();
-  }, []);
-
   const handleInstallPWA = () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
@@ -1716,48 +1700,31 @@ export default function App() {
 
   // Fetch native app version
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform()) {
       setIsNativeAndroid(true);
-      try {
-        CapApp.getInfo().then(info => {
-          if (info?.version) {
-            setCurrentAppVersion(info.version);
-          }
-        }).catch(() => {});
-      } catch (e) {
-        // ignore on web
-      }
+      CapApp.getInfo().then(info => {
+        setCurrentAppVersion(info.version);
+      }).catch(console.warn);
     }
   }, []);
 
   // Subscribe to remote app version in Firebase & Check Dual In-App Updates
   useEffect(() => {
-    const runUpdateCheck = () => {
-      // 1. Dual In-App update check via GitHub Releases API directly first
-      checkAppUpdates().then((res) => {
-        if (res.hasUpdate) {
-          setHasPendingUpdate(true);
-          setRemoteAppConfig({
-            latestVersion: res.latestVersion,
-            apkUrl: res.updateUrl,
-            updateMessage: res.releaseNotes,
-            mandatory: false,
-            updatedAt: new Date().toISOString()
-          });
-          setUpdateBannerMessage(`🎉 يتوفر تحديث جديد v${res.latestVersion}!\n${res.releaseNotes}`);
-          setShowUpdateBanner(true);
-        }
-      }).catch(console.warn);
-    };
-
-    runUpdateCheck();
-
-    // Re-check on window focus (when user switches back to app) and on network reconnection
-    window.addEventListener('focus', runUpdateCheck);
-    window.addEventListener('online', runUpdateCheck);
-
-    // Periodic check every 15 minutes
-    const interval = setInterval(runUpdateCheck, 15 * 60 * 1000);
+    // 1. Dual In-App update check via GitHub Releases API directly first
+    checkAppUpdates().then((res) => {
+      if (res.hasUpdate) {
+        setHasPendingUpdate(true);
+        setRemoteAppConfig({
+          latestVersion: res.latestVersion,
+          apkUrl: res.updateUrl,
+          updateMessage: res.releaseNotes,
+          mandatory: false,
+          updatedAt: new Date().toISOString()
+        });
+        setUpdateBannerMessage(`🎉 يتوفر تحديث جديد v${res.latestVersion}!\n${res.releaseNotes}`);
+        setShowUpdateBanner(true);
+      }
+    }).catch(console.warn);
 
     // 2. Fallback / Live Firebase version broadcast
     const unsub = subscribeToAppVersion((config) => {
@@ -1776,13 +1743,7 @@ export default function App() {
         }
       }
     });
-
-    return () => {
-      window.removeEventListener('focus', runUpdateCheck);
-      window.removeEventListener('online', runUpdateCheck);
-      clearInterval(interval);
-      unsub();
-    };
+    return () => unsub();
   }, [isNativeAndroid, currentAppVersion]);
 
   const isPopStateRef = useRef<boolean>(false);
@@ -2293,12 +2254,9 @@ export default function App() {
     document.addEventListener('backbutton', onCordovaBackButton, false);
 
     // Capacitor App backButton plugin support
-    const isCapNative = typeof window !== 'undefined' && Boolean(
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
     const cap = (window as any).Capacitor;
     let capacitorListenerRemove: (() => void) | null = null;
-    if (isCapNative && cap?.Plugins?.App?.addListener) {
+    if (cap?.Plugins?.App?.addListener) {
       try {
         const listenerPromise = cap.Plugins.App.addListener('backButton', () => {
           handleHardwareBack();
@@ -2308,8 +2266,6 @@ export default function App() {
             if (handle?.remove) {
               capacitorListenerRemove = () => handle.remove();
             }
-          }).catch(() => {
-            // safely handle rejection
           });
         }
       } catch (err) {
@@ -3355,6 +3311,10 @@ export default function App() {
     try {
       let createdProduct: any = null;
       await db.transaction('rw', [db.products, db.inventoryLogs], async () => {
+        const alertThreshold = product.min_stock_alert !== undefined && product.min_stock_alert !== '' 
+          ? Number(product.min_stock_alert) 
+          : (product.min_stock ? Number(product.min_stock) : 5);
+
         const productId = await db.products.add({
           name: product.name.trim(),
           category: product.category?.trim() || 'عام',
@@ -3363,6 +3323,8 @@ export default function App() {
           sale_price,
           stock_quantity,
           unit: product.unit?.trim() || 'حبة',
+          min_stock: alertThreshold,
+          min_stock_alert: alertThreshold,
           supplier_id: product.supplier_id || undefined,
           production_date: product.production_date || undefined,
           expiration_date: product.expiration_date || undefined
@@ -5840,24 +5802,6 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* زر حساب Google والمتابعة (اختياري) مع تمييز المالك */}
-            <GoogleAuthButton
-              variant="header"
-              onOpenOwnerModal={() => setShowOwnerModal(true)}
-              onRequireOwnerVerification={() => setShowOwner2FAModal(true)}
-              onOwnerAuthChanged={(isOwnerAuth, user) => {
-                setAuthenticatedUser(user);
-                setIsSuperOwnerLoggedIn(isOwnerAuth);
-                if (isOwnerAuth) {
-                  const is2fa = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('owner_2fa_verified') === 'true';
-                  if (is2fa) {
-                    setIsDeveloperMode(true);
-                  }
-                }
-              }}
-              showNotification={showNotification}
-            />
-
             {isBackupOverdue && (
               <motion.button
                 initial={{ scale: 0.9, opacity: 0 }}
@@ -7359,7 +7303,7 @@ export default function App() {
           showNotification={showNotification}
         />
 
-        {/* لوحة تحكم وإدارة المالك الشاملة (عزام فهد) */}
+        {/* لوحة تحكم وإدارة المالك الشاملة (عصام فهد) */}
         <OwnerDashboardModal
           isOpen={showOwnerModal}
           onClose={() => setShowOwnerModal(false)}

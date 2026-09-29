@@ -6,21 +6,11 @@ import {
   Home, Edit, ShieldCheck, Database, Download, Upload, 
   Sparkles, RefreshCw, Package, Camera, Key, Copy, Activity, 
   Check, Cloud, Lock, Trash2, Brain, Cpu, ThumbsUp, ThumbsDown, AlertTriangle, Shield, ExternalLink, Bell, Clock,
-  Wifi, CheckCircle2, XCircle, Crown, Radio, Users, Send, KeyRound
+  Wifi, CheckCircle2, XCircle
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { 
-  updateLatestAppVersion, 
-  testCloudConnection, 
-  CLOUD_PROJECT_ID, 
-  CLOUD_DATABASE_ID, 
-  type AppVersionConfig,
-  subscribeToAuth,
-  isSuperOwner,
-  OWNER_EMAIL,
-  type User
-} from '../../services/firebase';
+import { updateLatestAppVersion, testCloudConnection, CLOUD_PROJECT_ID, CLOUD_DATABASE_ID, type AppVersionConfig } from '../../services/firebase';
 import { FileSpreadsheet } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import {
@@ -34,7 +24,6 @@ import {
 } from '../../services/excelSync';
 import { subscribeToAppVersion } from '../../services/firebase';
 import { embeddingManager } from '../../services/ai/rag/embeddings';
-import { GoogleAuthButton } from '../../components/auth/GoogleAuthButton';
 
 export interface SettingsViewProps {
   isAutoBackupEnabled: boolean;
@@ -227,24 +216,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isReindexing, setIsReindexing] = React.useState(false);
   const [showEditInfo, setShowEditInfo] = React.useState(false);
   const [userRequestedDuration, setUserRequestedDuration] = React.useState(365);
-  const [currentAuthUser, setCurrentAuthUser] = React.useState<User | null>(null);
-  const [isOwnerLoggedIn, setIsOwnerLoggedIn] = React.useState<boolean>(false);
-
-  React.useEffect(() => {
-    const unsub = subscribeToAuth((user, isOwner) => {
-      setCurrentAuthUser(user);
-      setIsOwnerLoggedIn(isOwner);
-      if (isOwner) {
-        setIsDeveloperMode(true);
-      }
-    });
-    return () => unsub();
-  }, [setIsDeveloperMode]);
-
-  // Strict check: ONLY true if the currently authenticated Google user is the Owner (azamfahd25@gmail.com)
-  const isStrictOwnerAccount = Boolean(
-    currentAuthUser && (isSuperOwner(currentAuthUser.email) || currentAuthUser.email?.trim().toLowerCase() === OWNER_EMAIL.toLowerCase())
-  );
 
   // App Update Publisher states for Owner / Developer
   const [liveRemoteConfig, setLiveRemoteConfig] = React.useState<AppVersionConfig | null>(null);
@@ -634,141 +605,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 👑 بطاقة الإدارة السحابية والتحكم الشامل للمالك (تظهر حصرياً وبشرط أن يكون الحساب هو حساب المالك azamfahd25@gmail.com) */}
-      {isStrictOwnerAccount && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="p-4 sm:p-6 rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 border-2 border-amber-400/60 shadow-xl shadow-amber-500/10 text-white space-y-4 relative overflow-hidden"
-        >
-          {/* Ambient Glow */}
-          <div className="absolute -top-24 -left-24 w-60 h-60 bg-amber-500/20 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-24 -right-24 w-60 h-60 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
-
-          {/* Top Row: Owner Badge & Profile */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3 relative z-10">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                {currentAuthUser?.photoURL ? (
-                  <img 
-                    src={currentAuthUser.photoURL} 
-                    alt="Owner" 
-                    className="w-12 h-12 rounded-2xl border-2 border-amber-400 object-cover shadow-md"
-                  />
-                ) : (
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 font-black text-lg flex items-center justify-center border-2 border-amber-300 shadow-md">
-                    👑
-                  </div>
-                )}
-                <span className="absolute -bottom-1 -right-1 bg-amber-400 text-slate-950 p-0.5 rounded-full text-[10px]">
-                  <Crown className="w-3.5 h-3.5" />
-                </span>
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="font-black text-sm sm:text-base text-white">
-                    {currentAuthUser?.displayName || 'الأستاذ عزام فهد (مالك النظام)'}
-                  </h3>
-                  <span className="bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black text-[10px] px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
-                    <Crown className="w-3 h-3" />
-                    <span>المالك المعتمد 👑</span>
-                  </span>
-                </div>
-                <p className="text-[11px] font-mono text-slate-400 mt-0.5 dir-ltr text-right">
-                  {currentAuthUser?.email || 'azamfahd25@gmail.com'}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono font-bold bg-emerald-950/80 text-emerald-400 px-3 py-1 rounded-xl border border-emerald-500/40 flex items-center gap-1.5 dir-ltr shadow-inner">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Cloud Connected</span>
-              </span>
-              {onOpenOwnerModal && (
-                <button
-                  type="button"
-                  onClick={onOpenOwnerModal}
-                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md shadow-amber-500/20 transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <Crown className="w-3.5 h-3.5" />
-                  <span>لوحة التحكم الشاملة 🚀</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Quick Management Actions */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 relative z-10">
-            <button
-              type="button"
-              onClick={() => {
-                setIsDeveloperMode(true);
-                setActiveDevTab('generator');
-                showNotification('تم فتح أداة توليد التراخيص الفورية 🔑', 'success');
-              }}
-              className="p-3 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-400/50 transition-all text-right cursor-pointer group"
-            >
-              <div className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400 w-fit mb-1.5 group-hover:scale-110 transition-transform">
-                <KeyRound className="w-4 h-4" />
-              </div>
-              <h4 className="font-black text-xs text-white">توليد التراخيص</h4>
-              <p className="text-[10px] text-slate-400">إنشاء مفاتيح فورية للأجهزة</p>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsDeveloperMode(true);
-                setActiveDevTab('requests');
-                showNotification('تم فتح إدارة طلبات الأجهزة والمتاجر 📱', 'success');
-              }}
-              className="p-3 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 hover:border-indigo-400/50 transition-all text-right cursor-pointer group relative"
-            >
-              {allCloudRequests.filter(r => r.status === 'pending').length > 0 && (
-                <span className="absolute top-2 left-2 bg-rose-500 text-white font-black text-[9px] w-5 h-5 flex items-center justify-center rounded-full animate-bounce">
-                  {allCloudRequests.filter(r => r.status === 'pending').length}
-                </span>
-              )}
-              <div className="p-1.5 rounded-xl bg-indigo-500/10 text-indigo-400 w-fit mb-1.5 group-hover:scale-110 transition-transform">
-                <Users className="w-4 h-4" />
-              </div>
-              <h4 className="font-black text-xs text-white">طلبات الأجهزة</h4>
-              <p className="text-[10px] text-slate-400">تفعيل وتمديد المتاجر عن بُعد</p>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsDeveloperMode(true);
-                setActiveDevTab('updates');
-                showNotification('تم فتح مركز بث ونشر التحديثات 🚀', 'success');
-              }}
-              className="p-3 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-400/50 transition-all text-right cursor-pointer group"
-            >
-              <div className="p-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 w-fit mb-1.5 group-hover:scale-110 transition-transform">
-                <Radio className="w-4 h-4" />
-              </div>
-              <h4 className="font-black text-xs text-white">بث التحديثات</h4>
-              <p className="text-[10px] text-slate-400">إرسال الإصدارات لـ APK والويب</p>
-            </button>
-
-            <button
-              type="button"
-              onClick={runCloudDiagnostics}
-              disabled={isDiagnosing}
-              className="p-3 rounded-2xl bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 hover:border-teal-400/50 transition-all text-right cursor-pointer group"
-            >
-              <div className="p-1.5 rounded-xl bg-teal-500/10 text-teal-400 w-fit mb-1.5 group-hover:scale-110 transition-transform">
-                <Activity className={`w-4 h-4 ${isDiagnosing ? 'animate-spin' : ''}`} />
-              </div>
-              <h4 className="font-black text-xs text-white">فحص السحابة</h4>
-              <p className="text-[10px] text-slate-400">قياس سرعة واستقرار الاتصال</p>
-            </button>
-          </div>
-        </motion.div>
-      )}
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
         {/* Card 1: Store & Currency Settings */}
         <Card className="p-4 sm:p-5 border border-slate-200/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">
@@ -1149,128 +985,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
         </Card>
-
-        {/* Card: Google Cloud & Owner Account */}
-        <GoogleAuthButton
-          variant="card"
-          onOpenOwnerModal={onOpenOwnerModal}
-          onOwnerAuthChanged={(isOwnerAuth, user) => {
-            if (user) {
-              setCurrentAuthUser(user);
-            }
-            if (isOwnerAuth) {
-              setIsDeveloperMode(true);
-            }
-          }}
-          showNotification={showNotification}
-        />
-
-        {/* 👑 بطاقة المالك والمطور الرئيسي (تظهر في الإعدادات بجانب زر حساب المالك وبشرط ألا تظهر إلا إذا كان الحساب هو حساب المالك azamfahd25@gmail.com) */}
-        {isStrictOwnerAccount && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="p-4 sm:p-5 border-2 border-amber-400/90 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 shadow-xl shadow-amber-500/10 text-white space-y-3 flex flex-col justify-between relative overflow-hidden"
-          >
-            {/* Ambient Background Glow */}
-            <div className="absolute -top-12 -left-12 w-28 h-28 bg-amber-500/20 rounded-full blur-2xl pointer-events-none" />
-            <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/20 rounded-full blur-2xl pointer-events-none" />
-
-            <div className="space-y-3 relative z-10">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 bg-amber-400/20 text-amber-400 rounded-xl border border-amber-400/40">
-                    <Crown className="w-4 h-4 text-amber-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-extrabold text-xs sm:text-sm text-white flex items-center gap-1.5">
-                      <span>المالك والمطور الرئيسي</span>
-                      <span className="text-[9px] bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-black px-1.5 py-0.5 rounded-full shadow-2xs">
-                        Super Owner 👑
-                      </span>
-                    </h3>
-                    <p className="text-[10px] text-amber-200/70 font-medium">
-                      صلاحيات السيادة وإدارة النظام
-                    </p>
-                  </div>
-                </div>
-
-                <span className="text-[9px] font-mono font-bold bg-emerald-950/90 text-emerald-400 px-2 py-0.5 rounded-lg border border-emerald-500/40 flex items-center gap-1 dir-ltr shadow-inner">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Verified</span>
-                </span>
-              </div>
-
-              {/* Owner Info & Avatar */}
-              <div className="flex items-center justify-between bg-slate-900/90 p-2.5 rounded-xl border border-slate-800/90 shadow-inner">
-                <div className="text-right">
-                  <p className="text-xs font-black text-white">
-                    {currentAuthUser?.displayName || 'الأستاذ عزام فهد'}
-                  </p>
-                  <p className="text-[10px] font-mono text-amber-300/80 dir-ltr text-right mt-0.5">
-                    {currentAuthUser?.email}
-                  </p>
-                </div>
-                {currentAuthUser?.photoURL ? (
-                  <img
-                    src={currentAuthUser.photoURL}
-                    alt="Owner Avatar"
-                    className="w-10 h-10 rounded-xl border-2 border-amber-400 object-cover shadow-sm"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 text-slate-950 font-black text-base flex items-center justify-center border-2 border-amber-300 shadow-sm">
-                    👑
-                  </div>
-                )}
-              </div>
-
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                مرحباً بك يا أستاذ عزام فهد! تم تأكيد هويتك كمالك ومطور للنظام. يمكنك التحكم بطلبات التفعيل، توليد التراخيص، ونشر التحديثات.
-              </p>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="pt-1 relative z-10 space-y-2">
-              {onOpenOwnerModal && (
-                <button
-                  type="button"
-                  onClick={onOpenOwnerModal}
-                  className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-500 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs rounded-xl shadow-md shadow-amber-500/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.99]"
-                >
-                  <Crown className="w-4 h-4 text-slate-950" />
-                  <span>فتح لوحة تحكم وإدارة المالك الشاملة 🚀</span>
-                </button>
-              )}
-
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsDeveloperMode(true);
-                    setActiveDevTab('generator');
-                    showNotification('تم فتح أداة توليد التراخيص الفورية 🔑', 'success');
-                  }}
-                  className="py-1.5 px-2 rounded-lg bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 text-[10px] font-bold text-amber-300 hover:text-white transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <KeyRound className="w-3 h-3 text-amber-400" />
-                  <span>توليد تراخيص</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsDeveloperMode(true);
-                    setActiveDevTab('requests');
-                    showNotification('تم فتح إدارة طلبات التفعيل 📱', 'success');
-                  }}
-                  className="py-1.5 px-2 rounded-lg bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 text-[10px] font-bold text-indigo-300 hover:text-white transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <ShieldCheck className="w-3 h-3 text-indigo-400" />
-                  <span>طلبات التفعيل</span>
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
 
         {/* Card 7: About System */}
         <Card className="p-4 sm:p-5 border border-slate-200/80 rounded-2xl bg-white shadow-2xs hover:shadow-xs transition-all space-y-3 flex flex-col justify-between">

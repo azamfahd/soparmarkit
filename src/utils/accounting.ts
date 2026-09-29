@@ -67,7 +67,8 @@ export function calculateAccountingSummary(
     const qty = p.stock_quantity || 0;
     const cost = p.cost_price || 0;
     totalInventoryCost += qty * cost;
-    if (qty <= 5) {
+    const threshold = getProductMinStockAlert(p);
+    if (qty <= threshold) {
       lowStockCount++;
     }
   });
@@ -85,6 +86,114 @@ export function calculateAccountingSummary(
     totalDebts,
     lowStockCount
   };
+}
+
+/**
+ * Gets the custom minimum stock alert threshold for a product (defaults to 5)
+ */
+export function getProductMinStockAlert(product?: Partial<Product> | null): number {
+  if (!product) return 5;
+  const val = product.min_stock_alert ?? product.min_stock;
+  if (typeof val === 'number' && !isNaN(val) && val >= 0) {
+    return val;
+  }
+  return 5;
+}
+
+export type StockStatusType = 'out_of_stock' | 'critical_low' | 'low_stock' | 'in_stock';
+
+export interface StockStatusInfo {
+  status: StockStatusType;
+  threshold: number;
+  label: string;
+  badgeClass: string;
+  badgeBg: string;
+  textColor: string;
+  isAlert: boolean;
+  suggestedReorderQty: number;
+}
+
+/**
+ * Evaluates the multi-tier inventory status for a product based on its custom threshold
+ */
+export function getProductStockStatus(product?: Partial<Product> | null): StockStatusInfo {
+  const stock = Number(product?.stock_quantity ?? 0);
+  const threshold = getProductMinStockAlert(product);
+  const reorderTarget = Math.max(threshold * 3, threshold + 10, 10);
+  const suggestedReorderQty = Math.max(0, reorderTarget - Math.max(0, stock));
+
+  if (stock <= 0) {
+    return {
+      status: 'out_of_stock',
+      threshold,
+      label: 'نفاد كلي (0)',
+      badgeClass: 'bg-rose-500 text-white border-rose-600',
+      badgeBg: 'bg-rose-50 text-rose-700 border-rose-200',
+      textColor: 'text-rose-600',
+      isAlert: true,
+      suggestedReorderQty
+    };
+  }
+
+  // Critical Low: <= 50% of custom threshold (or <= 2)
+  const criticalLimit = Math.max(1, Math.floor(threshold / 2));
+  if (stock <= criticalLimit) {
+    return {
+      status: 'critical_low',
+      threshold,
+      label: `حرج جداً (بقي ${stock})`,
+      badgeClass: 'bg-amber-600 text-white border-amber-700',
+      badgeBg: 'bg-amber-50 text-amber-800 border-amber-300',
+      textColor: 'text-amber-700',
+      isAlert: true,
+      suggestedReorderQty
+    };
+  }
+
+  // Low stock: reached or below custom threshold
+  if (stock <= threshold) {
+    return {
+      status: 'low_stock',
+      threshold,
+      label: `وصل حد الطلب (${stock}/${threshold})`,
+      badgeClass: 'bg-yellow-500 text-slate-900 border-yellow-600',
+      badgeBg: 'bg-yellow-50 text-yellow-800 border-yellow-200',
+      textColor: 'text-yellow-700',
+      isAlert: true,
+      suggestedReorderQty
+    };
+  }
+
+  // Normal in-stock
+  return {
+    status: 'in_stock',
+    threshold,
+    label: `متوفر (${stock})`,
+    badgeClass: 'bg-emerald-600 text-white border-emerald-700',
+    badgeBg: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    textColor: 'text-emerald-700',
+    isAlert: false,
+    suggestedReorderQty: 0
+  };
+}
+
+/**
+ * Calculates a dynamic, smart stock threshold based on recent sales history (e.g. 7-14 days velocity)
+ */
+export function calculateSmartStockThreshold(saleItems: SaleItem[] = [], productId?: number, daysBuffer: number = 7): number {
+  if (!productId || !saleItems || saleItems.length === 0) return 5;
+  
+  const productSales = saleItems.filter(item => item.product_id === productId);
+  if (productSales.length === 0) return 5;
+
+  const totalSold = productSales.reduce((sum, item) => sum + (item.quantity || 0), 0);
+  
+  // If we have sales entries, estimate daily velocity
+  // Simple heuristic: average ~14 days observation period
+  const dailyVelocity = Math.max(0.2, totalSold / 14);
+  const calculated = Math.ceil(dailyVelocity * daysBuffer);
+  
+  return Math.max(3, Math.min(1000, calculated));
 }
 
 /**
