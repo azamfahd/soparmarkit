@@ -1716,11 +1716,17 @@ export default function App() {
 
   // Fetch native app version
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform()) {
+    if (typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.()) {
       setIsNativeAndroid(true);
-      CapApp.getInfo().then(info => {
-        setCurrentAppVersion(info.version);
-      }).catch(console.warn);
+      try {
+        CapApp.getInfo().then(info => {
+          if (info?.version) {
+            setCurrentAppVersion(info.version);
+          }
+        }).catch(() => {});
+      } catch (e) {
+        // ignore on web
+      }
     }
   }, []);
 
@@ -2287,9 +2293,12 @@ export default function App() {
     document.addEventListener('backbutton', onCordovaBackButton, false);
 
     // Capacitor App backButton plugin support
+    const isCapNative = typeof window !== 'undefined' && Boolean(
+      (window as any).Capacitor?.isNativePlatform?.()
+    );
     const cap = (window as any).Capacitor;
     let capacitorListenerRemove: (() => void) | null = null;
-    if (cap?.Plugins?.App?.addListener) {
+    if (isCapNative && cap?.Plugins?.App?.addListener) {
       try {
         const listenerPromise = cap.Plugins.App.addListener('backButton', () => {
           handleHardwareBack();
@@ -2299,6 +2308,8 @@ export default function App() {
             if (handle?.remove) {
               capacitorListenerRemove = () => handle.remove();
             }
+          }).catch(() => {
+            // safely handle rejection
           });
         }
       } catch (err) {

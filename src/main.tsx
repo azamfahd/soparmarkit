@@ -10,15 +10,19 @@ initializeSQLiteSync().catch((err) => {
   console.error('Failed to initialize SQLite sync:', err);
 });
 
-// Catch and ignore benign HMR websocket connection failures
+// Catch and ignore benign HMR websocket connection failures and web plugin stubs
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
-    if (event.reason && (
-      event.reason.message?.includes('WebSocket') || 
-      event.reason.message?.includes('HMR') ||
-      event.reason.message?.includes('closed without opened')
-    )) {
+    const reasonMsg = event?.reason?.message || String(event?.reason || '');
+    if (
+      reasonMsg.includes('WebSocket') || 
+      reasonMsg.includes('HMR') ||
+      reasonMsg.includes('closed without opened') ||
+      reasonMsg.includes('Not implemented on web') ||
+      reasonMsg.includes('not implemented on web')
+    ) {
       event.preventDefault();
+      event.stopPropagation();
     }
   });
 }
