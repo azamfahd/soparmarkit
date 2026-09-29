@@ -126,7 +126,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onPause() {
+    public void onPause() {
         super.onPause();
         try {
             android.webkit.CookieManager.getInstance().flush();
@@ -136,7 +136,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onResume() {
+    public void onResume() {
         super.onResume();
         try {
             android.webkit.CookieManager.getInstance().flush();
